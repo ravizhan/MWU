@@ -1,11 +1,8 @@
 import asyncio
-import json
 import logging
-import threading
 import uuid
 from datetime import datetime
-from pathlib import Path
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict, Literal, Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -35,7 +32,6 @@ class SchedulerManager:
         self._worker = None
         self._executions: List[TaskExecution] = []
         self._executions_lock = asyncio.Lock()
-        self._current_task_thread: Optional[threading.Thread] = None
 
     def set_worker(self, worker):
         """设置 MaaWorker 实例"""
@@ -123,18 +119,16 @@ class SchedulerManager:
                 )
                 return
 
-            # 设置选项
-            for name, case in options.items():
-                self._worker.set_option(name, case)
-
             # 启动任务
-            self._current_task_thread = threading.Thread(
-                target=self._worker.run, args=(task_list,), daemon=True
-            )
-            self._current_task_thread.start()
+            if not self._worker.start_task(task_list, options):
+                logger.warning(f"任务已在运行，跳过定时任务 {task_id}")
+                await self._update_execution_status(
+                    execution_id, "stopped", "任务已在运行"
+                )
+                return
 
             # 等待任务完成
-            while self._current_task_thread and self._current_task_thread.is_alive():
+            while self._worker and self._worker.running:
                 await asyncio.sleep(1)
 
             await self._update_execution_status(execution_id, "success")
@@ -192,9 +186,6 @@ class SchedulerManager:
                 "task_id": task_id,
                 "task_list": task_create.task_list,
                 "options": task_create.task_options,
-                "task_name": task_create.name,
-                "trigger_type": task_create.trigger_type,
-                "trigger_config": task_create.trigger_config.model_dump(),
             },
         )
 

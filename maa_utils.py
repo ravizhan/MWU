@@ -5,6 +5,7 @@ import traceback
 from queue import SimpleQueue
 import json
 import plyer
+import threading
 from maa.controller import AdbController
 from maa.resource import Resource
 from maa.tasker import Tasker
@@ -34,6 +35,8 @@ class MaaWorker:
         self.connected = False
         self.stop_flag = False
         self.running = False
+        self._task_lock = threading.Lock()
+        self._task_thread: threading.Thread | None = None
         self.send_log("MAA初始化成功")
         self.agent_process: subprocess.Popen | None = None
         self.load_agent()
@@ -365,12 +368,44 @@ class MaaWorker:
                 self.send_log(f"Agent进程启动失败: {e}")
                 traceback.print_exc()
 
-    def run(self, task_list):
-        self.stop_flag = False
-        self.running = True
+    def start_task(self, task_list, options: dict[str, str]) -> bool:
+        if not self.connected:
+            return False
+        if not self._task_lock.acquire(blocking=False):
+            return False
+        try:
+            if self.running:
+                return False
+            print(task_list, options)
+            print(self.tasker.resource)
+            for name, case in options.items():
+                self.set_option(name, case)
+            self.stop_flag = False
+            self.running = True
+            self._task_thread = threading.Thread(
+                target=self._run_process, args=(task_list,), daemon=True
+            )
+            self._task_thread.start()
+            return True
+        finally:
+            self._task_lock.release()
+
+    def stop_task(self) -> bool:
+        if not self.running:
+            return False
+        self.stop_flag = True
+        while self.tasker.running:
+            time.sleep(0.5)
+        return True
+
+    def _run_process(self, task_list):
         self.send_log("任务开始")
         try:
             for task in task_list:
+                if self.stop_flag:
+                    self.tasker.post_stop().wait()
+                    self.send_log("任务已终止")
+                    return
                 t = self.tasker.post_task(task)
                 self.send_log("正在运行任务: " + task)
                 while not t.done:
@@ -391,6 +426,7 @@ class MaaWorker:
             self.send_log(f"请将日志反馈至 {self.interface.github}/issues")
         finally:
             self.running = False
+            self._task_thread = None
             self.send_log("所有任务完成")
             time.sleep(0.5)
 

@@ -52,7 +52,6 @@ class LogBroadcaster:
 class AppState:
     def __init__(self):
         self.message_conn = SimpleQueue()
-        self.child_process: threading.Thread | None = None
         self.worker: MaaWorker | None = None
         self.history_message = []
         self.current_status = None
@@ -74,12 +73,6 @@ async def log_monitor():
             app_state.history_message.append(msg)
             if app_state.broadcaster:
                 await app_state.broadcaster.broadcast(msg)
-
-            if "所有任务完成" in msg:
-                if app_state.child_process:
-                    app_state.child_process.join()
-                    app_state.child_process = None
-
         await asyncio.sleep(0.1)
 
 
@@ -419,13 +412,7 @@ def start(tasks: list[str], options: dict[str, str]):
         return {"status": "failed", "message": "任务已开始"}
     if not app_state.worker.connected:
         return {"status": "failed", "message": "请先连接设备"}
-    # 设置选项
-    for name, case in options.items():
-        app_state.worker.set_option(name, case)
-    app_state.child_process = threading.Thread(
-        target=app_state.worker.run, args=(tasks,), daemon=True
-    )
-    app_state.child_process.start()
+    app_state.worker.start_task(tasks, options)
     return {"status": "success"}
 
 
@@ -433,8 +420,7 @@ def start(tasks: list[str], options: dict[str, str]):
 def stop():
     if app_state.worker is None or not app_state.worker.running:
         return {"status": "failed", "message": "任务未开始"}
-    app_state.worker.stop_flag = True
-    app_state.child_process = None
+    app_state.worker.stop_task()
     return {"status": "success"}
 
 
@@ -466,9 +452,6 @@ async def stream_logs(request: Request):
             "Access-Control-Allow-Origin": "*",
         },
     )
-
-
-# ==================== 调度器 API ====================
 
 
 @app.get("/api/scheduler/tasks")
