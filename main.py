@@ -52,7 +52,7 @@ class LogBroadcaster:
 class AppState:
     def __init__(self):
         self.message_conn = SimpleQueue()
-        self.child_process = None
+        self.child_process: threading.Thread | None = None
         self.worker: MaaWorker | None = None
         self.history_message = []
         self.current_status = None
@@ -165,8 +165,8 @@ def get_device():
 
 
 @app.post("/api/device")
-def connect_device(device: DeviceModel):
-    if app_state.worker.connect_device(device):
+async def connect_device(device: DeviceModel):
+    if await asyncio.to_thread(app_state.worker.connect_device, device):
         return {"status": "success"}
     return {"status": "failed"}
 
@@ -177,10 +177,10 @@ def get_resource():
 
 
 @app.post("/api/resource")
-def set_resource(name: str):
+async def set_resource(name: str):
     # 设置资源
     try:
-        app_state.worker.set_resource(name)
+        await asyncio.to_thread(app_state.worker.set_resource, name)
     except Exception as e:
         return {"status": "failed", "message": str(e)}
     return {"status": "success"}
@@ -415,7 +415,7 @@ def test_notification():
 
 @app.post("/api/start")
 def start(tasks: list[str], options: dict[str, str]):
-    if app_state.child_process is not None:
+    if app_state.worker and app_state.worker.running:
         return {"status": "failed", "message": "任务已开始"}
     if not app_state.worker.connected:
         return {"status": "failed", "message": "请先连接设备"}
@@ -431,7 +431,7 @@ def start(tasks: list[str], options: dict[str, str]):
 
 @app.post("/api/stop")
 def stop():
-    if app_state.child_process is None or app_state.worker is None:
+    if app_state.worker is None or not app_state.worker.running:
         return {"status": "failed", "message": "任务未开始"}
     app_state.worker.stop_flag = True
     app_state.child_process = None

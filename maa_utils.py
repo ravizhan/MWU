@@ -33,6 +33,7 @@ class MaaWorker:
         self.controller = None
         self.connected = False
         self.stop_flag = False
+        self.running = False
         self.send_log("MAA初始化成功")
         self.agent_process: subprocess.Popen | None = None
         self.load_agent()
@@ -366,6 +367,7 @@ class MaaWorker:
 
     def run(self, task_list):
         self.stop_flag = False
+        self.running = True
         self.send_log("任务开始")
         try:
             for task in task_list:
@@ -387,8 +389,10 @@ class MaaWorker:
             )
             self.send_log("任务出现异常，请检查终端日志")
             self.send_log(f"请将日志反馈至 {self.interface.github}/issues")
-        self.send_log("所有任务完成")
-        time.sleep(0.5)
+        finally:
+            self.running = False
+            self.send_log("所有任务完成")
+            time.sleep(0.5)
 
     def get_screencap_bytes(self):
         if not self.connected or not self.controller:

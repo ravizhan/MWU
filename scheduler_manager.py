@@ -35,6 +35,7 @@ class SchedulerManager:
         self._worker = None
         self._executions: List[TaskExecution] = []
         self._executions_lock = asyncio.Lock()
+        self._current_task_thread: Optional[threading.Thread] = None
 
     def set_worker(self, worker):
         """设置 MaaWorker 实例"""
@@ -107,7 +108,7 @@ class SchedulerManager:
 
         try:
             # 检查是否有任务正在运行
-            if self._worker and self._worker.child_process is not None:
+            if self._worker and self._worker.running:
                 logger.warning(f"任务已在运行，跳过定时任务 {task_id}")
                 await self._update_execution_status(
                     execution_id, "stopped", "任务已在运行"
@@ -127,13 +128,13 @@ class SchedulerManager:
                 self._worker.set_option(name, case)
 
             # 启动任务
-            self._worker.child_process = threading.Thread(
+            self._current_task_thread = threading.Thread(
                 target=self._worker.run, args=(task_list,), daemon=True
             )
-            self._worker.child_process.start()
+            self._current_task_thread.start()
 
             # 等待任务完成
-            while self._worker.child_process and self._worker.child_process.is_alive():
+            while self._current_task_thread and self._current_task_thread.is_alive():
                 await asyncio.sleep(1)
 
             await self._update_execution_status(execution_id, "success")
