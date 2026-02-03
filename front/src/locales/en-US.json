@@ -23,7 +23,6 @@
   },
   "settings": {
     "title": "Settings",
-    "language": "Language",
     "theme": "Theme",
     "general": "General",
     "anchor": {
@@ -155,7 +154,8 @@
         "auto": "System",
         "on": "On",
         "off": "Off"
-      }
+      },
+      "language": "Language"
     },
     "notification": {
       "title": "Notification",

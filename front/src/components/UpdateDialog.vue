@@ -10,18 +10,13 @@
     <div class="update-dialog-content">
       <div v-if="updateState === 'available'">
         <n-space vertical>
-          <div
-            class="flex gap-4 mb-2 justify-center items-center bg-[#edf5fe] rounded border border-[#c7dffb] p-3"
-          >
-            <div>
-              <strong>{{ t("settings.update.currentVersion") }}:</strong>
-              {{ updateInfo?.current_version || "-" }}
-            </div>
-            <div>
-              <strong>{{ t("settings.update.latestVersion") }}:</strong>
-              {{ updateInfo?.latest_version || "-" }}
-            </div>
-          </div>
+          <n-alert :title="version_info" type="info">
+            <template #icon>
+              <n-icon>
+                <div class="i-mdi-update" />
+              </n-icon>
+            </template>
+          </n-alert>
 
           <n-card :title="t('settings.update.updateLog')" size="small">
             <div class="markdown-body max-h-100 overflow-y-auto" v-html="renderedMarkdown"></div>
@@ -94,7 +89,17 @@ interface Props {
   show: boolean
   updateInfo: UpdateInfo | null
 }
-
+const version_info = computed(() => {
+  return (
+    t("settings.update.currentVersion") +
+    ": " +
+    (props.updateInfo?.current_version || "-") +
+    " | " +
+    t("settings.update.latestVersion") +
+    ": " +
+    (props.updateInfo?.latest_version || "-")
+  )
+})
 const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: "update:show", value: boolean): void
