@@ -318,8 +318,6 @@ export function testNotificationApi(): Promise<ApiResponse> {
   }).then((res) => res.json())
 }
 
-// ==================== 调度器 API ====================
-
 export function getSchedulerTasks(): Promise<SchedulerApiResponse> {
   return fetch("/api/scheduler/tasks", { method: "GET" }).then((res) => res.json())
 }

@@ -48,7 +48,7 @@
         >
           <n-input
             :value="cronConfig.cron"
-            @update:value="updateCronConfig"
+            @update:value="(v: string) => updateTriggerConfig({ cron: v })"
             :placeholder="t('settings.scheduler.dialog.cronPlaceholder')"
           />
         </n-form-item>
@@ -78,7 +78,12 @@
         >
           <n-date-picker
             :value="dateConfigTimestamp"
-            @update:value="updateDateConfig"
+            @update:value="
+              (v: number | null) =>
+                updateTriggerConfig({
+                  run_date: v ? new Date(v).toISOString() : new Date().toISOString(),
+                })
+            "
             type="datetime"
             :placeholder="t('settings.scheduler.dialog.selectTime')"
             style="width: 100%"
@@ -92,7 +97,7 @@
           <n-flex>
             <n-input-number
               :value="intervalConfig.hours"
-              @update:value="updateIntervalHours"
+              @update:value="(v: number | null) => updateTriggerConfig({ hours: v || 0 })"
               :min="0"
               style="width: 45%"
             >
@@ -100,7 +105,7 @@
             </n-input-number>
             <n-input-number
               :value="intervalConfig.minutes"
-              @update:value="updateIntervalMinutes"
+              @update:value="(v: number | null) => updateTriggerConfig({ minutes: v || 0 })"
               :min="0"
               style="width: 45%"
             >
@@ -163,11 +168,9 @@
 
     <template #footer>
       <n-space justify="end">
-        <n-button @click="handleCancel">{{
-          t("settings.scheduler.dialog.actions.cancel")
-        }}</n-button>
+        <n-button @click="handleCancel">{{ t("common.cancel") }}</n-button>
         <n-button type="primary" @click="handleSave" :loading="loading">{{
-          t("settings.scheduler.dialog.actions.save")
+          t("common.save")
         }}</n-button>
       </n-space>
     </template>
@@ -180,10 +183,12 @@ import { useMessage, type FormInst, type FormRules } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import { useSchedulerStore } from "../stores/scheduler"
 import { useInterfaceStore } from "../stores/interface"
+import { useUserConfigStore } from "../stores/userConfig"
 import OptionItem from "./OptionItem.vue"
 import type {
   ScheduledTask,
   ScheduledTaskCreate,
+  TriggerType,
   TriggerConfig,
   CronTriggerConfig,
   DateTriggerConfig,
@@ -207,6 +212,7 @@ const message = useMessage()
 const { t } = useI18n()
 const schedulerStore = useSchedulerStore()
 const interfaceStore = useInterfaceStore()
+const configStore = useUserConfigStore()
 
 const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
@@ -221,6 +227,24 @@ const showDialog = computed({
 
 const isEditMode = computed(() => !!props.task)
 const availableTasks = computed(() => interfaceStore.getTaskList)
+
+function buildFullTaskOptions(overrides: Record<string, string> = {}) {
+  const defaultOptions = configStore.buildDefaultOptions()
+  return {
+    ...defaultOptions,
+    ...configStore.options,
+    ...overrides,
+  }
+}
+
+function normalizeTaskList(taskList: string[]) {
+  if (!taskList?.length) return []
+  const byId = new Map(availableTasks.value.map((task) => [task.id, task.id]))
+  const byName = new Map(availableTasks.value.map((task) => [task.name, task.id]))
+  return taskList
+    .map((item) => byId.get(item) || byName.get(item) || item)
+    .filter((item, index, self) => self.indexOf(item) === index)
+}
 
 // 获取完整的任务信息（包含 option）
 const getFullTask = (taskId: string) => {
@@ -250,27 +274,54 @@ const intervalConfig = computed(() => formData.value.trigger_config as IntervalT
 // 检查任务是否被选中
 const isTaskSelected = (taskId: string) => {
   const task = availableTasks.value.find((t) => t.id === taskId)
-  return task ? formData.value.task_list.includes(task.name) : false
+  return task ? formData.value.task_list.includes(task.id) : false
 }
 
-const formData = ref<ScheduledTaskCreate>(initFormData())
+const formData = ref<ScheduledTaskCreate>(initFormData(props.task))
 
 const formRules = computed<FormRules>(() => ({
   name: [
     { required: true, message: t("settings.scheduler.rules.nameRequired"), trigger: "blur" },
     { min: 1, max: 100, message: t("settings.scheduler.rules.nameLength"), trigger: "blur" },
   ],
-  trigger_config: {
-    cron: [
-      { required: true, message: t("settings.scheduler.rules.cronRequired"), trigger: "blur" },
-      {
-        pattern:
-          /^(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)$/,
-        message: t("settings.scheduler.rules.cronInvalid"),
-        trigger: "blur",
+  "trigger_config.cron": [
+    {
+      validator: (rule, value: any) => {
+        if (formData.value.trigger_type !== "cron") return true
+        if (!value) return new Error(t("settings.scheduler.rules.cronRequired"))
+        const pattern =
+          /^(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)\s+(\*|[0-9\-*,/]+)$/
+        if (!pattern.test(value)) return new Error(t("settings.scheduler.rules.cronInvalid"))
+        return true
       },
-    ],
-  },
+      trigger: ["blur", "input"],
+    },
+  ],
+  "trigger_config.run_date": [
+    {
+      validator: (rule, value: any) => {
+        if (formData.value.trigger_type !== "date") return true
+        if (!value) return new Error(t("settings.scheduler.rules.dateRequired"))
+        if (new Date(value).getTime() < Date.now())
+          return new Error(t("settings.scheduler.rules.dateInPast"))
+        return true
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+  trigger_config: [
+    {
+      validator: (rule, value: any) => {
+        if (formData.value.trigger_type !== "interval") return true
+        const config = value as IntervalTriggerConfig
+        if ((config.hours || 0) <= 0 && (config.minutes || 0) <= 0) {
+          return new Error(t("settings.scheduler.rules.intervalRequired"))
+        }
+        return true
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
   task_list: [
     {
       type: "array",
@@ -294,19 +345,7 @@ watch(
 watch(
   () => props.task,
   (task) => {
-    if (task) {
-      formData.value = {
-        name: task.name,
-        description: task.description || "",
-        enabled: task.enabled,
-        trigger_type: task.trigger_type,
-        trigger_config: { ...task.trigger_config },
-        task_list: [...task.task_list],
-        task_options: { ...task.task_options },
-      }
-    } else {
-      resetForm()
-    }
+    formData.value = initFormData(task)
   },
 )
 
@@ -317,7 +356,19 @@ function resetForm() {
 }
 
 // 初始化表单数据
-function initFormData(): ScheduledTaskCreate {
+function initFormData(task?: ScheduledTask | null): ScheduledTaskCreate {
+  if (task) {
+    const normalizedTaskList = normalizeTaskList(task.task_list)
+    return {
+      name: task.name,
+      description: task.description || "",
+      enabled: task.enabled,
+      trigger_type: task.trigger_type,
+      trigger_config: { ...task.trigger_config },
+      task_list: [...normalizedTaskList],
+      task_options: buildFullTaskOptions(task.task_options),
+    }
+  }
   return {
     name: "",
     description: "",
@@ -325,48 +376,36 @@ function initFormData(): ScheduledTaskCreate {
     trigger_type: "cron",
     trigger_config: getTriggerConfigByType("cron"),
     task_list: [],
-    task_options: {},
+    task_options: buildFullTaskOptions(),
   }
 }
 
 // 根据类型获取触发器配置
-function getTriggerConfigByType(type: string): TriggerConfig {
+function getTriggerConfigByType(
+  type: TriggerType,
+  existing?: Partial<TriggerConfig>,
+): TriggerConfig {
   switch (type) {
     case "cron":
-      return { type: "cron", cron: "0 0 * * *" } as CronTriggerConfig
+      return { type: "cron", cron: (existing as any)?.cron ?? "0 0 * * *" }
     case "date":
-      return { type: "date", run_date: new Date().toISOString() } as DateTriggerConfig
+      return { type: "date", run_date: (existing as any)?.run_date ?? new Date().toISOString() }
     case "interval":
-      return { type: "interval", hours: 1, minutes: 0 } as IntervalTriggerConfig
+      return {
+        type: "interval",
+        hours: (existing as any)?.hours ?? 1,
+        minutes: (existing as any)?.minutes ?? 0,
+      } as IntervalTriggerConfig
     default:
-      return { type: "cron", cron: "0 0 * * *" } as CronTriggerConfig
+      return { type: "cron", cron: "0 0 * * *" }
   }
 }
 
-// 更新触发器配置的方法
-function updateCronConfig(value: string) {
-  formData.value.trigger_config = { type: "cron", cron: value } as CronTriggerConfig
-}
-
-function updateDateConfig(value: number | null) {
+function updateTriggerConfig(updates: Partial<TriggerConfig>) {
   formData.value.trigger_config = {
-    type: "date",
-    run_date: value ? new Date(value).toISOString() : new Date().toISOString(),
-  } as DateTriggerConfig
-}
-
-function updateIntervalHours(value: number | null) {
-  formData.value.trigger_config = {
-    ...intervalConfig.value,
-    hours: value || 0,
-  } as IntervalTriggerConfig
-}
-
-function updateIntervalMinutes(value: number | null) {
-  formData.value.trigger_config = {
-    ...intervalConfig.value,
-    minutes: value || 0,
-  } as IntervalTriggerConfig
+    ...formData.value.trigger_config,
+    ...updates,
+  } as TriggerConfig
 }
 
 function setCronPreset(preset: string) {
@@ -376,19 +415,21 @@ function setCronPreset(preset: string) {
     weekly: "0 0 * * 1",
     hourly: "0 * * * *",
   }
-  formData.value.trigger_config = { type: "cron", cron: presets[preset] } as CronTriggerConfig
+  updateTriggerConfig({ cron: presets[preset] })
 }
 
 function toggleTaskSelection(taskId: string, checked: boolean) {
   const task = availableTasks.value.find((t) => t.id === taskId)
   if (!task) return
 
+  formData.value.task_list = normalizeTaskList(formData.value.task_list)
+
   if (checked) {
-    if (!formData.value.task_list.includes(task.name)) {
-      formData.value.task_list.push(task.name)
+    if (!formData.value.task_list.includes(task.id)) {
+      formData.value.task_list.push(task.id)
     }
   } else {
-    formData.value.task_list = formData.value.task_list.filter((name) => name !== task.name)
+    formData.value.task_list = formData.value.task_list.filter((id) => id !== task.id)
     if (currentSettingTaskId.value === taskId) {
       currentSettingTaskId.value = null
     }
@@ -398,36 +439,12 @@ function toggleTaskSelection(taskId: string, checked: boolean) {
 function openTaskSettings(taskId: string) {
   currentSettingTaskId.value = taskId
   activeTab.value = "task-settings"
-  initTaskOptions(taskId)
+  initTaskOptions()
 }
 
 // 初始化任务选项
-function initTaskOptions(taskId: string) {
-  const task = getFullTask(taskId)
-  if (!task?.option) return
-
-  for (const optionName of task.option) {
-    if (formData.value.task_options[optionName]) continue
-
-    const option = interfaceStore.interface?.option?.[optionName]
-    if (!option) continue
-
-    formData.value.task_options[optionName] = getOptionDefaultValue(option)
-  }
-}
-
-// 获取选项默认值
-function getOptionDefaultValue(option: any): string {
-  switch (option.type) {
-    case "select":
-      return option.default_case || option.cases?.[0]?.name || ""
-    case "switch":
-      return option.cases?.[0]?.name || ""
-    case "input":
-      return option.inputs?.[0]?.default || ""
-    default:
-      return ""
-  }
+function initTaskOptions() {
+  formData.value.task_options = buildFullTaskOptions(formData.value.task_options)
 }
 
 async function handleSave() {
@@ -439,27 +456,32 @@ async function handleSave() {
 
   loading.value = true
   try {
+    const taskPayload = {
+      ...formData.value,
+      task_list: normalizeTaskList(formData.value.task_list),
+      task_options: buildFullTaskOptions(formData.value.task_options),
+    }
     let success = false
     if (isEditMode.value && props.task) {
-      success = await schedulerStore.updateTask(props.task.id, formData.value)
+      success = await schedulerStore.updateTask(props.task.id, taskPayload)
     } else {
-      success = await schedulerStore.createTask(formData.value)
+      success = await schedulerStore.createTask(taskPayload)
     }
 
     if (success) {
       message.success(
         isEditMode.value
-          ? t("settings.scheduler.messages.successUpdate")
-          : t("settings.scheduler.messages.successCreate"),
+          ? t("settings.scheduler.dialog.taskUpdated")
+          : t("settings.scheduler.dialog.taskCreated"),
       )
       showDialog.value = false
       emit("saved")
       resetForm()
     } else {
-      message.error(schedulerStore.error || t("settings.scheduler.messages.failSave"))
+      message.error(schedulerStore.error || t("settings.scheduler.dialog.saveFail"))
     }
   } catch (e) {
-    message.error(t("settings.scheduler.messages.failRetry"))
+    message.error(t("settings.scheduler.dialog.saveFail"))
     console.error("Failed to save task:", e)
   } finally {
     loading.value = false

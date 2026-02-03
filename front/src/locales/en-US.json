@@ -5,7 +5,6 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
-    "add": "Add",
     "success": "Success",
     "fail": "Failed",
     "error": "Error",
@@ -116,35 +115,27 @@
         "selectTime": "Select Time",
         "intervalTime": "Interval",
         "currentSetting": "Current Setting: ",
-        "selectTaskHint": "Select a task from list to configure",
+        "selectTaskTip": "Please select a task from the list and click settings button first",
         "saveSuccess": "Saved successfully",
         "saveFail": "Save failed",
-        "selectTaskRequired": "Please select at least one task",
+        "taskRequired": "Please select at least one task",
         "taskUpdated": "Task Updated",
         "taskCreated": "Task Created",
         "tab": {
           "taskList": "Task List",
           "taskSettings": "Task Settings"
         },
-        "selectTaskTip": "Please select a task from the list and click settings button first",
-        "noOptions": "Nothing here",
-        "actions": {
-          "cancel": "Cancel",
-          "save": "Save"
-        }
+        "noOptions": "Nothing here"
       },
       "rules": {
         "nameRequired": "Please enter task name",
         "nameLength": "Task name length must be 1-100 characters",
         "cronRequired": "Please enter Cron expression",
         "cronInvalid": "Invalid Cron expression format",
+        "dateRequired": "Please select execution time",
+        "dateInPast": "Execution time cannot be in the past",
+        "intervalRequired": "Interval must be greater than 0",
         "taskListRequired": "Please select at least one task"
-      },
-      "messages": {
-        "successUpdate": "Task updated",
-        "successCreate": "Task created",
-        "failSave": "Save failed",
-        "failRetry": "Save failed, please try again later"
       }
     },
     "ui": {
@@ -198,10 +189,6 @@
     "stop": "Stop Task",
     "resetConfig": "Reset Config",
     "noDevice": "No available device",
-    "connectSuccess": "Connected successfully",
-    "connectFail": "Connection failed",
-    "resourceSuccess": "Resource loaded successfully",
-    "resourceFail": "Resource load failed",
     "selectTask": "Please select at least one task",
     "resetConfigConfirm": "Are you sure you want to reset all task configurations? This cannot be undone.",
     "configReset": "Configuration reset",
