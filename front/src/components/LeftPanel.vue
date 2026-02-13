@@ -39,38 +39,15 @@
   </n-card>
   <div class="col-name">{{ t("panel.taskList") }}</div>
   <n-card hoverable>
-    <n-list hoverable bordered>
-      <template v-if="scroll_show">
-        <n-scrollbar trigger="none" class="max-h-75">
-          <VueDraggable v-model="configStore.taskList">
-            <n-list-item v-for="item in configStore.taskList" :key="item.id">
-              <n-checkbox size="large" :label="item.name" v-model:checked="item.checked" />
-              <template #suffix>
-                <n-button quaternary circle @click="indexStore.SelectTask(item.id)">
-                  <template #icon>
-                    <n-icon><div class="i-mdi-cog-outline"></div></n-icon>
-                  </template>
-                </n-button>
-              </template>
-            </n-list-item>
-          </VueDraggable>
-        </n-scrollbar>
-      </template>
-      <template v-else>
-        <VueDraggable v-model="configStore.taskList">
-          <n-list-item v-for="item in configStore.taskList" :key="item.id">
-            <n-checkbox size="large" :label="item.name" v-model:checked="item.checked" />
-            <template #suffix>
-              <n-button quaternary circle @click="indexStore.SelectTask(item.id)">
-                <template #icon>
-                  <n-icon><div class="i-mdi-cog-outline"></div></n-icon>
-                </template>
-              </n-button>
-            </template>
-          </n-list-item>
-        </VueDraggable>
-      </template>
-    </n-list>
+    <TaskSelectList
+      :tasks="configStore.taskList"
+      :selected-tasks="selectedTaskIds"
+      :draggable="true"
+      :scrollable="scroll_show"
+      @update:tasks="handleTasksUpdate"
+      @update:selected-tasks="handleSelectedTasksUpdate"
+      @config="handleConfigTask"
+    />
     <n-flex class="form-btn" justify="center">
       <n-button strong secondary type="info" size="large" @click="StartTask">{{
         t("panel.start")
@@ -87,7 +64,7 @@
   </n-card>
 </template>
 <script setup lang="ts">
-import { watch, ref } from "vue"
+import { watch, ref, computed } from "vue"
 import { useI18n } from "vue-i18n"
 import {
   getDevices,
@@ -99,18 +76,20 @@ import {
   getResource,
   postResource,
 } from "../script/api"
-import { VueDraggable } from "vue-draggable-plus"
-import { useUserConfigStore } from "../stores/userConfig"
+import { useTaskConfigStore } from "../stores/taskConfig"
 import { useIndexStore } from "../stores"
 import type { TreeSelectOverrideNodeClickBehavior } from "naive-ui"
 import { useMessage, useDialog } from "naive-ui"
+import TaskSelectList from "./TaskSelectList.vue"
+import type { TaskListItem } from "../stores/interface"
+
 if (typeof window !== "undefined") {
   window.$message = useMessage()
 }
 
 const dialog = useDialog()
 const { t } = useI18n()
-const configStore = useUserConfigStore()
+const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
 const scroll_show = ref(window.innerWidth > 768)
 const device = ref<AdbDevice | Win32Device | null>(null)
@@ -123,6 +102,29 @@ const override: TreeSelectOverrideNodeClickBehavior = ({ option }) => {
     return "toggleExpand"
   }
   return "default"
+}
+
+// 计算选中的任务ID列表
+const selectedTaskIds = computed(() => {
+  return configStore.taskList.filter((task) => task.checked).map((task) => task.id)
+})
+
+// 处理任务列表更新（拖拽排序）
+function handleTasksUpdate(tasks: TaskListItem[]) {
+  configStore.taskList = tasks
+}
+
+// 处理选中状态更新
+function handleSelectedTasksUpdate(selectedIds: string[]) {
+  configStore.taskList = configStore.taskList.map((task) => ({
+    ...task,
+    checked: selectedIds.includes(task.id),
+  }))
+}
+
+// 处理配置任务
+function handleConfigTask(taskId: string) {
+  indexStore.SelectTask(taskId)
 }
 
 watch(

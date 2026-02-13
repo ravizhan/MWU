@@ -48,7 +48,7 @@ import { h, ref, onMounted, watch, computed, watchEffect } from "vue"
 import { RouterLink } from "vue-router"
 import { useI18n } from "vue-i18n"
 import { useInterfaceStore } from "./stores/interface.ts"
-import { useUserConfigStore } from "./stores/userConfig.ts"
+import { useTaskConfigStore } from "./stores/taskConfig.ts"
 import { useSettingsStore } from "./stores/settings"
 import { darkTheme } from "naive-ui"
 import { lightThemeOverrides, darkThemeOverrides } from "./theme"
@@ -64,7 +64,7 @@ function renderIcon(icon: string) {
 }
 const { t, locale } = useI18n()
 const interfaceStore = useInterfaceStore()
-const configStore = useUserConfigStore()
+const configStore = useTaskConfigStore()
 const settingsStore = useSettingsStore()
 const name = computed(() => interfaceStore.interface?.name || "")
 const offset = ref(0)

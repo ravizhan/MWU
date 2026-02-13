@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import { getUserConfig, saveUserConfig, resetUserConfig, type UserConfig } from "../script/api"
+import { getTaskConfig, saveTaskConfig, resetTaskConfig, type TaskConfig } from "../script/api"
 import { type TaskListItem, useInterfaceStore } from "./interface"
 import type { Option } from "../types/interface"
 
@@ -21,7 +21,7 @@ function buildDefaultsFromOptionMap(optionMap: Record<string, Option>): Record<s
   return options
 }
 
-export const useUserConfigStore = defineStore("userConfig", {
+export const useTaskConfigStore = defineStore("taskConfig", {
   state: () => {
     return {
       options: {} as Record<string, string>,
@@ -77,25 +77,25 @@ export const useUserConfigStore = defineStore("userConfig", {
     },
 
     async loadConfig() {
-      const userConfig = await getUserConfig()
+      const taskConfig = await getTaskConfig()
 
       this.options = this.buildDefaultOptions()
-      if (userConfig.taskOptions) {
-        Object.assign(this.options, userConfig.taskOptions)
+      if (taskConfig.taskOptions) {
+        Object.assign(this.options, taskConfig.taskOptions)
       }
 
       this.taskList = this.buildDefaultTaskList()
-      if (userConfig.taskOrder && userConfig.taskChecked) {
+      if (taskConfig.taskOrder && taskConfig.taskChecked) {
         const taskMap = new Map(this.taskList.map((task) => [task.id, task]))
         const reorderedTasks: TaskListItem[] = []
-        for (const id of userConfig.taskOrder) {
+        for (const id of taskConfig.taskOrder) {
           const task = taskMap.get(id)
           if (task) {
             reorderedTasks.push({
               id: task.id,
               name: task.name,
               order: task.order,
-              checked: userConfig.taskChecked?.[id] || false,
+              checked: taskConfig.taskChecked?.[id] || false,
             })
           }
         }
@@ -121,16 +121,16 @@ export const useUserConfigStore = defineStore("userConfig", {
         taskChecked[task.id] = task.checked || false
       })
 
-      const config: UserConfig = {
+      const config: TaskConfig = {
         taskOrder,
         taskChecked,
         taskOptions: { ...this.options },
       }
-      await saveUserConfig(config)
+      await saveTaskConfig(config)
     },
 
     async resetConfig() {
-      await resetUserConfig()
+      await resetTaskConfig()
       this.options = this.buildDefaultOptions()
       this.taskList = this.buildDefaultTaskList()
     },

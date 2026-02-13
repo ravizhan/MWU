@@ -1,12 +1,11 @@
 <template>
   <div class="col-name">{{ t("panel.taskSettings") }}</div>
   <n-card hoverable content-style="padding: 0;" class="transition-all duration-300 overflow-hidden">
-    <n-scrollbar trigger="none" class="max-h-65 !rounded-[12px]">
-      <n-list v-if="!isEmpty" hoverable>
-        <OptionItem v-for="optName in rootOptions" :key="optName" :name="optName" />
-      </n-list>
-      <div v-else class="py-[12px] px-[20px] min-h-50">{{ t("panel.empty") }}</div>
-    </n-scrollbar>
+    <TaskOptionPanel
+      :current-task-id="selectedTaskId"
+      :options="configStore.options"
+      :scrollbar-class="scrollbarClass"
+    />
   </n-card>
 
   <div class="col-name">{{ t("panel.taskDescription") }}</div>
@@ -21,20 +20,21 @@
 <script setup lang="ts">
 import { marked } from "marked"
 import type { Tokens } from "marked"
-import { ref, watch, nextTick } from "vue"
+import { ref, watch, nextTick, computed } from "vue"
 import { useI18n } from "vue-i18n"
 import { useInterfaceStore } from "../stores/interface.ts"
 import { useIndexStore } from "../stores"
+import { useTaskConfigStore } from "../stores/taskConfig"
 import { NImage } from "naive-ui"
-import OptionItem from "./OptionItem.vue"
+import TaskOptionPanel from "./TaskOptionPanel.vue"
 import DOMPurify from "dompurify"
 
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const indexStore = useIndexStore()
+const configStore = useTaskConfigStore()
 const md = ref("")
-const isEmpty = ref(true)
-const rootOptions = ref<string[]>([])
+const scrollbarClass = "max-h-65 !rounded-[12px]"
 
 const mdContainer = ref<HTMLElement | null>(null)
 const previewImageRef = ref<InstanceType<typeof NImage> | null>(null)
@@ -67,12 +67,13 @@ marked.setOptions({
   pedantic: false,
 })
 
+// 获取当前选中的任务ID
+const selectedTaskId = computed(() => indexStore.SelectedTaskID)
+
 watch(
   () => indexStore.SelectedTaskID,
   async (newTaskId) => {
-    // console.log(newTaskId)
     const interface_task = interfaceStore.interface?.task
-    // console.log(interface_task)
     if (!interface_task || interface_task.length === 0) {
       return
     }
@@ -83,9 +84,6 @@ watch(
         } else {
           md.value = marked(t("panel.empty")) as string
         }
-
-        rootOptions.value = i.option || []
-        isEmpty.value = rootOptions.value.length === 0
 
         nextTick(() => {
           setupImagePreview()

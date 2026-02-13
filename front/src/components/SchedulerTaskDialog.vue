@@ -119,49 +119,25 @@
         <!-- Tab 1: 任务列表 -->
         <n-tab-pane name="task-list" :tab="t('settings.scheduler.dialog.tab.taskList')">
           <n-scrollbar trigger="none" class="max-h-65 !rounded-[12px]">
-            <n-list hoverable bordered>
-              <n-list-item v-for="task in availableTasks" :key="task.id">
-                <n-checkbox
-                  size="large"
-                  :label="task.name"
-                  :checked="isTaskSelected(task.id)"
-                  @update:checked="(v: boolean) => toggleTaskSelection(task.id, v)"
-                />
-                <template #suffix>
-                  <n-button quaternary circle @click="openTaskSettings(task.id)">
-                    <template #icon>
-                      <n-icon><div class="i-mdi-cog-outline"></div></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-              </n-list-item>
-            </n-list>
+            <TaskSelectList
+              :tasks="availableTasks"
+              :selected-tasks="formData.task_list"
+              @update:selected-tasks="handleSelectedTasksUpdate"
+              @config="openTaskSettings"
+            />
           </n-scrollbar>
         </n-tab-pane>
 
         <!-- Tab 2: 任务设置 -->
         <n-tab-pane name="task-settings" :tab="t('settings.scheduler.dialog.tab.taskSettings')">
-          <div v-if="currentSettingTaskName" class="text-center">
-            <n-tag type="info" size="large">
-              {{ t("settings.scheduler.dialog.currentSetting") }}{{ currentSettingTaskName }}
-            </n-tag>
-          </div>
-          <n-scrollbar trigger="none" class="max-h-65 !rounded-[12px]">
-            <div v-if="currentSettingTaskId === null">
-              <n-empty :description="t('settings.scheduler.dialog.selectTaskTip')" />
-            </div>
-            <div v-else>
-              <n-list v-if="currentTaskOptions.length > 0" hoverable>
-                <OptionItem
-                  v-for="optName in currentTaskOptions"
-                  :key="optName"
-                  :name="optName"
-                  :options="formData.task_options"
-                />
-              </n-list>
-              <n-empty v-else :description="t('settings.scheduler.dialog.noOptions')" />
-            </div>
-          </n-scrollbar>
+          <TaskOptionPanel
+            :current-task-id="currentSettingTaskId"
+            :options="formData.task_options"
+            :show-header="true"
+            :header-label="t('settings.scheduler.dialog.currentSetting')"
+            :empty-text="t('settings.scheduler.dialog.selectTaskTip')"
+            :no-options-text="t('settings.scheduler.dialog.noOptions')"
+          />
         </n-tab-pane>
       </n-tabs>
     </n-form>
@@ -183,8 +159,9 @@ import { useMessage, type FormInst, type FormRules } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import { useSchedulerStore } from "../stores/scheduler"
 import { useInterfaceStore } from "../stores/interface"
-import { useUserConfigStore } from "../stores/userConfig"
-import OptionItem from "./OptionItem.vue"
+import { useTaskConfigStore } from "../stores/taskConfig"
+import TaskSelectList from "./TaskSelectList.vue"
+import TaskOptionPanel from "./TaskOptionPanel.vue"
 import type {
   ScheduledTask,
   ScheduledTaskCreate,
@@ -212,7 +189,7 @@ const message = useMessage()
 const { t } = useI18n()
 const schedulerStore = useSchedulerStore()
 const interfaceStore = useInterfaceStore()
-const configStore = useUserConfigStore()
+const configStore = useTaskConfigStore()
 
 const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
@@ -237,23 +214,6 @@ function normalizeTaskList(taskList: string[]) {
     .filter((item, index, self) => self.indexOf(item) === index)
 }
 
-// 获取完整的任务信息（包含 option）
-const getFullTask = (taskId: string) => {
-  return interfaceStore.interface?.task?.find((t) => t.entry === taskId)
-}
-
-const currentSettingTaskName = computed(() => {
-  if (!currentSettingTaskId.value) return ""
-  const task = availableTasks.value.find((t) => t.id === currentSettingTaskId.value)
-  return task?.name || ""
-})
-
-const currentTaskOptions = computed(() => {
-  if (!currentSettingTaskId.value) return []
-  const task = getFullTask(currentSettingTaskId.value)
-  return task?.option || []
-})
-
 // 触发器配置的 computed 属性
 const cronConfig = computed(() => formData.value.trigger_config as CronTriggerConfig)
 const dateConfig = computed(() => formData.value.trigger_config as DateTriggerConfig)
@@ -261,12 +221,6 @@ const dateConfigTimestamp = computed(() =>
   dateConfig.value.run_date ? new Date(dateConfig.value.run_date).getTime() : null,
 )
 const intervalConfig = computed(() => formData.value.trigger_config as IntervalTriggerConfig)
-
-// 检查任务是否被选中
-const isTaskSelected = (taskId: string) => {
-  const task = availableTasks.value.find((t) => t.id === taskId)
-  return task ? formData.value.task_list.includes(task.id) : false
-}
 
 const formData = ref<ScheduledTaskCreate>(initFormData(props.task))
 
@@ -277,7 +231,7 @@ const formRules = computed<FormRules>(() => ({
   ],
   "trigger_config.cron": [
     {
-      validator: (rule, value: any) => {
+      validator: (rule, value: string) => {
         if (formData.value.trigger_type !== "cron") return true
         if (!value) return new Error(t("settings.scheduler.rules.cronRequired"))
         const pattern =
@@ -290,7 +244,7 @@ const formRules = computed<FormRules>(() => ({
   ],
   "trigger_config.run_date": [
     {
-      validator: (rule, value: any) => {
+      validator: (rule, value: string) => {
         if (formData.value.trigger_type !== "date") return true
         if (!value) return new Error(t("settings.scheduler.rules.dateRequired"))
         if (new Date(value).getTime() < Date.now())
@@ -302,10 +256,9 @@ const formRules = computed<FormRules>(() => ({
   ],
   trigger_config: [
     {
-      validator: (rule, value: any) => {
+      validator: (rule, value: IntervalTriggerConfig) => {
         if (formData.value.trigger_type !== "interval") return true
-        const config = value as IntervalTriggerConfig
-        if ((config.hours || 0) <= 0 && (config.minutes || 0) <= 0) {
+        if ((value.hours || 0) <= 0 && (value.minutes || 0) <= 0) {
           return new Error(t("settings.scheduler.rules.intervalRequired"))
         }
         return true
@@ -378,14 +331,17 @@ function getTriggerConfigByType(
 ): TriggerConfig {
   switch (type) {
     case "cron":
-      return { type: "cron", cron: (existing as any)?.cron ?? "0 0 * * *" }
+      return { type: "cron", cron: (existing as CronTriggerConfig)?.cron ?? "0 0 * * *" }
     case "date":
-      return { type: "date", run_date: (existing as any)?.run_date ?? new Date().toISOString() }
+      return {
+        type: "date",
+        run_date: (existing as DateTriggerConfig)?.run_date ?? new Date().toISOString(),
+      }
     case "interval":
       return {
         type: "interval",
-        hours: (existing as any)?.hours ?? 1,
-        minutes: (existing as any)?.minutes ?? 0,
+        hours: (existing as IntervalTriggerConfig)?.hours ?? 1,
+        minutes: (existing as IntervalTriggerConfig)?.minutes ?? 0,
       } as IntervalTriggerConfig
     default:
       return { type: "cron", cron: "0 0 * * *" }
@@ -409,22 +365,9 @@ function setCronPreset(preset: string) {
   updateTriggerConfig({ cron: presets[preset] })
 }
 
-function toggleTaskSelection(taskId: string, checked: boolean) {
-  const task = availableTasks.value.find((t) => t.id === taskId)
-  if (!task) return
-
-  formData.value.task_list = normalizeTaskList(formData.value.task_list)
-
-  if (checked) {
-    if (!formData.value.task_list.includes(task.id)) {
-      formData.value.task_list.push(task.id)
-    }
-  } else {
-    formData.value.task_list = formData.value.task_list.filter((id) => id !== task.id)
-    if (currentSettingTaskId.value === taskId) {
-      currentSettingTaskId.value = null
-    }
-  }
+// 处理任务选择更新
+function handleSelectedTasksUpdate(newSelectedTasks: string[]) {
+  formData.value.task_list = normalizeTaskList(newSelectedTasks)
 }
 
 function openTaskSettings(taskId: string) {

@@ -13,7 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from models.interface import InterfaceModel
-from models.api import DeviceModel, UserConfig
+from models.api import DeviceModel
+from models.task_config import TaskConfigModel
 from models.settings import SettingsModel
 from models.scheduler import ScheduledTaskCreate, ScheduledTaskUpdate
 from maa_utils import MaaWorker
@@ -194,33 +195,33 @@ def set_settings(settings: SettingsModel):
     return {"status": "success"}
 
 
-@app.get("/api/user-config")
-def get_user_config():
+@app.get("/api/task-config")
+def get_task_config():
     try:
-        with open("config/user_config.json", "r", encoding="utf-8") as f:
+        with open("config/task_config.json", "r", encoding="utf-8") as f:
             config_data = json.load(f)
-        user_config = UserConfig(**config_data)
+        user_config = TaskConfigModel(**config_data)
         return {"status": "success", "config": user_config.model_dump()}
     except FileNotFoundError:
-        return {"status": "success", "config": UserConfig().model_dump()}
+        return {"status": "success", "config": TaskConfigModel().model_dump()}
     except Exception as e:
         return {"status": "failed", "message": str(e)}
 
 
-@app.post("/api/user-config")
-def save_user_config(config: UserConfig):
+@app.post("/api/task-config")
+def save_task_config(config: TaskConfigModel):
     try:
-        with open("config/user_config.json", "w", encoding="utf-8") as f:
+        with open("config/task_config.json", "w", encoding="utf-8") as f:
             json.dump(config.model_dump(), f, indent=4, ensure_ascii=False)
         return {"status": "success"}
     except Exception as e:
         return {"status": "failed", "message": str(e)}
 
 
-@app.delete("/api/user-config")
-def reset_user_config():
+@app.delete("/api/task-config")
+def reset_task_config():
     try:
-        config_path = "config/user_config.json"
+        config_path = "config/task_config.json"
         if os.path.exists(config_path):
             os.remove(config_path)
         return {"status": "success"}

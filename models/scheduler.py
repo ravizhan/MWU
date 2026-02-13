@@ -44,7 +44,7 @@ class ScheduledTask(BaseModel):
         ..., description="触发器类型"
     )
     trigger_config: TriggerConfig = Field(..., description="触发器配置")
-    task_list: List[str] = Field(..., min_items=1, description="要执行的任务列表")
+    task_list: List[str] = Field(default_factory=list, description="要执行的任务列表")
     task_options: Dict[str, str] = Field(default_factory=dict, description="任务选项")
     next_run_time: Optional[datetime] = Field(None, description="下次执行时间")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
@@ -59,7 +59,7 @@ class ScheduledTaskCreate(BaseModel):
     enabled: bool = True
     trigger_type: Literal["cron", "date", "interval"]
     trigger_config: TriggerConfig
-    task_list: List[str] = Field(..., min_items=1)
+    task_list: List[str] = Field(default_factory=list)
     task_options: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -71,7 +71,7 @@ class ScheduledTaskUpdate(BaseModel):
     enabled: Optional[bool] = None
     trigger_type: Optional[Literal["cron", "date", "interval"]] = None
     trigger_config: Optional[TriggerConfig] = None
-    task_list: Optional[List[str]] = Field(None, min_items=1)
+    task_list: Optional[List[str]] = None
     task_options: Optional[Dict[str, str]] = None
 
 

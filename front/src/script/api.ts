@@ -235,37 +235,37 @@ export function checkUpdate(): Promise<{
     })
 }
 
-export interface UserConfig {
+export interface TaskConfig {
   taskOrder?: string[]
   taskChecked?: Record<string, boolean>
   taskOptions?: Record<string, string>
 }
 
-interface UserConfigResponse {
+interface TaskConfigResponse {
   status: string
-  config: UserConfig
+  config: TaskConfig
   message?: string
 }
 
-export function getUserConfig(): Promise<UserConfig> {
-  return fetch("/api/user-config", { method: "GET" })
+export function getTaskConfig(): Promise<TaskConfig> {
+  return fetch("/api/task-config", { method: "GET" })
     .then((res) => res.json())
-    .then((data: UserConfigResponse) => {
+    .then((data: TaskConfigResponse) => {
       if (data.status === "success") {
         return data.config || {}
       } else {
-        console.error("Failed to load user config:", data.message)
+        console.error("Failed to load task config:", data.message)
         return {}
       }
     })
     .catch((error) => {
-      console.error("Failed to load user config:", error)
+      console.error("Failed to load task config:", error)
       return {}
     })
 }
 
-export function saveUserConfig(config: UserConfig): Promise<boolean> {
-  return fetch("/api/user-config", {
+export function saveTaskConfig(config: TaskConfig): Promise<boolean> {
+  return fetch("/api/task-config", {
     method: "POST",
     body: JSON.stringify(config),
     headers: {
@@ -277,18 +277,18 @@ export function saveUserConfig(config: UserConfig): Promise<boolean> {
       if (data.status === "success") {
         return true
       } else {
-        console.error("Failed to save user config:", data.message)
+        console.error("Failed to save task config:", data.message)
         return false
       }
     })
     .catch((error) => {
-      console.error("Failed to save user config:", error)
+      console.error("Failed to save task config:", error)
       return false
     })
 }
 
-export function resetUserConfig(): Promise<boolean> {
-  return fetch("/api/user-config", {
+export function resetTaskConfig(): Promise<boolean> {
+  return fetch("/api/task-config", {
     method: "DELETE",
     headers: {
       "Content-Type": "application/json",
@@ -299,12 +299,12 @@ export function resetUserConfig(): Promise<boolean> {
       if (data.status === "success") {
         return true
       } else {
-        console.error("Failed to reset user config:", data.message)
+        console.error("Failed to reset task config:", data.message)
         return false
       }
     })
     .catch((error) => {
-      console.error("Failed to reset user config:", error)
+      console.error("Failed to reset task config:", error)
       return false
     })
 }
