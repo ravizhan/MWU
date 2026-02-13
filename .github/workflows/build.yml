@@ -140,15 +140,15 @@ jobs:
 
       - name: Build Executable
         if: ${{ matrix.os == 'windows-11-arm' || matrix.os == 'windows-2025' }}
-        run: uv run python -m nuitka --standalone --lto=no --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove-output --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=no --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'linux' }}
-        run: uv run python -m nuitka --standalone --lto=no --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove-output --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=no --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'osx' }}
-        run: uv run python -m nuitka --standalone --lto=no --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove-output --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=no --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --remove --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
 
       - name: Build Updater
         if: ${{ matrix.platform != 'win' }}

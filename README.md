@@ -49,7 +49,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 如果您选择低代码或低代码+Agent方案，只需按照指引使用 [MaaFramework 项目模板](https://github.com/MaaXYZ/MaaPracticeBoilerplate) 创建项目，然后将其中的 `.github/workflows/install.yml` 替换为本项目的 [deploy/install.yaml](https://github.com/ravizhan/MWU/blob/main/deploy/install.yml) 即可。
 
-如果您选择全代码开发集成，并且也想使用本项目的UI，请继续阅读 [项目架构与开发](#🏗️ 项目架构与开发)
+如果您选择全代码开发集成，并且也想使用本项目的UI，请继续阅读 [项目架构与开发](https://github.com/ravizhan/MWU#%EF%B8%8F-%E9%A1%B9%E7%9B%AE%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%BC%80%E5%8F%91)
 
 ### ⚙️ 配置清单
 
