@@ -5,6 +5,8 @@ from typing import Optional, Literal
 class Update(BaseModel):
     autoUpdate: bool
     updateChannel: Literal["stable", "beta"]
+    updateSource: Literal["mirrorchyan", "github"] = "mirrorchyan"
+    cdk: str = ""
     proxy: str
 
 

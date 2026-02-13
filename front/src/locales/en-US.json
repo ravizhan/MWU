@@ -37,7 +37,11 @@
       "check": "Check for Updates",
       "auto": "Auto Update",
       "channel": "Update Channel",
+      "source": "Update Source",
       "proxy": "Proxy Address",
+      "cdk": "CDK Activation Key",
+      "cdkPlaceholder": "Enter MirrorChyan CDK (optional)",
+      "cdkLink": "Get CDK",
       "checking": "Checking...",
       "latest": "You are using the latest version",
       "failed": "Failed to check for updates",
@@ -56,6 +60,18 @@
       "channelOptions": {
         "stable": "Stable",
         "beta": "Beta"
+      },
+      "sourceOptions": {
+        "mirrorchyan": "MirrorChyan",
+        "github": "GitHub"
+      },
+      "cdkError": {
+        "title": "CDK Error",
+        "expired": "CDK has expired",
+        "invalid": "CDK is invalid",
+        "quotaExhausted": "CDK daily download limit reached",
+        "mismatched": "CDK type does not match resource",
+        "blocked": "CDK has been blocked"
       }
     },
     "runtime": {

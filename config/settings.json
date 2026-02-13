@@ -2,6 +2,8 @@
     "update": {
         "autoUpdate": true,
         "updateChannel": "stable",
+        "updateSource": "mirrorchyan",
+        "cdk": "",
         "proxy": ""
     },
     "notification": {

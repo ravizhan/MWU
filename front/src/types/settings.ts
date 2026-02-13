@@ -2,6 +2,8 @@
 export interface UpdateSettings {
   autoUpdate: boolean
   updateChannel: "stable" | "beta"
+  updateSource: "mirrorchyan" | "github"
+  cdk: string
   proxy: string
 }
 

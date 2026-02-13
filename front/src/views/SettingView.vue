@@ -68,6 +68,20 @@
                   @update:value="(val: boolean) => handleSettingChange('update', 'autoUpdate', val)"
                 />
               </n-form-item>
+              <n-form-item :label="t('settings.update.source')">
+                <n-select
+                  v-model:value="settings.update.updateSource"
+                  :options="updateSourceOptions"
+                  @update:value="
+                    (val: string) =>
+                      handleSettingChange(
+                        'update',
+                        'updateSource',
+                        val as SettingsModel['update']['updateSource'],
+                      )
+                  "
+                />
+              </n-form-item>
               <n-form-item :label="t('settings.update.channel')">
                 <n-select
                   v-model:value="settings.update.updateChannel"
@@ -81,6 +95,28 @@
                       )
                   "
                 />
+              </n-form-item>
+              <n-form-item :label="t('settings.update.cdk')">
+                <n-input-group>
+                  <n-input
+                    v-model:value="settings.update.cdk"
+                    :placeholder="t('settings.update.cdkPlaceholder')"
+                    type="password"
+                    show-password-on="click"
+                    clearable
+                    @blur="handleSettingChange('update', 'cdk', settings.update.cdk)"
+                    style="flex: 1"
+                  />
+                  <n-button
+                    text
+                    type="primary"
+                    tag="a"
+                    href="https://mirrorchyan.com"
+                    target="_blank"
+                  >
+                    {{ t("settings.update.cdkLink") }}
+                  </n-button>
+                </n-input-group>
               </n-form-item>
               <n-form-item :label="t('settings.update.proxy')">
                 <n-input
@@ -546,6 +582,11 @@ const updateInfo = ref<UpdateInfo | null>(null)
 const updateChannelOptions = computed(() => [
   { label: t("settings.update.channelOptions.stable"), value: "stable" },
   { label: t("settings.update.channelOptions.beta"), value: "beta" },
+])
+
+const updateSourceOptions = computed(() => [
+  { label: t("settings.update.sourceOptions.mirrorchyan"), value: "mirrorchyan" },
+  { label: t("settings.update.sourceOptions.github"), value: "github" },
 ])
 
 const methodOptions = [

@@ -18,6 +18,18 @@
             </template>
           </n-alert>
 
+          <n-alert
+            v-if="props.updateInfo?.error_code && props.updateInfo?.error_message"
+            :title="t('settings.update.cdkError.title')"
+            type="warning"
+          >
+            {{ getCdkErrorMessage(props.updateInfo.error_code, props.updateInfo.error_message) }}
+          </n-alert>
+
+          <n-alert v-if="!props.updateInfo?.download_url" type="warning">
+            {{ t("settings.update.cdkPlaceholder") }}
+          </n-alert>
+
           <n-card :title="t('settings.update.updateLog')" size="small">
             <div class="markdown-body max-h-100 overflow-y-auto" v-html="renderedMarkdown"></div>
           </n-card>
@@ -65,8 +77,9 @@
           type="primary"
           @click="handleUpdate"
           :loading="isUpdating"
+          :disabled="!canUpdate || isUpdating"
         >
-          {{ t("settings.update.updateNow") }}
+          {{ canUpdate ? t("settings.update.updateNow") : t("settings.update.cdkPlaceholder") }}
         </n-button>
         <n-button v-if="updateState === 'failed'" @click="handleClose">
           {{ t("common.confirm") }}
@@ -140,6 +153,28 @@ const renderedMarkdown = computed(() => {
     return "<p>" + t("panel.empty") + "</p>"
   }
   return DOMPurify.sanitize(marked.parse(props.updateInfo.release_notes) as string)
+})
+
+const getCdkErrorMessage = (errorCode: number, errorMsg: string): string => {
+  // MirrorChyan error codes
+  switch (errorCode) {
+    case 7001:
+      return t("settings.update.cdkError.expired")
+    case 7002:
+      return t("settings.update.cdkError.invalid")
+    case 7003:
+      return t("settings.update.cdkError.quotaExhausted")
+    case 7004:
+      return t("settings.update.cdkError.mismatched")
+    case 7005:
+      return t("settings.update.cdkError.blocked")
+    default:
+      return errorMsg
+  }
+}
+
+const canUpdate = computed(() => {
+  return props.updateInfo?.download_url && props.updateInfo?.download_url.length > 0
 })
 
 let pollTimer: number | null = null

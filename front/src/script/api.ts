@@ -185,6 +185,10 @@ export interface UpdateInfo {
   download_url: string
   file_hash: string
   file_name: string
+  source?: "mirrorchyan" | "github"
+  update_type?: "incremental" | "full"
+  error_code?: number
+  error_message?: string
 }
 
 export interface UpdateCheckResponse {

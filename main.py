@@ -23,6 +23,66 @@ import httpx
 import subprocess
 import time
 import hashlib
+import re
+
+MIRRORCHYAN_API_BASES = [
+    "https://mirrorchyan.com/api/resources",
+    "https://mirrorchyan.net/api/resources",
+]
+
+
+def get_os() -> str:
+    """获取操作系统类型"""
+    system = platform.system()
+    if system == "Windows":
+        return "windows"
+    elif system == "Darwin":
+        return "darwin"
+    elif system == "Linux":
+        return "linux"
+    return ""
+
+
+def get_arch() -> str:
+    """获取 CPU 架构"""
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    elif machine in ("arm", "aarch64", "arm64"):
+        return "aarch64"
+    return "x86_64"
+
+
+def compare_versions(v1: str, v2: str) -> int:
+    """比较版本号，返回正数表示 v1 > v2，负数表示 v1 < v2，0 表示相等"""
+    # 移除 v 前缀并解析版本号
+    v1_clean = v1.lstrip("v")
+    v2_clean = v2.lstrip("v")
+
+    def parse_version(v: str) -> tuple:
+        # 提取数字部分
+        parts = re.split(r"[.\-]", v)
+        result = []
+        for p in parts:
+            match = re.match(r"(\d+)", p)
+            if match:
+                result.append(int(match.group(1)))
+        return tuple(result) if result else (0,)
+
+    v1_parts = parse_version(v1_clean)
+    v2_parts = parse_version(v2_clean)
+
+    # 补齐版本号长度
+    max_len = max(len(v1_parts), len(v2_parts))
+    v1_parts = v1_parts + (0,) * (max_len - len(v1_parts))
+    v2_parts = v2_parts + (0,) * (max_len - len(v2_parts))
+
+    if v1_parts > v2_parts:
+        return 1
+    elif v1_parts < v2_parts:
+        return -1
+    return 0
+
 
 with open("interface.json", "r", encoding="utf-8") as f:
     json_data = json.load(f)
@@ -229,17 +289,127 @@ def reset_task_config():
         return {"status": "failed", "message": str(e)}
 
 
-@app.get("/api/update/check")
-def check_update():
+def check_update_from_mirrorchyan(
+    rid: str,
+    current_version: str,
+    cdk: str | None,
+    channel: str,
+    proxy: str | None,
+) -> dict | None:
+    """从 MirrorChyan API 检查更新"""
+    params = {
+        "current_version": current_version,
+        "user_agent": "MWU",
+        "channel": channel,
+    }
+
+    os_type = get_os()
+    arch_type = get_arch()
+    if os_type:
+        params["os"] = os_type
+    if arch_type:
+        params["arch"] = arch_type
+
+    # CDK 是可选的，无 CDK 时也可以检查版本（但可能无法获取下载链接）
+    if cdk:
+        params["cdk"] = cdk
+
+    headers = {"User-Agent": f"MWU/{current_version} ({os_type}; {arch_type})"}
+
+    proxies = {"http://": proxy, "https://": proxy} if proxy else None
+
+    for api_base in MIRRORCHYAN_API_BASES:
+        try:
+            url = f"{api_base}/{rid}/latest"
+            response = httpx.get(
+                url, params=params, headers=headers, proxy=proxy, timeout=30
+            )
+            data = response.json()
+
+            if data.get("code") != 0:
+                # API 返回错误，但有版本信息时仍然返回
+                if data.get("data", {}).get("version_name"):
+                    pass  # 继续处理
+                else:
+                    print(
+                        f"MirrorChyan API error: {data.get('code')}, {data.get('msg')}"
+                    )
+                    continue
+
+            resp_data = data.get("data", {})
+            if not resp_data:
+                continue
+
+            version_name = resp_data.get("version_name", "")
+            has_update = compare_versions(version_name, current_version) > 0
+
+            result = {
+                "latest_version": version_name,
+                "current_version": current_version,
+                "is_update_available": has_update,
+                "release_notes": resp_data.get("release_note", ""),
+                "download_url": resp_data.get("url", ""),
+                "update_type": resp_data.get("update_type", "full"),
+                "file_hash": resp_data.get("sha256", ""),
+                "source": "mirrorchyan",
+            }
+
+            # 如果有 CDK 错误码，添加提示
+            if data.get("code", 0) != 0:
+                result["error_code"] = data.get("code")
+                result["error_message"] = data.get("msg")
+
+            # 从 URL 提取文件名
+            if resp_data.get("url"):
+                url_path = resp_data["url"].split("?")[0]
+                result["file_name"] = url_path.split("/")[-1]
+            elif resp_data.get("filesize"):
+                # 根据平台生成文件名
+                ext = ".zip"
+                plat = "linux"
+                match platform.system():
+                    case "Windows":
+                        plat = "win"
+                    case "Darwin":
+                        plat = "macos"
+                    case "Linux":
+                        plat = "linux"
+
+                machine = platform.machine().lower()
+                match machine:
+                    case "x86_64" | "amd64":
+                        arch = "x86_64"
+                    case "arm" | "aarch64" | "arm64":
+                        arch = "aarch64"
+                    case _:
+                        arch = "x86_64"
+
+                result["file_name"] = f"MWU-{version_name}-{plat}-{arch}{ext}"
+
+            return result
+
+        except Exception as e:
+            print(f"MirrorChyan API request failed: {e}")
+            continue
+
+    return None
+
+
+def check_update_from_github(current_version: str, proxy: str | None) -> dict | None:
+    """从 GitHub Releases API 检查更新（后备方案）"""
     try:
+        if not interface.github:
+            return None
+
         repo_name = (
             interface.github.split("/")[3] + "/" + interface.github.split("/")[4]
         )
         response = httpx.get(
-            f"https://api.github.com/repos/{repo_name}/releases/latest"
+            f"https://api.github.com/repos/{repo_name}/releases/latest",
+            proxy=proxy,
+            timeout=30,
         ).json()
         latest_version = response["tag_name"]
-        current_version = interface.version
 
         plat = "linux"
         arch = "x64"
@@ -261,20 +431,72 @@ def check_update():
         for asset in response.get("assets", []):
             if f"{plat}-{arch}" in asset["name"]:
                 download_url = asset["browser_download_url"]
-                file_hash = asset["digest"].replace("sha256:", "").strip()
-                app_state.update_info = {
+                file_hash = asset.get("digest", "").replace("sha256:", "").strip()
+                if not file_hash:
+                    file_hash = ""
+                return {
                     "latest_version": latest_version,
                     "current_version": current_version,
                     "is_update_available": latest_version != current_version,
-                    "release_notes": response["body"],
+                    "release_notes": response.get("body", ""),
                     "download_url": download_url,
                     "file_hash": file_hash,
                     "file_name": asset["name"],
+                    "source": "github",
                 }
-                return {"status": "success", "update_info": app_state.update_info}
         return {
             "status": "failed",
             "message": f"未找到适合当前平台的更新包:{plat}-{arch}",
+        }
+    except Exception as e:
+        print(f"GitHub API request failed: {e}")
+        return None
+
+
+@app.get("/api/update/check")
+def check_update():
+    try:
+        current_version = interface.version or "0.0.0"
+        proxy = app_state.settings.update.proxy if app_state.settings else None
+        cdk = app_state.settings.update.cdk if app_state.settings else ""
+        channel = (
+            app_state.settings.update.updateChannel if app_state.settings else "stable"
+        )
+        update_source = (
+            app_state.settings.update.updateSource
+            if app_state.settings
+            else "mirrorchyan"
+        )
+        rid = interface.mirrorchyan_rid
+
+        # 根据更新源决定使用哪个 API
+        if update_source == "mirrorchyan" and rid:
+            result = check_update_from_mirrorchyan(
+                rid=rid,
+                current_version=current_version,
+                cdk=cdk if cdk else None,
+                channel=channel,
+                proxy=proxy,
+            )
+            if result:
+                # 如果 MirrorChyan 没有下载链接但有 CDK 错误，尝试返回错误信息
+                if result.get("error_code"):
+                    # CDK 相关错误，仍然返回版本信息但标记错误
+                    pass
+                app_state.update_info = result
+                return {"status": "success", "update_info": result}
+
+        # 回退到 GitHub API
+        result = check_update_from_github(current_version, proxy)
+        if result:
+            if result.get("status") == "failed":
+                return result
+            app_state.update_info = result
+            return {"status": "success", "update_info": result}
+
+        return {
+            "status": "failed",
+            "message": "更新检查失败，请检查网络连接",
         }
     except Exception as e:
         return {"status": "failed", "message": str(e)}
