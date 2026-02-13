@@ -232,6 +232,79 @@ def reset_task_config():
 @app.get("/api/update/check")
 def check_update():
     try:
+        # 判断是否启用 MirrorChyan
+        mirrorchyan_rid = interface.mirrorchyan_rid
+        mirrorchyan_cdk = app_state.settings.update.mirrorchyanCdk or ""
+        channel = app_state.settings.update.updateChannel
+
+        # 如果配置了 mirrorchyan_rid，优先使用 MirrorChyan API
+        if mirrorchyan_rid:
+            plat = "linux"
+            arch = "x64"
+            match platform.system():
+                case "Windows":
+                    plat = "windows"
+                case "Darwin":
+                    plat = "macos"
+                case "Linux":
+                    plat = "linux"
+
+            machine = platform.machine().lower()
+            match machine:
+                case "x86_64" | "amd64":
+                    arch = "x86_64"
+                case "arm" | "aarch64" | "arm64":
+                    arch = "aarch64"
+
+            # 构建 MirrorChyan API 请求
+            params = {
+                "current_version": interface.version or "0.0.0",
+                "user_agent": "MWU",
+                "channel": channel,
+                "os": plat,
+                "arch": arch,
+            }
+            if mirrorchyan_cdk:
+                params["cdk"] = mirrorchyan_cdk
+
+            try:
+                response = httpx.get(
+                    f"https://mirrorchyan.com/api/resources/{mirrorchyan_rid}/latest",
+                    params=params,
+                    timeout=30,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("code") == 0 and data.get("data"):
+                        update_data = data["data"]
+                        # 使用 MirrorChyan 返回的下载链接
+                        download_url = update_data.get("url")
+                        release_notes = update_data.get("release_note", "")
+                        latest_version = update_data.get("version_name", "0.0.0")
+
+                        # 如果 MirrorChyan 没有返回下载链接（CDK 无效或未付费），回退到 GitHub
+                        if not download_url:
+                            raise Exception("MirrorChyan 未返回下载链接，回退到 GitHub")
+
+                        current_version = interface.version or "0.0.0"
+                        app_state.update_info = {
+                            "latest_version": latest_version,
+                            "current_version": current_version,
+                            "is_update_available": latest_version != current_version,
+                            "release_notes": release_notes,
+                            "download_url": download_url,
+                            "file_hash": "",  # MirrorChyan 不提供 hash，使用空字符串
+                            "file_name": download_url.split("/")[-1],
+                            "source": "mirrorchyan",
+                        }
+                        return {
+                            "status": "success",
+                            "update_info": app_state.update_info,
+                        }
+            except Exception as e:
+                print(f"[Update] MirrorChyan API failed: {e}, falling back to GitHub")
+
+        # 回退到 GitHub API
         repo_name = (
             interface.github.split("/")[3] + "/" + interface.github.split("/")[4]
         )
@@ -261,7 +334,11 @@ def check_update():
         for asset in response.get("assets", []):
             if f"{plat}-{arch}" in asset["name"]:
                 download_url = asset["browser_download_url"]
-                file_hash = asset["digest"].replace("sha256:", "").strip()
+                file_hash = (
+                    asset.get("digest", "").replace("sha256:", "").strip()
+                    if asset.get("digest")
+                    else ""
+                )
                 app_state.update_info = {
                     "latest_version": latest_version,
                     "current_version": current_version,
@@ -270,6 +347,7 @@ def check_update():
                     "download_url": download_url,
                     "file_hash": file_hash,
                     "file_name": asset["name"],
+                    "source": "github",
                 }
                 return {"status": "success", "update_info": app_state.update_info}
         return {
@@ -305,11 +383,13 @@ async def perform_update():
 
         try:
             await download_file(download_url, update_package_path)
-            with open(update_package_path, "rb") as f:
-                file_bytes = f.read()
-                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-                if sha256_hash != app_state.update_info["file_hash"]:
-                    raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
+            # 只有 GitHub 源才校验 hash，MirrorChyan 跳过校验
+            if app_state.update_info.get("file_hash"):
+                with open(update_package_path, "rb") as f:
+                    file_bytes = f.read()
+                    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+                    if sha256_hash != app_state.update_info["file_hash"]:
+                        raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
         except Exception as e:
             app_state.update_status = {"status": "failed", "message": f"下载失败: {e}"}
             return {"status": "failed", "message": str(e)}

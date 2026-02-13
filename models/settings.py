@@ -6,6 +6,7 @@ class Update(BaseModel):
     autoUpdate: bool
     updateChannel: Literal["stable", "beta"]
     proxy: str
+    mirrorchyanCdk: Optional[str] = ""
 
 
 class Notification(BaseModel):

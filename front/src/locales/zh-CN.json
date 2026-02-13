@@ -38,6 +38,8 @@
       "auto": "自动更新",
       "channel": "更新渠道",
       "proxy": "代理地址",
+      "mirrorchyanCdk": "MirrorChyan CDK",
+      "mirrorchyanCdkPlaceholder": "输入 CDK 以使用 MirrorChyan 加速下载",
       "checking": "正在检查...",
       "latest": "当前已是最新版本",
       "failed": "检查更新失败",

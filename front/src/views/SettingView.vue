@@ -90,6 +90,19 @@
                   @blur="handleSettingChange('update', 'proxy', settings.update.proxy)"
                 />
               </n-form-item>
+              <n-form-item
+                :label="t('settings.update.mirrorchyanCdk')"
+                v-if="interfaceStore.interface?.mirrorchyan_rid"
+              >
+                <n-input
+                  v-model:value="settings.update.mirrorchyanCdk"
+                  :placeholder="t('settings.update.mirrorchyanCdkPlaceholder')"
+                  clearable
+                  @blur="
+                    handleSettingChange('update', 'mirrorchyanCdk', settings.update.mirrorchyanCdk)
+                  "
+                />
+              </n-form-item>
             </n-form>
           </n-card>
 
@@ -499,6 +512,7 @@
 import { ref, onMounted, computed } from "vue"
 import { useSettingsStore } from "../stores/settings"
 import { useSchedulerStore } from "../stores/scheduler"
+import { useInterfaceStore } from "../stores/interface"
 import { checkUpdateApi, testNotificationApi, type UpdateInfo } from "../script/api"
 import { useMessage, useDialog } from "naive-ui"
 import { useI18n } from "vue-i18n"
@@ -518,18 +532,8 @@ const message = useMessage()
 const dialog = useDialog()
 const { t, locale } = useI18n()
 const settingsStore = useSettingsStore()
-
-const localeOptions = [
-  { label: "简体中文", value: "zh-CN" },
-  { label: "English", value: "en-US" },
-]
-
-const handleLocaleChange = (val: string) => {
-  locale.value = val
-  localStorage.setItem("locale", val)
-}
-
 const schedulerStore = useSchedulerStore()
+const interfaceStore = useInterfaceStore()
 
 if (typeof window !== "undefined") {
   window.$message = message
