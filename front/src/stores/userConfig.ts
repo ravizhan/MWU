@@ -1,6 +1,25 @@
 import { defineStore } from "pinia"
 import { getUserConfig, saveUserConfig, resetUserConfig, type UserConfig } from "../script/api"
 import { type TaskListItem, useInterfaceStore } from "./interface"
+import type { Option } from "../types/interface"
+
+// 根据选项定义生成默认值
+function buildDefaultsFromOptionMap(optionMap: Record<string, Option>): Record<string, string> {
+  const options: Record<string, string> = {}
+  for (const key in optionMap) {
+    const option = optionMap[key]!
+    if (option.type === "select") {
+      options[key] = option.default_case || option.cases[0]?.name || ""
+    } else if (option.type === "input") {
+      for (const input of option.inputs) {
+        options[`${key}_${input.name}`] = input.default || ""
+      }
+    } else if (option.type === "switch") {
+      options[key] = option.default_case || option.cases[0]?.name || ""
+    }
+  }
+  return options
+}
 
 export const useUserConfigStore = defineStore("userConfig", {
   state: () => {
@@ -14,23 +33,42 @@ export const useUserConfigStore = defineStore("userConfig", {
   actions: {
     buildDefaultOptions() {
       const interfaceStore = useInterfaceStore()
-      const options: Record<string, string> = {}
       const optionMap = interfaceStore.interface?.option || {}
+      return buildDefaultsFromOptionMap(optionMap)
+    },
 
-      for (const key in optionMap) {
-        const option = optionMap[key]!
-        if (option.type === "select") {
-          options[key] = option.default_case || option.cases[0]?.name || ""
-        } else if (option.type === "input") {
-          for (const input of option.inputs) {
-            options[`${key}_${input.name}`] = input.default || ""
-          }
-        } else if (option.type === "switch") {
-          options[key] = option.cases[0]?.name || ""
+    // 根据任务ID列表获取所需的选项（带默认值和用户覆盖）
+    buildOptionsForTasks(
+      taskIds: string[],
+      overrides: Record<string, string> = {},
+    ): Record<string, string> {
+      const interfaceStore = useInterfaceStore()
+      const mergedOptionMap: Record<string, Option> = {}
+
+      // 收集所有选中任务的选项
+      for (const taskId of taskIds) {
+        const taskOptions = interfaceStore.getOptionList(taskId)
+        Object.assign(mergedOptionMap, taskOptions)
+      }
+
+      // 生成默认值
+      const defaults = buildDefaultsFromOptionMap(mergedOptionMap)
+
+      // 只过滤出相关的用户配置
+      const relevantOptions: Record<string, string> = {}
+      for (const key of Object.keys(defaults)) {
+        if (this.options[key] !== undefined) {
+          relevantOptions[key] = this.options[key]
+        }
+        if (overrides[key] !== undefined) {
+          relevantOptions[key] = overrides[key]
         }
       }
 
-      return options
+      return {
+        ...defaults,
+        ...relevantOptions,
+      }
     },
 
     buildDefaultTaskList() {

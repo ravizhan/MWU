@@ -377,7 +377,6 @@ class MaaWorker:
             if self.running:
                 return False
             print(task_list, options)
-            print(self.tasker.resource)
             for name, case in options.items():
                 self.set_option(name, case)
             self.stop_flag = False

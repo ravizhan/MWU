@@ -246,7 +246,8 @@ function StartTask() {
     window.$message.error(t("panel.selectTask"))
     return
   }
-  startTask(selectedTasks, configStore.options)
+  const options = configStore.buildOptionsForTasks(selectedTasks)
+  startTask(selectedTasks, options)
 }
 
 function resetConfig() {

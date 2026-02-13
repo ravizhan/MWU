@@ -228,15 +228,6 @@ const showDialog = computed({
 const isEditMode = computed(() => !!props.task)
 const availableTasks = computed(() => interfaceStore.getTaskList)
 
-function buildFullTaskOptions(overrides: Record<string, string> = {}) {
-  const defaultOptions = configStore.buildDefaultOptions()
-  return {
-    ...defaultOptions,
-    ...configStore.options,
-    ...overrides,
-  }
-}
-
 function normalizeTaskList(taskList: string[]) {
   if (!taskList?.length) return []
   const byId = new Map(availableTasks.value.map((task) => [task.id, task.id]))
@@ -366,7 +357,7 @@ function initFormData(task?: ScheduledTask | null): ScheduledTaskCreate {
       trigger_type: task.trigger_type,
       trigger_config: { ...task.trigger_config },
       task_list: [...normalizedTaskList],
-      task_options: buildFullTaskOptions(task.task_options),
+      task_options: configStore.buildOptionsForTasks(normalizedTaskList, task.task_options),
     }
   }
   return {
@@ -376,7 +367,7 @@ function initFormData(task?: ScheduledTask | null): ScheduledTaskCreate {
     trigger_type: "cron",
     trigger_config: getTriggerConfigByType("cron"),
     task_list: [],
-    task_options: buildFullTaskOptions(),
+    task_options: {},
   }
 }
 
@@ -439,12 +430,6 @@ function toggleTaskSelection(taskId: string, checked: boolean) {
 function openTaskSettings(taskId: string) {
   currentSettingTaskId.value = taskId
   activeTab.value = "task-settings"
-  initTaskOptions()
-}
-
-// 初始化任务选项
-function initTaskOptions() {
-  formData.value.task_options = buildFullTaskOptions(formData.value.task_options)
 }
 
 async function handleSave() {
@@ -456,10 +441,14 @@ async function handleSave() {
 
   loading.value = true
   try {
+    const normalizedTaskList = normalizeTaskList(formData.value.task_list)
     const taskPayload = {
       ...formData.value,
-      task_list: normalizeTaskList(formData.value.task_list),
-      task_options: buildFullTaskOptions(formData.value.task_options),
+      task_list: normalizedTaskList,
+      task_options: configStore.buildOptionsForTasks(
+        normalizedTaskList,
+        formData.value.task_options,
+      ),
     }
     let success = false
     if (isEditMode.value && props.task) {
