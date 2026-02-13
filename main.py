@@ -61,7 +61,7 @@ class AppState:
         self.settings: SettingsModel | None = None
         self.subprocess_pipe: subprocess.Popen | None = None
         self.update_status: dict | None = None
-        self.update_info = None
+        self.update_info: dict | None = None
 
 
 app_state = AppState()
@@ -231,7 +231,103 @@ def reset_task_config():
 
 @app.get("/api/update/check")
 def check_update():
+    # 优先使用 MirrorChyan 更新渠道
+    if interface.mirrorchyan_rid:
+        return check_update_mirrorchyan()
+    # 否则使用 GitHub 更新渠道
+    return check_update_github()
+
+
+def check_update_mirrorchyan():
+    """使用 MirrorChyan 检查更新"""
     try:
+        plat = "linux"
+        arch = "x64"
+        match platform.system():
+            case "Windows":
+                plat = "win"
+            case "Darwin":
+                plat = "macos"
+            case "Linux":
+                plat = "linux"
+
+        machine = platform.machine().lower()
+        match machine:
+            case "x86_64" | "amd64":
+                arch = "x86_64"
+            case "arm" | "aarch64" | "arm64":
+                arch = "aarch64"
+
+        current_version = interface.version
+        rid = interface.mirrorchyan_rid
+
+        # 构建 MirrorChyan API 请求
+        params = {"current_version": current_version, "user_agent": "MWU"}
+
+        # 如果配置了多平台支持，添加 os_arch 参数
+        if interface.mirrorchyan_multiplatform:
+            params["os_arch"] = f"{plat}-{arch}"
+
+        # 如果用户配置了 CDK，添加到请求中
+        cdk = ""
+        proxy = None
+        if app_state.settings:
+            cdk = app_state.settings.update.mirrorchyanCdk
+            proxy = app_state.settings.update.proxy or None
+        if cdk:
+            params["cdk"] = cdk
+
+        response = httpx.get(
+            f"https://mirrorchyan.com/api/resources/{rid}/latest",
+            params=params,
+            proxy=proxy,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("code") != 0:
+            error_msg = data.get("msg", "未知错误")
+            # 如果是 CDK 错误，提示用户
+            if data.get("code") in [60001, 60002, 60003]:
+                return {
+                    "status": "failed",
+                    "message": f"CDK 错误: {error_msg}",
+                }
+            return {
+                "status": "failed",
+                "message": f"MirrorChyan API 错误: {error_msg}",
+            }
+
+        result = data.get("data", {})
+        latest_version = result.get("version_name")
+        release_note = result.get("release_note", "")
+        download_url = result.get("url")
+
+        is_update_available = latest_version != current_version
+
+        app_state.update_info = {
+            "latest_version": latest_version,
+            "current_version": current_version,
+            "is_update_available": is_update_available,
+            "release_notes": release_note,
+            "download_url": download_url,
+            "file_hash": "",  # MirrorChyan 使用 URL 签名验证
+            "file_name": f"update-{latest_version}.zip",
+        }
+        return {"status": "success", "update_info": app_state.update_info}
+    except httpx.RequestError as e:
+        return {"status": "failed", "message": f"网络请求失败: {str(e)}"}
+    except Exception as e:
+        return {"status": "failed", "message": str(e)}
+
+
+def check_update_github():
+    """使用 GitHub 检查更新"""
+    try:
+        if not interface.github:
+            return {"status": "failed", "message": "未配置 GitHub 仓库地址"}
+
         repo_name = (
             interface.github.split("/")[3] + "/" + interface.github.split("/")[4]
         )

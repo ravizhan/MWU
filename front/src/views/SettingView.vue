@@ -82,6 +82,31 @@
                   "
                 />
               </n-form-item>
+              <n-form-item :label="t('settings.update.mirrorchyanCdk')">
+                <n-input
+                  v-model:value="settings.update.mirrorchyanCdk"
+                  :placeholder="t('settings.update.cdkPlaceholder')"
+                  clearable
+                  show-password-on="click"
+                  type="password"
+                  @blur="
+                    handleSettingChange('update', 'mirrorchyanCdk', settings.update.mirrorchyanCdk)
+                  "
+                >
+                  <template #suffix>
+                    <n-button
+                      text
+                      tag="a"
+                      href="https://mirrorchyan.com"
+                      target="_blank"
+                      type="primary"
+                      size="tiny"
+                    >
+                      {{ t("settings.update.getCdk") }}
+                    </n-button>
+                  </template>
+                </n-input>
+              </n-form-item>
               <n-form-item :label="t('settings.update.proxy')">
                 <n-input
                   v-model:value="settings.update.proxy"

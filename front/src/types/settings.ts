@@ -3,6 +3,7 @@ export interface UpdateSettings {
   autoUpdate: boolean
   updateChannel: "stable" | "beta"
   proxy: string
+  mirrorchyanCdk: string
 }
 
 // 外部通知设置

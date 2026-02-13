@@ -7,6 +7,7 @@ const defaultSettings: SettingsModel = {
     autoUpdate: true,
     updateChannel: "stable",
     proxy: "",
+    mirrorchyanCdk: "",
   },
   notification: {
     systemNotification: false,
