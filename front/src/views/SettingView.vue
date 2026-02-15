@@ -87,7 +87,7 @@
                   v-model:value="settings.update.proxy"
                   placeholder="http://127.0.0.1:7890"
                   clearable
-                  @blur="handleSettingChange('update', 'proxy', settings.update.proxy)"
+                  @change="handleSettingChange('update', 'proxy', settings.update.proxy)"
                 />
               </n-form-item>
               <n-form-item
@@ -101,7 +101,7 @@
                     show-password-on="click"
                     :placeholder="t('settings.update.mirrorchyanCdkPlaceholder')"
                     clearable
-                    @blur="
+                    @change="
                       handleSettingChange(
                         'update',
                         'mirrorchyanCdk',
@@ -352,7 +352,7 @@
                   <n-input
                     v-model:value="settings.notification.webhook"
                     placeholder="https://..."
-                    @blur="
+                    @change="
                       handleSettingChange('notification', 'webhook', settings.notification.webhook)
                     "
                   />
@@ -375,7 +375,7 @@
                   <n-input
                     v-model:value="settings.notification.headers"
                     placeholder="HTTP headers in JSON format"
-                    @blur="
+                    @change="
                       handleSettingChange('notification', 'headers', settings.notification.headers)
                     "
                   />
@@ -386,13 +386,15 @@
                     type="textarea"
                     placeholder='{"desp":"{{message}}","title":"{{title}}"}'
                     :autosize="{ minRows: 2, maxRows: 5 }"
-                    @blur="handleSettingChange('notification', 'body', settings.notification.body)"
+                    @change="
+                      handleSettingChange('notification', 'body', settings.notification.body)
+                    "
                   />
                 </n-form-item>
                 <n-form-item label="username">
                   <n-input
                     v-model:value="settings.notification.username"
-                    @blur="
+                    @change="
                       handleSettingChange(
                         'notification',
                         'username',
@@ -406,7 +408,7 @@
                     v-model:value="settings.notification.password"
                     type="password"
                     show-password-on="click"
-                    @blur="
+                    @change="
                       handleSettingChange(
                         'notification',
                         'password',
