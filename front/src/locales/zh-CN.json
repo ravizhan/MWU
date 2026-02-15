@@ -56,6 +56,14 @@
       "channelOptions": {
         "stable": "稳定版",
         "beta": "测试版"
+      },
+      "mirrorchyanCdk": "Mirror酱 CDK",
+      "mirrorchyanCdkPlaceholder": "输入 CDK 以启用 Mirror酱 加速下载",
+      "mirrorchyanCdkHint": "获取 CDK",
+      "mirrorchyanCdkUrl": "https://mirrorchyan.com",
+      "downloadSource": {
+        "mirrorchyan": "Mirror酱",
+        "github": "GitHub"
       }
     },
     "runtime": {

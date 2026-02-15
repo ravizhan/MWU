@@ -61,7 +61,7 @@ class AppState:
         self.settings: SettingsModel | None = None
         self.subprocess_pipe: subprocess.Popen | None = None
         self.update_status: dict | None = None
-        self.update_info = None
+        self.update_info: dict | None = None
 
 
 app_state = AppState()
@@ -229,61 +229,192 @@ def reset_task_config():
         return {"status": "failed", "message": str(e)}
 
 
+def _get_platform_info():
+    """获取当前平台和架构信息"""
+    plat = "linux"
+    match platform.system():
+        case "Windows":
+            plat = "win"
+        case "Darwin":
+            plat = "macos"
+        case "Linux":
+            plat = "linux"
+
+    arch = "x64"
+    machine = platform.machine().lower()
+    match machine:
+        case "x86_64" | "amd64":
+            arch = "x64"
+        case "arm" | "aarch64" | "arm64":
+            arch = "arm64"
+
+    return plat, arch
+
+
+def _get_platform_info_github():
+    """获取 GitHub release asset 匹配用的平台架构字符串"""
+    plat = "linux"
+    match platform.system():
+        case "Windows":
+            plat = "win"
+        case "Darwin":
+            plat = "macos"
+        case "Linux":
+            plat = "linux"
+
+    arch = "x86_64"
+    machine = platform.machine().lower()
+    match machine:
+        case "x86_64" | "amd64":
+            arch = "x86_64"
+        case "arm" | "aarch64" | "arm64":
+            arch = "aarch64"
+
+    return plat, arch
+
+
+MIRRORCHYAN_API_BASES = [
+    "https://mirrorchyan.com/api/resources",
+    "https://mirrorchyan.net/api/resources",
+]
+
+
+def _check_mirrorchyan_update(rid: str, current_version: str, cdk: str):
+    """通过 Mirror酱 API 检查更新"""
+    plat, arch = _get_platform_info()
+    params = {
+        "current_version": current_version,
+        "user_agent": "MWU",
+        "os": plat,
+        "arch": arch,
+        "channel": app_state.settings.update.updateChannel,
+    }
+    if cdk:
+        params["cdk"] = cdk
+
+    proxy = app_state.settings.update.proxy or None
+
+    for api_base in MIRRORCHYAN_API_BASES:
+        try:
+            resp = httpx.get(
+                f"{api_base}/{rid}/latest",
+                params=params,
+                proxy=proxy,
+                timeout=15,
+            )
+            data = resp.json()
+            if data.get("code") == 0:
+                return data
+        except Exception:
+            continue
+
+    return None
+
+
+def _check_github_update():
+    """通过 GitHub Releases API 检查更新"""
+    repo_name = interface.github.split("/")[3] + "/" + interface.github.split("/")[4]
+    proxy = app_state.settings.update.proxy or None
+    response = httpx.get(
+        f"https://api.github.com/repos/{repo_name}/releases/latest",
+        proxy=proxy,
+        timeout=15,
+    ).json()
+    latest_version = response["tag_name"]
+    current_version = interface.version
+
+    plat, arch = _get_platform_info_github()
+
+    for asset in response.get("assets", []):
+        if f"{plat}-{arch}" in asset["name"]:
+            download_url = asset["browser_download_url"]
+            file_hash = asset.get("digest", "").replace("sha256:", "").strip()
+            return {
+                "latest_version": latest_version,
+                "current_version": current_version,
+                "is_update_available": latest_version != current_version,
+                "release_notes": response.get("body", ""),
+                "download_url": download_url,
+                "file_hash": file_hash,
+                "file_name": asset["name"],
+                "download_source": "github",
+            }
+    return None
+
+
 @app.get("/api/update/check")
 def check_update():
     try:
-        repo_name = (
-            interface.github.split("/")[3] + "/" + interface.github.split("/")[4]
-        )
-        response = httpx.get(
-            f"https://api.github.com/repos/{repo_name}/releases/latest"
-        ).json()
-        latest_version = response["tag_name"]
-        current_version = interface.version
+        current_version = interface.version or ""
+        mirrorchyan_rid = getattr(interface, "mirrorchyan_rid", None)
+        cdk = app_state.settings.update.mirrorchyanCdk if app_state.settings else ""
 
-        plat = "linux"
-        arch = "x64"
-        match platform.system():
-            case "Windows":
-                plat = "win"
-            case "Darwin":
-                plat = "macos"
-            case "Linux":
-                plat = "linux"
+        if mirrorchyan_rid:
+            mc_data = _check_mirrorchyan_update(mirrorchyan_rid, current_version, cdk)
+            if mc_data and mc_data.get("code") == 0:
+                mc_info = mc_data.get("data", {})
+                latest_version = mc_info.get("version_name", "")
+                has_update = latest_version and latest_version != current_version
 
-        machine = platform.machine().lower()
-        match machine:
-            case "x86_64" | "amd64":
-                arch = "x86_64"
-            case "arm" | "aarch64" | "arm64":
-                arch = "aarch64"
-
-        for asset in response.get("assets", []):
-            if f"{plat}-{arch}" in asset["name"]:
-                download_url = asset["browser_download_url"]
-                file_hash = asset["digest"].replace("sha256:", "").strip()
                 app_state.update_info = {
                     "latest_version": latest_version,
                     "current_version": current_version,
-                    "is_update_available": latest_version != current_version,
-                    "release_notes": response["body"],
-                    "download_url": download_url,
-                    "file_hash": file_hash,
-                    "file_name": asset["name"],
+                    "is_update_available": has_update,
+                    "release_notes": mc_info.get("release_note", ""),
+                    "download_url": mc_info.get("url", ""),
+                    "file_hash": mc_info.get("sha256", ""),
+                    "file_name": f"update-{latest_version}.7z",
+                    "download_source": "mirrorchyan",
+                    "update_type": mc_info.get("update_type", "full"),
                 }
+
+                # 有 CDK 且有下载链接，直接返回 mirrorchyan 结果
+                if app_state.update_info["download_url"]:
+                    return {
+                        "status": "success",
+                        "update_info": app_state.update_info,
+                    }
+
+                # 无 CDK 或无下载链接，尝试 GitHub 获取下载链接
+                if has_update and interface.github:
+                    try:
+                        gh_info = _check_github_update()
+                        if gh_info:
+                            # 保留 mirrorchyan 的版本信息，用 GitHub 的下载链接
+                            app_state.update_info["download_url"] = gh_info[
+                                "download_url"
+                            ]
+                            app_state.update_info["file_hash"] = gh_info["file_hash"]
+                            app_state.update_info["file_name"] = gh_info["file_name"]
+                            app_state.update_info["download_source"] = "github"
+                    except Exception:
+                        pass
+
+                return {
+                    "status": "success",
+                    "update_info": app_state.update_info,
+                }
+
+        if interface.github:
+            gh_info = _check_github_update()
+            if gh_info:
+                app_state.update_info = gh_info
                 return {"status": "success", "update_info": app_state.update_info}
-        return {
-            "status": "failed",
-            "message": f"未找到适合当前平台的更新包:{plat}-{arch}",
-        }
+
+            plat, arch = _get_platform_info_github()
+            return {
+                "status": "failed",
+                "message": f"未找到适合当前平台的更新包:{plat}-{arch}",
+            }
+
+        return {"status": "failed", "message": "未配置更新源"}
     except Exception as e:
         return {"status": "failed", "message": str(e)}
 
 
-async def download_file(url: str, dest: str):
-    async with httpx.AsyncClient(
-        follow_redirects=True, proxy=app_state.settings.update.proxy
-    ) as client:
+async def download_file(url: str, dest: str, use_proxy: bool = True):
+    proxy = app_state.settings.update.proxy if use_proxy else None
+    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             with open(dest, "wb") as f:
@@ -296,6 +427,7 @@ async def perform_update():
     try:
         update_package_path = app_state.update_info["file_name"]
         download_url = app_state.update_info["download_url"]
+        download_source = app_state.update_info.get("download_source", "github")
         if os.path.exists(update_package_path):
             os.remove(update_package_path)
         app_state.update_status = {
@@ -304,12 +436,15 @@ async def perform_update():
         }
 
         try:
-            await download_file(download_url, update_package_path)
-            with open(update_package_path, "rb") as f:
-                file_bytes = f.read()
-                sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-                if sha256_hash != app_state.update_info["file_hash"]:
-                    raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
+            use_proxy = download_source != "mirrorchyan"
+            await download_file(download_url, update_package_path, use_proxy)
+            file_hash = app_state.update_info.get("file_hash", "")
+            if file_hash:
+                with open(update_package_path, "rb") as f:
+                    file_bytes = f.read()
+                    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+                    if sha256_hash != file_hash:
+                        raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
         except Exception as e:
             app_state.update_status = {"status": "failed", "message": f"下载失败: {e}"}
             return {"status": "failed", "message": str(e)}

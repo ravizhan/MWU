@@ -90,6 +90,36 @@
                   @blur="handleSettingChange('update', 'proxy', settings.update.proxy)"
                 />
               </n-form-item>
+              <n-form-item
+                v-if="interfaceStore.interface?.mirrorchyan_rid"
+                :label="t('settings.update.mirrorchyanCdk')"
+              >
+                <n-input-group>
+                  <n-input
+                    v-model:value="settings.update.mirrorchyanCdk"
+                    type="password"
+                    show-password-on="click"
+                    :placeholder="t('settings.update.mirrorchyanCdkPlaceholder')"
+                    clearable
+                    @blur="
+                      handleSettingChange(
+                        'update',
+                        'mirrorchyanCdk',
+                        settings.update.mirrorchyanCdk,
+                      )
+                    "
+                  />
+                  <n-button
+                    tag="a"
+                    href="https://mirrorchyan.com"
+                    target="_blank"
+                    type="primary"
+                    ghost
+                  >
+                    {{ t("settings.update.mirrorchyanCdkHint") }}
+                  </n-button>
+                </n-input-group>
+              </n-form-item>
             </n-form>
           </n-card>
 
@@ -498,6 +528,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue"
 import { useSettingsStore } from "../stores/settings"
+import { useInterfaceStore } from "../stores/interface"
 import { useSchedulerStore } from "../stores/scheduler"
 import { checkUpdateApi, testNotificationApi, type UpdateInfo } from "../script/api"
 import { useMessage, useDialog } from "naive-ui"
@@ -518,6 +549,7 @@ const message = useMessage()
 const dialog = useDialog()
 const { t, locale } = useI18n()
 const settingsStore = useSettingsStore()
+const interfaceStore = useInterfaceStore()
 
 const localeOptions = [
   { label: "简体中文", value: "zh-CN" },

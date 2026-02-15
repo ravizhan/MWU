@@ -233,10 +233,11 @@ jobs:
           draft: false
           prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
 
-      # - name: Trigger MirrorChyanUploading
-      #   shell: bash
-      #   run: |
-      #     gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan.yml -f tag=${{ needs.meta.outputs.tag }}
-      #     gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note.yml -f tag=${{ needs.meta.outputs.tag }}
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trigger MirrorChyanUploading
+        if: ${{ needs.meta.outputs.is_release == 'true' }}
+        shell: bash
+        run: |
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan.yml -f tag=${{ needs.meta.outputs.tag }}
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note.yml -f tag=${{ needs.meta.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
