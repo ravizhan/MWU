@@ -17,7 +17,11 @@
               <n-menu mode="horizontal" class="justify-between" :options="menuOptions" />
             </n-layout-header>
             <n-layout>
-              <router-view></router-view>
+              <router-view v-slot="{ Component, route }">
+                <transition :name="route.meta.transition || 'fade'" mode="out-in">
+                  <component :is="Component" />
+                </transition>
+              </router-view>
             </n-layout>
             <n-layout-footer
               bordered

@@ -8,11 +8,13 @@ const router = createRouter({
       path: "/",
       name: "panel",
       component: PanelView,
+      meta: { transition: "slide-right" },
     },
     {
       path: "/setting",
       name: "setting",
       component: () => import("../views/SettingView.vue"),
+      meta: { transition: "slide-left" },
     },
   ],
 })
