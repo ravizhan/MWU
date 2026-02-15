@@ -26,10 +26,10 @@ resource.set_cpu()
 
 
 class MaaWorker:
-    def __init__(self, queue: SimpleQueue, interface):
+    def __init__(self, message_conn: SimpleQueue, interface):
         Toolkit.init_option("./")
         self.interface: InterfaceModel = interface
-        self.queue = queue
+        self.message_conn = message_conn
         self.tasker = Tasker()
         self.controller = None
         self.connected = False
@@ -44,7 +44,9 @@ class MaaWorker:
         self.http_client = httpx.Client(timeout=30)
 
     def send_log(self, msg):
-        self.queue.put(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} {msg}")
+        self.message_conn.put(
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} {msg}"
+        )
         time.sleep(0.05)
 
     def send_notification(self, title, message):

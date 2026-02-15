@@ -63,6 +63,11 @@ class AppState:
         self.update_status: dict | None = None
         self.update_info: dict | None = None
 
+    def send_log(self, msg: str):
+        self.message_conn.put(
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} {msg}"
+        )
+
 
 app_state = AppState()
 
@@ -162,6 +167,7 @@ def get_device():
 async def connect_device(device: DeviceModel):
     if await asyncio.to_thread(app_state.worker.connect_device, device):
         return {"status": "success"}
+    app_state.send_log("设备连接失败")
     return {"status": "failed"}
 
 
@@ -176,6 +182,7 @@ async def set_resource(name: str):
     try:
         await asyncio.to_thread(app_state.worker.set_resource, name)
     except Exception as e:
+        app_state.send_log(f"设置资源失败: {e}")
         return {"status": "failed", "message": str(e)}
     return {"status": "success"}
 
@@ -205,6 +212,7 @@ def get_task_config():
     except FileNotFoundError:
         return {"status": "success", "config": TaskConfigModel().model_dump()}
     except Exception as e:
+        app_state.send_log(f"获取任务配置失败: {e}")
         return {"status": "failed", "message": str(e)}
 
 
@@ -215,6 +223,7 @@ def save_task_config(config: TaskConfigModel):
             json.dump(config.model_dump(), f, indent=4, ensure_ascii=False)
         return {"status": "success"}
     except Exception as e:
+        app_state.send_log(f"保存任务配置失败: {e}")
         return {"status": "failed", "message": str(e)}
 
 
@@ -226,6 +235,7 @@ def reset_task_config():
             os.remove(config_path)
         return {"status": "success"}
     except Exception as e:
+        app_state.send_log(f"重置任务配置失败: {e}")
         return {"status": "failed", "message": str(e)}
 
 
@@ -402,14 +412,20 @@ def check_update():
                 return {"status": "success", "update_info": app_state.update_info}
 
             plat, arch = _get_platform_info_github()
+            msg = f"未找到适合当前平台的更新包:{plat}-{arch}"
+            app_state.send_log(msg)
             return {
                 "status": "failed",
-                "message": f"未找到适合当前平台的更新包:{plat}-{arch}",
+                "message": msg,
             }
 
-        return {"status": "failed", "message": "未配置更新源"}
+        msg = "未配置更新源"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"检查更新失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 async def download_file(url: str, dest: str, use_proxy: bool = True):
@@ -446,7 +462,9 @@ async def perform_update():
                     if sha256_hash != file_hash:
                         raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
         except Exception as e:
-            app_state.update_status = {"status": "failed", "message": f"下载失败: {e}"}
+            msg = f"下载失败: {e}"
+            app_state.send_log(msg)
+            app_state.update_status = {"status": "failed", "message": msg}
             return {"status": "failed", "message": str(e)}
 
         def run_updater_loop():
@@ -485,9 +503,11 @@ async def perform_update():
                             except json.JSONDecodeError:
                                 pass
                 except Exception as e:
+                    msg = f"启动更新器失败: {e}"
+                    app_state.send_log(msg)
                     app_state.update_status = {
                         "status": "failed",
-                        "message": f"启动更新器失败: {e}",
+                        "message": msg,
                     }
                     break
 
@@ -501,17 +521,21 @@ async def perform_update():
                     continue
                 else:
                     if process.returncode != 0:
+                        msg = f"更新器异常退出: {process.returncode}，请查看updater.log"
+                        app_state.send_log(msg)
                         app_state.update_status = {
                             "status": "failed",
-                            "message": f"更新器异常退出: {process.returncode}，请查看updater.log",
+                            "message": msg,
                         }
                     break
 
         threading.Thread(target=run_updater_loop, daemon=True).start()
         return {"status": "success", "message": "正在后台更新程序..."}
     except Exception as e:
-        app_state.update_status = {"status": "failed", "message": str(e)}
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"更新失败: {msg}")
+        app_state.update_status = {"status": "failed", "message": msg}
+        return {"status": "failed", "message": msg}
 
 
 @app.get("/api/update/status")
@@ -534,20 +558,28 @@ def system_shutdown():
 @app.post("/api/test-notification")
 def test_notification():
     if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
+        msg = "Worker未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         app_state.worker.send_notification("测试通知", "这是一条测试通知。")
         return {"status": "success"}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"发送测试通知失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.post("/api/start")
 def start(tasks: list[str], options: dict[str, str]):
     if app_state.worker and app_state.worker.running:
-        return {"status": "failed", "message": "任务已开始"}
+        msg = "任务已开始"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     if not app_state.worker.connected:
-        return {"status": "failed", "message": "请先连接设备"}
+        msg = "请先连接设备"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     app_state.worker.start_task(tasks, options)
     return {"status": "success"}
 
@@ -555,7 +587,9 @@ def start(tasks: list[str], options: dict[str, str]):
 @app.post("/api/stop")
 def stop():
     if app_state.worker is None or not app_state.worker.running:
-        return {"status": "failed", "message": "任务未开始"}
+        msg = "任务未开始"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     app_state.worker.stop_task()
     return {"status": "success"}
 
@@ -594,87 +628,121 @@ async def stream_logs(request: Request):
 async def get_scheduler_tasks():
     """获取所有定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         tasks = await app_state.scheduler_manager.get_all_tasks()
         return {"status": "success", "tasks": [task.model_dump() for task in tasks]}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"获取调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.post("/api/scheduler/tasks")
 async def create_scheduler_task(task_create: ScheduledTaskCreate):
     """创建定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         task = await app_state.scheduler_manager.create_task(task_create)
         return {"status": "success", "task": task.model_dump()}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"创建调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.put("/api/scheduler/tasks/{task_id}")
 async def update_scheduler_task(task_id: str, task_update: ScheduledTaskUpdate):
     """更新定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         task = await app_state.scheduler_manager.update_task(task_id, task_update)
         if task is None:
-            return {"status": "failed", "message": "任务不存在"}
+            msg = "任务不存在"
+            app_state.send_log(msg)
+            return {"status": "failed", "message": msg}
         return {"status": "success", "task": task.model_dump()}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"更新调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.delete("/api/scheduler/tasks/{task_id}")
 async def delete_scheduler_task(task_id: str):
     """删除定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.delete_task(task_id)
         if success:
             return {"status": "success"}
-        return {"status": "failed", "message": "任务不存在"}
+        msg = "任务不存在"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"删除调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.post("/api/scheduler/tasks/{task_id}/pause")
 async def pause_scheduler_task(task_id: str):
     """暂停定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.pause_task(task_id)
         if success:
             return {"status": "success"}
-        return {"status": "failed", "message": "任务不存在"}
+        msg = "任务不存在"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"暂停调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.post("/api/scheduler/tasks/{task_id}/resume")
 async def resume_scheduler_task(task_id: str):
     """恢复定时任务"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.resume_task(task_id)
         if success:
             return {"status": "success"}
-        return {"status": "failed", "message": "任务不存在"}
+        msg = "任务不存在"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"恢复调度任务失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 @app.get("/api/scheduler/executions")
 async def get_scheduler_executions(limit: int = 50):
     """获取执行历史"""
     if app_state.scheduler_manager is None:
-        return {"status": "failed", "message": "调度器未初始化"}
+        msg = "调度器未初始化"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
     try:
         executions = await app_state.scheduler_manager.get_executions(limit)
         return {
@@ -682,7 +750,9 @@ async def get_scheduler_executions(limit: int = 50):
             "executions": [exec.model_dump() for exec in executions],
         }
     except Exception as e:
-        return {"status": "failed", "message": str(e)}
+        msg = str(e)
+        app_state.send_log(f"获取调度执行历史失败: {msg}")
+        return {"status": "failed", "message": msg}
 
 
 if __name__ == "__main__":
