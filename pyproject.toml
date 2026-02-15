@@ -1,6 +1,6 @@
 [project]
 name = "MWU"
-version = "0.5.0"
+version = "0.7.0"
 description = "基于 Vue 的 通用 GUI。由 MaaFramework 强力驱动！"
 readme = "README.md"
 requires-python = ">=3.12"
