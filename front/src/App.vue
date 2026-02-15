@@ -110,6 +110,11 @@ const handleResize = () => {
 }
 
 const checkForUpdatesOnLoad = async () => {
+  // Prevent repeated checks on refresh within the same session
+  if (sessionStorage.getItem("mwu-update-checked")) {
+    return
+  }
+
   // Wait for settings to be loaded
   if (!settingsStore.settings.update) {
     return
@@ -122,6 +127,7 @@ const checkForUpdatesOnLoad = async () => {
 
   try {
     const result = await checkUpdateApi()
+    sessionStorage.setItem("mwu-update-checked", "true")
     if (result.status === "success" && result.update_info?.is_update_available) {
       updateInfo.value = result.update_info
       showUpdateDialog.value = true
