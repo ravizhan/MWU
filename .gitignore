@@ -317,7 +317,7 @@ agent
 
 openspec
 openspec*.*
-user_config.json
+config/
 .iflow
 .opencode
 .roo
