@@ -33,7 +33,10 @@
             <div class="flex flex-col gap-2 w-full max-w-xs">
               <div v-for="input in option.inputs" :key="input.name" class="flex flex-col gap-1">
                 <span class="text-sm text-gray-500">{{ input.label || input.name }}</span>
-                <n-input v-model:value="options[`${name}_${input.name}`]" />
+                <n-input
+                  v-model:value="options[`${name}_${input.name}`]"
+                  :allow-input="(v: string) => handleAllowInput(v, input.verify, input.pattern_msg)"
+                />
               </div>
             </div>
           </template>
@@ -58,6 +61,7 @@ import { computed } from "vue"
 import { useInterfaceStore } from "../stores/interface"
 import { useTaskConfigStore } from "../stores/taskConfig"
 import { storeToRefs } from "pinia"
+import { useMessage } from "naive-ui"
 
 const props = defineProps<{
   name: string
@@ -65,6 +69,7 @@ const props = defineProps<{
   options?: Record<string, any>
 }>()
 
+const message = useMessage()
 const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const options = props.options ? computed(() => props.options!) : storeToRefs(configStore).options
@@ -100,4 +105,17 @@ const nestedOptions = computed(() => {
 
   return []
 })
+
+const handleAllowInput = (value: string, verify?: string, pattern_msg?: string) => {
+  if (!verify || value === "") return true
+  try {
+    const isValid = new RegExp(verify).test(value)
+    if (!isValid && pattern_msg) {
+      message.error(pattern_msg)
+    }
+    return isValid
+  } catch (e) {
+    return true
+  }
+}
 </script>

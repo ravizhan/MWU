@@ -163,17 +163,32 @@ class MaaWorker:
                 self.send_log(f"资源已设置为: {i.name}")
         return None
 
-    def set_option(self, option_name: str, case_name: str):
-        if option_name in self.interface.option:
+    def set_option(self, option_name: str, case_name: str, input_value: str = ""):
+        if option_name.split("_")[0] in self.interface.option:
             option = self.interface.option[option_name]
-            if option.type == "select" and option.cases:
+            if option.type in ["select", "switch"] and option.cases:
                 for case in option.cases:
                     if case.name == case_name:
                         resource.override_pipeline(case.pipeline_override)
                         # self.send_log(f"选项 {option_name} 设置为: {case_name}")
                         return
             elif option.type == "input" and option.pipeline_override:
-                resource.override_pipeline(option.pipeline_override)
+                temp = json.dumps(option.pipeline_override)
+                input_name = option_name.split("_")[1]
+                for field in option.inputs:
+                    if field.name == input_name:
+                        if field.pipeline_type == "bool":
+                            input_value = (
+                                "true"
+                                if input_value.lower() in ["true", "1", "yes", "y"]
+                                else "false"
+                            )
+                        elif field.pipeline_type == "int":
+                            input_value = str(int(input_value))
+                        elif field.pipeline_type == "str":
+                            input_value = f'"{input_value}"'
+                        temp = temp.replace(f'"{{{input_name}}}"', input_value)
+                resource.override_pipeline(json.loads(temp))
                 return
 
     def black_magic(self):
