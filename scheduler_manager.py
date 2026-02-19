@@ -87,7 +87,7 @@ class SchedulerManager:
         task_id: str,
         task_name: str,
         task_list: List[str],
-        options: Dict[str, str],
+        task_options: Dict[str, str],
     ):
         """执行定时任务"""
         logger.info(f"开始执行定时任务: {task_id}")
@@ -123,7 +123,7 @@ class SchedulerManager:
                 return
 
             # 启动任务
-            if not self._worker.start_task(task_list, options):
+            if not self._worker.start_task(task_list, task_options):
                 logger.warning(f"任务已在运行，跳过定时任务 {task_id}")
                 await self._update_execution_status(
                     execution_id, "stopped", "任务已在运行"
@@ -229,7 +229,7 @@ class SchedulerManager:
                 "task_id": task_id,
                 "task_name": task_create.name,
                 "task_list": task_create.task_list,
-                "options": task_create.task_options,
+                "task_options": task_create.task_options,
             },
         )
 
@@ -268,7 +268,7 @@ class SchedulerManager:
         # 从 kwargs 中获取任务信息
         task_name = job.kwargs.get("task_name", "")
         task_list = job.kwargs.get("task_list", [])
-        task_options = job.kwargs.get("options", {})
+        task_options = job.kwargs.get("task_options", {})
         trigger_type: Literal["cron", "date", "interval"]
 
         try:
@@ -300,7 +300,7 @@ class SchedulerManager:
         for job in jobs:
             task_name = job.kwargs.get("task_name", "")
             task_list = job.kwargs.get("task_list", [])
-            task_options = job.kwargs.get("options", {})
+            task_options = job.kwargs.get("task_options", {})
             trigger_type: Literal["cron", "date", "interval"]
 
             try:
@@ -366,7 +366,7 @@ class SchedulerManager:
             new_options = (
                 task_update.task_options
                 if task_update.task_options is not None
-                else current_kwargs.get("options", {})
+                else current_kwargs.get("task_options", {})
             )
 
             new_trigger_config = (
@@ -386,7 +386,7 @@ class SchedulerManager:
                     "task_id": task_id,
                     "task_name": new_name,
                     "task_list": new_task_list,
-                    "options": new_options,
+                    "task_options": new_options,
                 },
             )
 

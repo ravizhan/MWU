@@ -163,31 +163,32 @@ class MaaWorker:
                 self.send_log(f"资源已设置为: {i.name}")
         return None
 
-    def set_option(self, option_name: str, case_name: str, input_value: str = ""):
+    def set_option(self, option_name: str, case: str):
         if option_name.split("_")[0] in self.interface.option:
-            option = self.interface.option[option_name]
+            option = self.interface.option[option_name.split("_")[0]]
             if option.type in ["select", "switch"] and option.cases:
-                for case in option.cases:
-                    if case.name == case_name:
-                        resource.override_pipeline(case.pipeline_override)
+                for i in option.cases:
+                    if i.name == case:
+                        resource.override_pipeline(i.pipeline_override)
                         # self.send_log(f"选项 {option_name} 设置为: {case_name}")
                         return
             elif option.type == "input" and option.pipeline_override:
-                temp = json.dumps(option.pipeline_override)
+                temp = json.dumps(option.pipeline_override, ensure_ascii=False)
                 input_name = option_name.split("_")[1]
                 for field in option.inputs:
                     if field.name == input_name:
                         if field.pipeline_type == "bool":
                             input_value = (
                                 "true"
-                                if input_value.lower() in ["true", "1", "yes", "y"]
+                                if case.lower() in ["true", "1", "yes", "y"]
                                 else "false"
                             )
                         elif field.pipeline_type == "int":
-                            input_value = str(int(input_value))
-                        elif field.pipeline_type == "str":
-                            input_value = f'"{input_value}"'
+                            input_value = str(int(case))
+                        else:
+                            input_value = f'"{case}"'
                         temp = temp.replace(f'"{{{input_name}}}"', input_value)
+                        print(json.loads(temp))
                 resource.override_pipeline(json.loads(temp))
                 return
 

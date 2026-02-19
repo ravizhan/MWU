@@ -3,6 +3,7 @@ import type {
   ScheduledTaskCreate,
   ScheduledTaskUpdate,
   SchedulerApiResponse,
+  TaskExecutionPayload,
 } from "../types/scheduler"
 
 interface ApiResponse {
@@ -40,10 +41,10 @@ interface ResourceResponse {
   resource: string[]
 }
 
-export function startTask(task_list: string[], options: Record<string, string>): void {
+export function startTask(payload: TaskExecutionPayload): void {
   fetch("/api/start", {
     method: "POST",
-    body: JSON.stringify({ tasks: task_list, options: options }),
+    body: JSON.stringify(payload),
     headers: {
       "Content-Type": "application/json",
     },

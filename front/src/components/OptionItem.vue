@@ -51,6 +51,7 @@
         :key="childName"
         :name="childName"
         :level="(level || 0) + 1"
+        :options="options"
       />
     </template>
   </template>

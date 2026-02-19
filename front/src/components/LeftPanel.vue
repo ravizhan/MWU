@@ -242,14 +242,14 @@ function post_resource() {
 }
 
 function StartTask() {
-  const selectedTasks = configStore.taskList.filter((task) => task.checked).map((task) => task.id)
-  if (selectedTasks.length === 0) {
+  const selectedTaskIds = configStore.taskList.filter((task) => task.checked).map((task) => task.id)
+  const payload = configStore.buildExecutionPayload(selectedTaskIds)
+  if (payload.task_list.length === 0) {
     // @ts-ignore
     window.$message.error(t("panel.selectTask"))
     return
   }
-  const options = configStore.buildOptionsForTasks(selectedTasks)
-  startTask(selectedTasks, options)
+  startTask(payload)
 }
 
 function resetConfig() {

@@ -205,15 +205,6 @@ const showDialog = computed({
 const isEditMode = computed(() => !!props.task)
 const availableTasks = computed(() => interfaceStore.getTaskList)
 
-function normalizeTaskList(taskList: string[]) {
-  if (!taskList?.length) return []
-  const byId = new Map(availableTasks.value.map((task) => [task.id, task.id]))
-  const byName = new Map(availableTasks.value.map((task) => [task.name, task.id]))
-  return taskList
-    .map((item) => byId.get(item) || byName.get(item) || item)
-    .filter((item, index, self) => self.indexOf(item) === index)
-}
-
 // 触发器配置的 computed 属性
 const cronConfig = computed(() => formData.value.trigger_config as CronTriggerConfig)
 const dateConfig = computed(() => formData.value.trigger_config as DateTriggerConfig)
@@ -302,15 +293,15 @@ function resetForm() {
 // 初始化表单数据
 function initFormData(task?: ScheduledTask | null): ScheduledTaskCreate {
   if (task) {
-    const normalizedTaskList = normalizeTaskList(task.task_list)
+    const task_list = configStore.normalizeTaskIds(task.task_list)
     return {
       name: task.name,
       description: task.description || "",
       enabled: task.enabled,
       trigger_type: task.trigger_type,
       trigger_config: { ...task.trigger_config },
-      task_list: [...normalizedTaskList],
-      task_options: configStore.buildOptionsForTasks(normalizedTaskList, task.task_options),
+      task_list,
+      task_options: configStore.buildOptionsForTasks(task_list, task.task_options),
     }
   }
   return {
@@ -320,7 +311,7 @@ function initFormData(task?: ScheduledTask | null): ScheduledTaskCreate {
     trigger_type: "cron",
     trigger_config: getTriggerConfigByType("cron"),
     task_list: [],
-    task_options: {},
+    task_options: configStore.buildOptionsForTasks([]),
   }
 }
 
@@ -367,10 +358,27 @@ function setCronPreset(preset: string) {
 
 // 处理任务选择更新
 function handleSelectedTasksUpdate(newSelectedTasks: string[]) {
-  formData.value.task_list = normalizeTaskList(newSelectedTasks)
+  const task_list = configStore.normalizeTaskIds(newSelectedTasks)
+  formData.value.task_list = task_list
+  formData.value.task_options = configStore.buildOptionsForTasks(
+    task_list,
+    formData.value.task_options,
+  )
+  if (currentSettingTaskId.value && !task_list.includes(currentSettingTaskId.value)) {
+    currentSettingTaskId.value = null
+    activeTab.value = "task-list"
+  }
 }
 
 function openTaskSettings(taskId: string) {
+  if (!formData.value.task_list.includes(taskId)) {
+    const task_list = configStore.normalizeTaskIds([...formData.value.task_list, taskId])
+    formData.value.task_list = task_list
+    formData.value.task_options = configStore.buildOptionsForTasks(
+      task_list,
+      formData.value.task_options,
+    )
+  }
   currentSettingTaskId.value = taskId
   activeTab.value = "task-settings"
 }
@@ -384,14 +392,9 @@ async function handleSave() {
 
   loading.value = true
   try {
-    const normalizedTaskList = normalizeTaskList(formData.value.task_list)
     const taskPayload = {
       ...formData.value,
-      task_list: normalizedTaskList,
-      task_options: configStore.buildOptionsForTasks(
-        normalizedTaskList,
-        formData.value.task_options,
-      ),
+      ...configStore.buildExecutionPayload(formData.value.task_list, formData.value.task_options),
     }
     let success = false
     if (isEditMode.value && props.task) {

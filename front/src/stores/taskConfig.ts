@@ -2,6 +2,7 @@ import { defineStore } from "pinia"
 import { getTaskConfig, saveTaskConfig, resetTaskConfig, type TaskConfig } from "../script/api"
 import { type TaskListItem, useInterfaceStore } from "./interface"
 import type { Option } from "../types/interface"
+import type { TaskExecutionPayload } from "../types/scheduler"
 
 // 根据选项定义生成默认值
 function buildDefaultsFromOptionMap(optionMap: Record<string, Option>): Record<string, string> {
@@ -31,6 +32,12 @@ export const useTaskConfigStore = defineStore("taskConfig", {
     }
   },
   actions: {
+    normalizeTaskIds(taskIds: string[]): string[] {
+      const interfaceStore = useInterfaceStore()
+      const validTaskIds = new Set(interfaceStore.getTaskList.map((task) => task.id))
+      return [...new Set(taskIds)].filter((taskId) => validTaskIds.has(taskId))
+    },
+
     buildDefaultOptions() {
       const interfaceStore = useInterfaceStore()
       const optionMap = interfaceStore.interface?.option || {}
@@ -43,10 +50,11 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       overrides: Record<string, string> = {},
     ): Record<string, string> {
       const interfaceStore = useInterfaceStore()
+      const normalizedTaskIds = this.normalizeTaskIds(taskIds)
       const mergedOptionMap: Record<string, Option> = {}
 
       // 收集所有选中任务的选项
-      for (const taskId of taskIds) {
+      for (const taskId of normalizedTaskIds) {
         const taskOptions = interfaceStore.getOptionList(taskId)
         Object.assign(mergedOptionMap, taskOptions)
       }
@@ -68,6 +76,17 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       return {
         ...defaults,
         ...relevantOptions,
+      }
+    },
+
+    buildExecutionPayload(
+      taskIds: string[],
+      overrides: Record<string, string> = {},
+    ): TaskExecutionPayload {
+      const task_list = this.normalizeTaskIds(taskIds)
+      return {
+        task_list,
+        task_options: this.buildOptionsForTasks(task_list, overrides),
       }
     },
 

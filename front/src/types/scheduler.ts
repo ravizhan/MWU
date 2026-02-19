@@ -25,28 +25,29 @@ export interface IntervalTriggerConfig {
 
 export type TriggerConfig = CronTriggerConfig | DateTriggerConfig | IntervalTriggerConfig
 
-export interface ScheduledTask {
+export interface TaskExecutionPayload {
+  task_list: string[]
+  task_options: Record<string, string>
+}
+
+export interface ScheduledTask extends TaskExecutionPayload {
   id: string
   name: string
   description?: string
   enabled: boolean
   trigger_type: TriggerType
   trigger_config: TriggerConfig
-  task_list: string[]
-  task_options: Record<string, string>
   next_run_time?: string // ISO 8601 datetime string
   created_at: string // ISO 8601 datetime string
   updated_at: string // ISO 8601 datetime string
 }
 
-export interface ScheduledTaskCreate {
+export interface ScheduledTaskCreate extends TaskExecutionPayload {
   name: string
   description?: string
   enabled: boolean
   trigger_type: TriggerType
   trigger_config: TriggerConfig
-  task_list: string[]
-  task_options: Record<string, string>
 }
 
 export interface ScheduledTaskUpdate {

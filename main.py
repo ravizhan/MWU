@@ -16,7 +16,11 @@ from models.interface import InterfaceModel
 from models.api import DeviceModel
 from models.task_config import TaskConfigModel
 from models.settings import SettingsModel
-from models.scheduler import ScheduledTaskCreate, ScheduledTaskUpdate
+from models.scheduler import (
+    ScheduledTaskCreate,
+    ScheduledTaskUpdate,
+    TaskExecutionPayload,
+)
 from maa_utils import MaaWorker
 from scheduler_manager import SchedulerManager
 import httpx
@@ -571,7 +575,7 @@ def test_notification():
 
 
 @app.post("/api/start")
-def start(tasks: list[str], options: dict[str, str]):
+def start(task_execution: TaskExecutionPayload):
     if app_state.worker and app_state.worker.running:
         msg = "任务已开始"
         app_state.send_log(msg)
@@ -580,7 +584,7 @@ def start(tasks: list[str], options: dict[str, str]):
         msg = "请先连接设备"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
-    app_state.worker.start_task(tasks, options)
+    app_state.worker.start_task(task_execution.task_list, task_execution.task_options)
     return {"status": "success"}
 
 

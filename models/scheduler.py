@@ -33,7 +33,14 @@ class IntervalTriggerConfig(BaseModel):
 TriggerConfig = CronTriggerConfig | DateTriggerConfig | IntervalTriggerConfig
 
 
-class ScheduledTask(BaseModel):
+class TaskExecutionPayload(BaseModel):
+    """任务执行载荷"""
+
+    task_list: List[str] = Field(default_factory=list, description="要执行的任务列表")
+    task_options: Dict[str, str] = Field(default_factory=dict, description="任务选项")
+
+
+class ScheduledTask(TaskExecutionPayload):
     """定时任务配置"""
 
     id: str = Field(..., description="任务唯一标识")
@@ -44,14 +51,12 @@ class ScheduledTask(BaseModel):
         ..., description="触发器类型"
     )
     trigger_config: TriggerConfig = Field(..., description="触发器配置")
-    task_list: List[str] = Field(default_factory=list, description="要执行的任务列表")
-    task_options: Dict[str, str] = Field(default_factory=dict, description="任务选项")
     next_run_time: Optional[datetime] = Field(None, description="下次执行时间")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
 
 
-class ScheduledTaskCreate(BaseModel):
+class ScheduledTaskCreate(TaskExecutionPayload):
     """创建定时任务请求"""
 
     name: str = Field(..., min_length=1, max_length=100)
@@ -59,8 +64,6 @@ class ScheduledTaskCreate(BaseModel):
     enabled: bool = True
     trigger_type: Literal["cron", "date", "interval"]
     trigger_config: TriggerConfig
-    task_list: List[str] = Field(default_factory=list)
-    task_options: Dict[str, str] = Field(default_factory=dict)
 
 
 class ScheduledTaskUpdate(BaseModel):
