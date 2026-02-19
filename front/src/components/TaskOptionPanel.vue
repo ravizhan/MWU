@@ -27,7 +27,6 @@
 
 <script setup lang="ts">
 import { computed } from "vue"
-import { useI18n } from "vue-i18n"
 import { useInterfaceStore } from "../stores/interface"
 import OptionItem from "./OptionItem.vue"
 
@@ -56,7 +55,6 @@ const props = withDefaults(defineProps<Props>(), {
   scrollbarClass: "max-h-65 !rounded-[12px]",
 })
 
-const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 
 // 获取当前任务名称

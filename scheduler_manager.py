@@ -14,7 +14,6 @@ from models.scheduler import (
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
     TaskExecution,
-    TaskExecutionCreate,
     TriggerConfig,
     CronTriggerConfig,
     DateTriggerConfig,
