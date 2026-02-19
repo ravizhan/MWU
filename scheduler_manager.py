@@ -83,14 +83,17 @@ class SchedulerManager:
             raise ValueError(f"未知的触发器类型: {type(trigger_config)}")
 
     async def _execute_task(
-        self, task_id: str, task_list: List[str], options: Dict[str, str]
+        self,
+        task_id: str,
+        task_name: str,
+        task_list: List[str],
+        options: Dict[str, str],
     ):
         """执行定时任务"""
         logger.info(f"开始执行定时任务: {task_id}")
 
         # 创建执行记录
         execution_id = str(uuid.uuid4())
-        task_name = self._get_task_name(task_id)
         execution = TaskExecution(
             id=execution_id,
             task_id=task_id,
@@ -138,12 +141,52 @@ class SchedulerManager:
             logger.error(f"定时任务 {task_id} 执行失败: {e}")
             await self._update_execution_status(execution_id, "failed", str(e))
 
-    def _get_task_name(self, task_id: str) -> str:
-        """获取任务名称"""
-        if not self.scheduler:
-            return task_id
-        job = self.scheduler.get_job(task_id)
-        return job.kwargs.get("task_name", task_id) if job else task_id
+    def _build_trigger_config(
+        self, trigger
+    ) -> tuple[Literal["cron", "date", "interval"], TriggerConfig]:
+        """从 APScheduler trigger 重建触发器类型与配置"""
+        if isinstance(trigger, CronTrigger):
+            field_map = {field.name: str(field) for field in trigger.fields}
+            cron = " ".join(
+                [
+                    field_map.get("minute", "*"),
+                    field_map.get("hour", "*"),
+                    field_map.get("day", "*"),
+                    field_map.get("month", "*"),
+                    field_map.get("day_of_week", "*"),
+                ]
+            )
+            return "cron", CronTriggerConfig(cron=cron)
+
+        if isinstance(trigger, DateTrigger):
+            run_date = getattr(trigger, "run_date", None)
+            if run_date is None:
+                raise ValueError("DateTrigger 缺少 run_date")
+            return "date", DateTriggerConfig(run_date=run_date)
+
+        if isinstance(trigger, IntervalTrigger):
+            interval = getattr(trigger, "interval", None)
+            total_seconds = int(interval.total_seconds()) if interval is not None else 0
+
+            week_seconds = 7 * 24 * 60 * 60
+            day_seconds = 24 * 60 * 60
+
+            weeks, remainder = divmod(total_seconds, week_seconds)
+            days, remainder = divmod(remainder, day_seconds)
+            hours, remainder = divmod(remainder, 60 * 60)
+            minutes, seconds = divmod(remainder, 60)
+
+            return "interval", IntervalTriggerConfig(
+                weeks=weeks or None,
+                days=days or None,
+                hours=hours or None,
+                minutes=minutes or None,
+                seconds=seconds or None,
+                start_date=getattr(trigger, "start_date", None),
+                end_date=getattr(trigger, "end_date", None),
+            )
+
+        raise ValueError(f"未知的触发器类型: {type(trigger)}")
 
     async def _add_execution(self, execution: TaskExecution):
         """添加执行记录"""
@@ -184,6 +227,7 @@ class SchedulerManager:
             id=task_id,
             kwargs={
                 "task_id": task_id,
+                "task_name": task_create.name,
                 "task_list": task_create.task_list,
                 "options": task_create.task_options,
             },
@@ -222,20 +266,16 @@ class SchedulerManager:
             return None
 
         # 从 kwargs 中获取任务信息
-        task_name = job.kwargs.get("task_name", task_id)
+        task_name = job.kwargs.get("task_name", "")
         task_list = job.kwargs.get("task_list", [])
         task_options = job.kwargs.get("options", {})
-        trigger_type = job.kwargs.get("trigger_type", "cron")
-        trigger_config_dict = job.kwargs.get("trigger_config", {})
+        trigger_type: Literal["cron", "date", "interval"]
 
-        # 根据触发器类型重建配置对象
-        if trigger_type == "cron":
-            trigger_config = CronTriggerConfig(**trigger_config_dict)
-        elif trigger_type == "date":
-            trigger_config = DateTriggerConfig(**trigger_config_dict)
-        elif trigger_type == "interval":
-            trigger_config = IntervalTriggerConfig(**trigger_config_dict)
-        else:
+        try:
+            trigger_type, trigger_config = self._build_trigger_config(job.trigger)
+        except Exception as e:
+            logger.warning(f"重建触发器配置失败，使用默认 cron 配置: {e}")
+            trigger_type = "cron"
             trigger_config = CronTriggerConfig(cron="* * * * *")
 
         return ScheduledTask(
@@ -258,20 +298,18 @@ class SchedulerManager:
         jobs = self.scheduler.get_jobs()
 
         for job in jobs:
-            task_name = job.kwargs.get("task_name", job.id)
+            task_name = job.kwargs.get("task_name", "")
             task_list = job.kwargs.get("task_list", [])
             task_options = job.kwargs.get("options", {})
-            trigger_type = job.kwargs.get("trigger_type", "cron")
-            trigger_config_dict = job.kwargs.get("trigger_config", {})
+            trigger_type: Literal["cron", "date", "interval"]
 
-            # 根据触发器类型重建配置对象
-            if trigger_type == "cron":
-                trigger_config = CronTriggerConfig(**trigger_config_dict)
-            elif trigger_type == "date":
-                trigger_config = DateTriggerConfig(**trigger_config_dict)
-            elif trigger_type == "interval":
-                trigger_config = IntervalTriggerConfig(**trigger_config_dict)
-            else:
+            try:
+                trigger_type, trigger_config = self._build_trigger_config(job.trigger)
+            except Exception as e:
+                logger.warning(
+                    f"重建任务 {job.id} 的触发器配置失败，使用默认 cron 配置: {e}"
+                )
+                trigger_type = "cron"
                 trigger_config = CronTriggerConfig(cron="* * * * *")
 
             task = ScheduledTask(
@@ -305,6 +343,15 @@ class SchedulerManager:
             # 获取当前任务信息
             current_kwargs = job.kwargs
 
+            try:
+                current_trigger_type, current_trigger_config = (
+                    self._build_trigger_config(job.trigger)
+                )
+            except Exception as e:
+                logger.warning(f"重建当前触发器配置失败，使用默认 cron 配置: {e}")
+                current_trigger_type = "cron"
+                current_trigger_config = CronTriggerConfig(cron="* * * * *")
+
             # 合并更新数据
             new_name = (
                 task_update.name
@@ -321,29 +368,6 @@ class SchedulerManager:
                 if task_update.task_options is not None
                 else current_kwargs.get("options", {})
             )
-            new_trigger_type = (
-                task_update.trigger_type
-                if task_update.trigger_type is not None
-                else current_kwargs.get("trigger_type", "cron")
-            )
-            # 从字典重建触发器配置对象
-            current_trigger_config_dict = current_kwargs.get("trigger_config", {})
-            current_trigger_type = current_kwargs.get("trigger_type", "cron")
-
-            if current_trigger_type == "cron":
-                current_trigger_config = CronTriggerConfig(
-                    **current_trigger_config_dict
-                )
-            elif current_trigger_type == "date":
-                current_trigger_config = DateTriggerConfig(
-                    **current_trigger_config_dict
-                )
-            elif current_trigger_type == "interval":
-                current_trigger_config = IntervalTriggerConfig(
-                    **current_trigger_config_dict
-                )
-            else:
-                current_trigger_config = CronTriggerConfig(cron="* * * * *")
 
             new_trigger_config = (
                 task_update.trigger_config
@@ -360,11 +384,9 @@ class SchedulerManager:
                 trigger=trigger,
                 kwargs={
                     "task_id": task_id,
+                    "task_name": new_name,
                     "task_list": new_task_list,
                     "options": new_options,
-                    "task_name": new_name,
-                    "trigger_type": new_trigger_type,
-                    "trigger_config": new_trigger_config.model_dump(),
                 },
             )
 

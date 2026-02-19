@@ -314,10 +314,10 @@ auto-imports.d.ts
 components.d.ts
 debug
 agent
+config
 
 openspec
 openspec*.*
-config/
 .iflow
 .opencode
 .roo
