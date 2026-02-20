@@ -34,7 +34,8 @@ export const useTaskConfigStore = defineStore("taskConfig", {
   actions: {
     normalizeTaskIds(taskIds: string[]): string[] {
       const interfaceStore = useInterfaceStore()
-      const validTaskIds = new Set(interfaceStore.getTaskList.map((task) => task.id))
+      const taskSource = this.taskList.length > 0 ? this.taskList : interfaceStore.getTaskList
+      const validTaskIds = new Set(taskSource.map((task) => task.id))
       return [...new Set(taskIds)].filter((taskId) => validTaskIds.has(taskId))
     },
 
@@ -92,7 +93,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
 
     buildDefaultTaskList() {
       const interfaceStore = useInterfaceStore()
-      return interfaceStore.getTaskList.map((task) => ({ ...task, checked: true }))
+      return interfaceStore.getTaskList.map((task) => ({ ...task, checked: false }))
     },
 
     async loadConfig() {

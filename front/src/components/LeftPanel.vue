@@ -42,7 +42,6 @@
     <TaskSelectList
       :tasks="configStore.taskList"
       :selected-tasks="selectedTaskIds"
-      :draggable="true"
       :scrollable="scroll_show"
       @update:tasks="handleTasksUpdate"
       @update:selected-tasks="handleSelectedTasksUpdate"

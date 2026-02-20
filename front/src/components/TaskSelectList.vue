@@ -2,8 +2,12 @@
   <n-list hoverable bordered>
     <template v-if="scrollable">
       <n-scrollbar trigger="none" class="max-h-75">
-        <component :is="draggable ? VueDraggable : 'div'" v-model="taskListData">
-          <n-list-item v-for="item in taskListData" :key="item.id">
+        <VueDraggable v-model="taskListData" :animation="150" ghost-class="ghost">
+          <n-list-item
+            v-for="item in taskListData"
+            :key="item.id"
+            class="cursor-grab active:cursor-grabbing"
+          >
             <n-checkbox
               size="large"
               :label="item.name"
@@ -18,12 +22,16 @@
               </n-button>
             </template>
           </n-list-item>
-        </component>
+        </VueDraggable>
       </n-scrollbar>
     </template>
     <template v-else>
-      <component :is="draggable ? VueDraggable : 'div'" v-model="taskListData">
-        <n-list-item v-for="item in taskListData" :key="item.id">
+      <VueDraggable v-model="taskListData" :animation="150" ghost-class="ghost">
+        <n-list-item
+          v-for="item in taskListData"
+          :key="item.id"
+          class="cursor-grab active:cursor-grabbing"
+        >
           <n-checkbox
             size="large"
             :label="item.name"
@@ -38,7 +46,7 @@
             </n-button>
           </template>
         </n-list-item>
-      </component>
+      </VueDraggable>
     </template>
   </n-list>
 </template>
@@ -53,8 +61,6 @@ interface Props {
   tasks: TaskListItem[]
   /** 选中的任务ID列表 */
   selectedTasks: string[]
-  /** 是否可拖拽排序 */
-  draggable?: boolean
   /** 是否显示滚动条 */
   scrollable?: boolean
 }
@@ -66,7 +72,6 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  draggable: false,
   scrollable: false,
 })
 
@@ -99,3 +104,18 @@ function handleConfig(taskId: string) {
   emit("config", taskId)
 }
 </script>
+
+<style scoped>
+.cursor-grab {
+  cursor: grab;
+}
+
+.cursor-grab:active {
+  cursor: grabbing;
+}
+
+.ghost {
+  opacity: 0.5;
+  background: #c8ebfb;
+}
+</style>

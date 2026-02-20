@@ -120,8 +120,9 @@
         <n-tab-pane name="task-list" :tab="t('settings.scheduler.dialog.tab.taskList')">
           <n-scrollbar trigger="none" class="max-h-65 !rounded-[12px]">
             <TaskSelectList
-              :tasks="availableTasks"
+              :tasks="taskListData"
               :selected-tasks="formData.task_list"
+              @update:tasks="handleTasksUpdate"
               @update:selected-tasks="handleSelectedTasksUpdate"
               @config="openTaskSettings"
             />
@@ -158,7 +159,7 @@ import { ref, computed, watch } from "vue"
 import { useMessage, type FormInst, type FormRules } from "naive-ui"
 import { useI18n } from "vue-i18n"
 import { useSchedulerStore } from "../stores/scheduler"
-import { useInterfaceStore } from "../stores/interface"
+import type { TaskListItem } from "../stores/interface"
 import { useTaskConfigStore } from "../stores/taskConfig"
 import TaskSelectList from "./TaskSelectList.vue"
 import TaskOptionPanel from "./TaskOptionPanel.vue"
@@ -188,7 +189,6 @@ const emit = defineEmits<Emits>()
 const message = useMessage()
 const { t } = useI18n()
 const schedulerStore = useSchedulerStore()
-const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 
 const formRef = ref<FormInst | null>(null)
@@ -203,7 +203,7 @@ const showDialog = computed({
 })
 
 const isEditMode = computed(() => !!props.task)
-const availableTasks = computed(() => interfaceStore.getTaskList)
+const availableTasks = computed(() => configStore.taskList)
 
 // 触发器配置的 computed 属性
 const cronConfig = computed(() => formData.value.trigger_config as CronTriggerConfig)
@@ -214,6 +214,7 @@ const dateConfigTimestamp = computed(() =>
 const intervalConfig = computed(() => formData.value.trigger_config as IntervalTriggerConfig)
 
 const formData = ref<ScheduledTaskCreate>(initFormData(props.task))
+const taskListData = ref<TaskListItem[]>([])
 
 const formRules = computed<FormRules>(() => ({
   name: [
@@ -281,13 +282,56 @@ watch(
   () => props.task,
   (task) => {
     formData.value = initFormData(task)
+    syncTaskListData(formData.value.task_list)
   },
+)
+
+// 监听可用任务变化，更新可拖拽任务列表
+watch(
+  availableTasks,
+  () => {
+    syncTaskListData(formData.value.task_list)
+  },
+  { immediate: true },
 )
 
 function resetForm() {
   formData.value = initFormData()
+  syncTaskListData(formData.value.task_list)
   currentSettingTaskId.value = null
   activeTab.value = "task-list"
+}
+
+function syncTaskListData(preferredOrder: string[]) {
+  const allTasks = availableTasks.value
+  const taskMap = new Map(allTasks.map((task) => [task.id, task]))
+  const orderedTasks: TaskListItem[] = []
+
+  for (const taskId of preferredOrder) {
+    const task = taskMap.get(taskId)
+    if (task) {
+      orderedTasks.push(task)
+      taskMap.delete(taskId)
+    }
+  }
+
+  for (const task of allTasks) {
+    if (taskMap.has(task.id)) {
+      orderedTasks.push(task)
+    }
+  }
+
+  taskListData.value = orderedTasks
+}
+
+function buildOrderedTaskList(selectedTasks: string[], tasks: TaskListItem[] = taskListData.value) {
+  const selectedSet = new Set(configStore.normalizeTaskIds(selectedTasks))
+  return tasks.filter((task) => selectedSet.has(task.id)).map((task) => task.id)
+}
+
+function handleTasksUpdate(tasks: TaskListItem[]) {
+  taskListData.value = tasks
+  formData.value.task_list = buildOrderedTaskList(formData.value.task_list, tasks)
 }
 
 // 初始化表单数据
@@ -358,7 +402,7 @@ function setCronPreset(preset: string) {
 
 // 处理任务选择更新
 function handleSelectedTasksUpdate(newSelectedTasks: string[]) {
-  const task_list = configStore.normalizeTaskIds(newSelectedTasks)
+  const task_list = buildOrderedTaskList(newSelectedTasks)
   formData.value.task_list = task_list
   formData.value.task_options = configStore.buildOptionsForTasks(
     task_list,
@@ -372,7 +416,7 @@ function handleSelectedTasksUpdate(newSelectedTasks: string[]) {
 
 function openTaskSettings(taskId: string) {
   if (!formData.value.task_list.includes(taskId)) {
-    const task_list = configStore.normalizeTaskIds([...formData.value.task_list, taskId])
+    const task_list = buildOrderedTaskList([...formData.value.task_list, taskId])
     formData.value.task_list = task_list
     formData.value.task_options = configStore.buildOptionsForTasks(
       task_list,
