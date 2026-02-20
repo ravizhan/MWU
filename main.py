@@ -261,28 +261,6 @@ def _get_platform_info():
         case "Linux":
             plat = "linux"
 
-    arch = "x64"
-    machine = platform.machine().lower()
-    match machine:
-        case "x86_64" | "amd64":
-            arch = "x64"
-        case "arm" | "aarch64" | "arm64":
-            arch = "arm64"
-
-    return plat, arch
-
-
-def _get_platform_info_github():
-    """获取 GitHub release asset 匹配用的平台架构字符串"""
-    plat = "linux"
-    match platform.system():
-        case "Windows":
-            plat = "win"
-        case "Darwin":
-            plat = "macos"
-        case "Linux":
-            plat = "linux"
-
     arch = "x86_64"
     machine = platform.machine().lower()
     match machine:
@@ -344,7 +322,7 @@ def _check_github_update():
     latest_version = response["tag_name"]
     current_version = interface.version
 
-    plat, arch = _get_platform_info_github()
+    plat, arch = _get_platform_info()
 
     for asset in response.get("assets", []):
         if f"{plat}-{arch}" in asset["name"]:
@@ -422,7 +400,7 @@ def check_update():
                 app_state.update_info = gh_info
                 return {"status": "success", "update_info": app_state.update_info}
 
-            plat, arch = _get_platform_info_github()
+            plat, arch = _get_platform_info()
             msg = f"未找到适合当前平台的更新包:{plat}-{arch}"
             app_state.send_log(msg)
             return {
