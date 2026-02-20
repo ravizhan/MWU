@@ -33,6 +33,13 @@ with open("interface.json", "r", encoding="utf-8") as f:
 
 interface = InterfaceModel(**json_data)
 
+if not os.path.exists("config"):
+    os.makedirs("config")
+    with open("config/settings.json", "w", encoding="utf-8") as f:
+        json.dump(SettingsModel().model_dump(), f, indent=4, ensure_ascii=False)
+    with open("config/task_config.json", "w", encoding="utf-8") as f:
+        json.dump(TaskConfigModel().model_dump(), f, indent=4, ensure_ascii=False)
+
 
 class LogBroadcaster:
     def __init__(self):
@@ -211,8 +218,8 @@ def get_task_config():
     try:
         with open("config/task_config.json", "r", encoding="utf-8") as f:
             config_data = json.load(f)
-        user_config = TaskConfigModel(**config_data)
-        return {"status": "success", "config": user_config.model_dump()}
+        task_config = TaskConfigModel(**config_data)
+        return {"status": "success", "config": task_config.model_dump()}
     except FileNotFoundError:
         return {"status": "success", "config": TaskConfigModel().model_dump()}
     except Exception as e:

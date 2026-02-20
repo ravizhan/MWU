@@ -3,9 +3,9 @@ from typing import Optional, Literal
 
 
 class Update(BaseModel):
-    autoUpdate: bool
-    updateChannel: Literal["stable", "beta"]
-    proxy: str
+    autoUpdate: bool = True
+    updateChannel: Literal["stable", "beta"] = "stable"
+    proxy: str = ""
     mirrorchyanCdk: str = ""
 
 
@@ -13,7 +13,7 @@ class Notification(BaseModel):
     systemNotification: bool = False
     browserNotification: bool = False
     externalNotification: bool = False
-    webhook: str
+    webhook: str = ""
     contentType: Literal["application/json", "application/x-www-form-urlencoded"] = (
         "application/json"
     )
@@ -22,8 +22,8 @@ class Notification(BaseModel):
     username: str = ""
     password: str = ""
     method: Literal["POST", "GET"] = "POST"
-    notifyOnComplete: bool
-    notifyOnError: bool
+    notifyOnComplete: bool = True
+    notifyOnError: bool = True
 
 
 class UI(BaseModel):
@@ -31,25 +31,25 @@ class UI(BaseModel):
 
 
 class Runtime(BaseModel):
-    timeout: int
-    reminderInterval: int
-    autoRetry: bool
-    maxRetryCount: int
+    timeout: int = 300
+    reminderInterval: int = 30
+    autoRetry: bool = True
+    maxRetryCount: int = 3
 
 
 class About(BaseModel):
-    version: str
-    author: str
-    github: str
-    license: str
-    description: str
-    contact: str
-    issueUrl: str
+    version: str = ""
+    author: str = ""
+    github: str = ""
+    license: str = ""
+    description: str = ""
+    contact: str = ""
+    issueUrl: str = ""
 
 
 class SettingsModel(BaseModel):
-    update: Update
-    notification: Notification
-    ui: UI
-    runtime: Runtime
-    about: About
+    update: Update = Update()
+    notification: Notification = Notification()
+    ui: UI = UI()
+    runtime: Runtime = Runtime()
+    about: About = About()

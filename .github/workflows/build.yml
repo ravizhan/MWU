@@ -185,7 +185,6 @@ jobs:
       - name: Copy Resources to Build
         shell: bash
         run: |
-          cp -r "config" "build/main.dist/config"
           cp -r "page" "build/main.dist/page"
           git clone "https://github.com/MaaXYZ/MaaAgentBinary" "build/main.dist/MaaAgentBinary"
 

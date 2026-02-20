@@ -73,6 +73,7 @@ jobs:
     env:
       UV_INDEX: https://pypi.org/simple
       repo_name: ${{ needs.meta.outputs.repo_name }}
+      tag: ${{ needs.meta.outputs.tag }}
     permissions:
       contents: write
     strategy:
@@ -136,13 +137,6 @@ jobs:
           curl -L https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/copy_resources.py -o ./copy_resources.py
           uv run ./copy_resources.py
 
-      - name: Compile Dependencies
-        if: false
-        shell: bash
-        run: |
-          curl -L https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/compile_deps.py -o ./compile_deps.py
-          uv run ./compile_deps.py
-
       - name: Download Dependencies
         shell: bash
         run: |
@@ -169,13 +163,6 @@ jobs:
       - name: Compress Final Artifact
         run: |
           7z a -t7z -mx=9 -mmt -ms -r ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.7z "./build/*"
-
-      - name: Breakpoint if tests failed
-        uses: namespacelabs/breakpoint-action@v0
-        if: failure()
-        with:
-          duration: 30m
-          authorized-users: ravizhan
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
