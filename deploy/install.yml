@@ -143,9 +143,6 @@ jobs:
           curl -L https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/download_deps.py -o ./download_deps.py
           uv run ./download_deps.py
 
-      - name: Create Version file
-        run: echo "${{ github.ref_name }}" >> build/version
-
       - name: Download Artifact from Release
         id: download_artifact
         uses: robinraju/release-downloader@v1
@@ -160,15 +157,18 @@ jobs:
         run: |
           7z x ${{ fromJson(steps.download_artifact.outputs.downloaded_files)[0] }} -obuild -y
 
+      - name: Create Version file
+        run: echo "${{ env.tag }}" >> build/version
+
       - name: Compress Final Artifact
         run: |
-          7z a -t7z -mx=9 -mmt -ms -r ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.7z "./build/*"
+          7z a -t7z -mx=9 -mmt -ms -r ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}.7z "./build/*"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
-          path: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}.7z
+          name: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}
+          path: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}.7z
 
   changelog:
     name: Generate changelog
