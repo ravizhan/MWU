@@ -2,9 +2,11 @@ export class SSEClient {
   private eventSource: EventSource | null = null
   private url: string
   private listeners: Map<string, Set<(data: any) => void>> = new Map()
-  private reconnectInterval: number = 3000
+  private baseReconnectInterval: number = 1000
+  private maxReconnectInterval: number = 30000
   private reconnectAttempts: number = 0
-  private maxReconnectAttempts: number = 5
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private isManuallyClosed: boolean = false
 
   constructor(url: string) {
     this.url = url
@@ -12,6 +14,10 @@ export class SSEClient {
   }
 
   private connect(): void {
+    if (this.isManuallyClosed) return
+
+    this.clearReconnectTimer()
+    this.eventSource?.close()
     this.eventSource = new EventSource(this.url)
 
     this.eventSource.onmessage = (event) => {
@@ -31,17 +37,33 @@ export class SSEClient {
     this.eventSource.onerror = (error) => {
       console.error("SSE连接错误:", error)
       this.eventSource?.close()
-
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        setTimeout(() => {
-          this.reconnectAttempts++
-          console.log(`SSE重连尝试 ${this.reconnectAttempts}/${this.maxReconnectAttempts}`)
-          this.connect()
-        }, this.reconnectInterval)
-      } else {
-        console.error("SSE重连失败次数过多，停止尝试")
-      }
+      this.eventSource = null
+      this.scheduleReconnect()
     }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.isManuallyClosed || this.reconnectTimer) return
+
+    const exponentialDelay = Math.min(
+      this.maxReconnectInterval,
+      this.baseReconnectInterval * 2 ** this.reconnectAttempts,
+    )
+    const jitter = Math.floor(Math.random() * 500)
+    const delay = exponentialDelay + jitter
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.reconnectAttempts++
+      console.log(`SSE重连尝试 #${this.reconnectAttempts}，等待 ${delay}ms`)
+      this.connect()
+    }, delay)
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimer) return
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
   }
 
   public addEventListener(type: string, callback: (data: any) => void): void {
@@ -60,11 +82,17 @@ export class SSEClient {
   }
 
   public close(): void {
+    this.isManuallyClosed = true
+    this.clearReconnectTimer()
     this.eventSource?.close()
     this.eventSource = null
+  }
+
+  public reconnect(): void {
+    this.isManuallyClosed = false
+    this.reconnectAttempts = 0
+    this.connect()
   }
 }
 
 export const sse = new SSEClient("/api/logs")
-
-sse.addEventListener("log", (data) => console.log("收到日志消息:", data.message))

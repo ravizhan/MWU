@@ -50,7 +50,6 @@ import type { LogInst } from "naive-ui"
 import Clipboard from "clipboard"
 import { useMessage } from "naive-ui"
 import { useI18n } from "vue-i18n"
-import { sse } from "../script/sse"
 import { ref, onMounted, onUnmounted, watchEffect, nextTick, watch } from "vue"
 import { useIndexStore } from "../stores"
 import { storeToRefs } from "pinia"
@@ -66,12 +65,6 @@ btnCopy.on("success", () => {
   message.success(t("panel.copySuccess"))
 })
 
-const handleLog = (data: { message: string }) => {
-  const msg = data.message
-  indexStore.UpdateLog(msg)
-}
-sse.addEventListener("log", handleLog)
-
 onMounted(() => {
   watchEffect(() => {
     if (log.value) {
@@ -83,7 +76,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  sse.removeEventListener("log", handleLog)
   handleStopStream()
 })
 
