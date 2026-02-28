@@ -118,8 +118,8 @@ export function getResource(): Promise<string[]> {
     .then((data: ResourceResponse) => data.resource)
 }
 
-export function postResource(name: string): void {
-  fetch("/api/resource?name=" + name, {
+export function postResource(name: string): Promise<boolean> {
+  return fetch("/api/resource?name=" + name, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -130,10 +130,18 @@ export function postResource(name: string): void {
       if (data.status === "success") {
         // @ts-ignore
         window.$message.success("资源添加成功")
+        return true
       } else {
         // @ts-ignore
         window.$message.error(data.message)
+        return false
       }
+    })
+    .catch((error) => {
+      console.error("Failed to set resource:", error)
+      // @ts-ignore
+      window.$message.error("网络错误，请稍后重试")
+      return false
     })
 }
 

@@ -46,6 +46,22 @@ export interface AboutInfo {
   issueUrl: string
 }
 
+// 面板持久化设备信息
+export interface PanelLastConnectedDevice {
+  type: "Adb" | "Win32"
+  fingerprint: string
+  adb_path: string
+  address: string
+  class_name: string
+  window_name: string
+}
+
+// 面板持久化设置
+export interface PanelSettings {
+  lastResource: string
+  lastConnectedDevice: PanelLastConnectedDevice | null
+}
+
 // 完整设置模型
 export interface SettingsModel {
   update: UpdateSettings
@@ -53,4 +69,5 @@ export interface SettingsModel {
   ui: UISettings
   runtime: RuntimeSettings
   about: AboutInfo
+  panel: PanelSettings
 }

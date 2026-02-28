@@ -41,6 +41,10 @@ const defaultSettings: SettingsModel = {
     contact: "",
     issueUrl: "",
   },
+  panel: {
+    lastResource: "",
+    lastConnectedDevice: null,
+  },
 }
 
 const DARK_MODE_KEY = "darkMode"
@@ -105,6 +109,11 @@ export const useSettingsStore = defineStore("settings", {
             ui: { ...defaultSettings.ui, ...data.ui },
             runtime: { ...defaultSettings.runtime, ...data.runtime },
             about: { ...defaultSettings.about, ...data.about },
+            panel: {
+              ...defaultSettings.panel,
+              ...data.panel,
+              lastConnectedDevice: data.panel?.lastConnectedDevice ?? null,
+            },
           }
           // 确保本地缓存与服务器设置同步
           localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))

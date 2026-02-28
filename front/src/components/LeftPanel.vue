@@ -63,7 +63,7 @@
   </n-card>
 </template>
 <script setup lang="ts">
-import { watch, ref, computed } from "vue"
+import { watch, ref, computed, onMounted } from "vue"
 import { useI18n } from "vue-i18n"
 import {
   getDevices,
@@ -77,6 +77,8 @@ import {
 } from "../script/api"
 import { useTaskConfigStore } from "../stores/taskConfig"
 import { useIndexStore } from "../stores"
+import { useSettingsStore } from "../stores/settings"
+import type { PanelLastConnectedDevice } from "../types/settings"
 import type { TreeSelectOverrideNodeClickBehavior } from "naive-ui"
 import { useMessage, useDialog } from "naive-ui"
 import TaskSelectList from "./TaskSelectList.vue"
@@ -90,6 +92,7 @@ const dialog = useDialog()
 const { t } = useI18n()
 const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
+const settingsStore = useSettingsStore()
 const scroll_show = ref(window.innerWidth > 768)
 const device = ref<AdbDevice | Win32Device | null>(null)
 const resource = ref<string | null>(null)
@@ -156,7 +159,56 @@ watch(
   { deep: true },
 )
 
-function get_device() {
+function isAdbDevice(value: unknown): value is AdbDevice {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<AdbDevice>
+  return typeof candidate.adb_path === "string" && typeof candidate.address === "string"
+}
+
+function buildDeviceFingerprint(deviceInfo: AdbDevice | Win32Device): string {
+  if (isAdbDevice(deviceInfo)) {
+    return `${deviceInfo.adb_path}|${deviceInfo.address}`
+  }
+  return `${deviceInfo.class_name}|${deviceInfo.window_name}`
+}
+
+function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): string {
+  if (stored.fingerprint) {
+    return stored.fingerprint
+  }
+  if (stored.type === "Adb") {
+    return `${stored.adb_path}|${stored.address}`
+  }
+  return `${stored.class_name}|${stored.window_name}`
+}
+
+async function persistLastConnectedDevice(deviceInfo: AdbDevice | Win32Device) {
+  const storedDevice: PanelLastConnectedDevice = isAdbDevice(deviceInfo)
+    ? {
+        type: "Adb",
+        fingerprint: buildDeviceFingerprint(deviceInfo),
+        adb_path: deviceInfo.adb_path,
+        address: deviceInfo.address,
+        class_name: "",
+        window_name: "",
+      }
+    : {
+        type: "Win32",
+        fingerprint: buildDeviceFingerprint(deviceInfo),
+        adb_path: "",
+        address: "",
+        class_name: deviceInfo.class_name,
+        window_name: deviceInfo.window_name,
+      }
+
+  await settingsStore.updateSetting("panel", "lastConnectedDevice", storedDevice)
+}
+
+async function persistLastResource(name: string) {
+  await settingsStore.updateSetting("panel", "lastResource", name)
+}
+
+async function get_device() {
   devices_tree.value = [
     {
       label: "Adb",
@@ -169,76 +221,113 @@ function get_device() {
       children: [],
     },
   ]
+
   loading.value = true
-  getDevices()
-    .then((devices_data) => {
-      for (const dev of devices_data.adb) {
-        ;(devices_tree.value[0] as any).children.push({
-          label: dev.name + " (" + dev.address + ")",
-          key: dev,
-        })
-      }
-      for (const dev of devices_data.win32) {
-        ;(devices_tree.value[1] as any).children.push({
-          label: dev.window_name + " (" + dev.class_name + ")",
-          key: dev,
-        })
-      }
-    })
-    .then(() => {
-      if ((devices_tree.value[0] as any).children.length === 0) {
-        ;(devices_tree.value[0] as any).children.push({
-          label: t("panel.noDevice"),
-          key: "none",
-          disabled: true,
-        })
-      }
-      if ((devices_tree.value[1] as any).children.length === 0) {
-        ;(devices_tree.value[1] as any).children.push({
-          label: t("panel.noDevice"),
-          key: "none",
-          disabled: true,
-        })
-      }
-      loading.value = false
-    })
+  try {
+    const devices_data = await getDevices()
+
+    for (const dev of devices_data.adb) {
+      ;(devices_tree.value[0] as any).children.push({
+        label: dev.name + " (" + dev.address + ")",
+        key: dev,
+      })
+    }
+
+    for (const dev of devices_data.win32) {
+      ;(devices_tree.value[1] as any).children.push({
+        label: dev.window_name + " (" + dev.class_name + ")",
+        key: dev,
+      })
+    }
+
+    const savedDevice = settingsStore.settings.panel.lastConnectedDevice
+    if (savedDevice) {
+      const targetFingerprint = getStoredDeviceFingerprint(savedDevice)
+      const matchedAdb = devices_data.adb.find(
+        (dev) => buildDeviceFingerprint(dev) === targetFingerprint,
+      )
+      const matchedWin32 = devices_data.win32.find(
+        (dev) => buildDeviceFingerprint(dev) === targetFingerprint,
+      )
+      device.value = matchedAdb || matchedWin32 || null
+    }
+
+    if ((devices_tree.value[0] as any).children.length === 0) {
+      ;(devices_tree.value[0] as any).children.push({
+        label: t("panel.noDevice"),
+        key: "none",
+        disabled: true,
+      })
+    }
+
+    if ((devices_tree.value[1] as any).children.length === 0) {
+      ;(devices_tree.value[1] as any).children.push({
+        label: t("panel.noDevice"),
+        key: "none",
+        disabled: true,
+      })
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
-function connectDevices() {
+async function connectDevices() {
   if (!device.value) {
     // @ts-ignore
     window.$message.error(t("panel.selectDevice"))
     return
-  } else {
-    postDevices(device.value).then((success) => {
-      indexStore.setConnected(success)
-    })
+  }
+
+  const success = await postDevices(device.value)
+  indexStore.setConnected(success)
+  if (success) {
+    await persistLastConnectedDevice(device.value)
   }
 }
 
-function get_resource() {
+async function get_resource() {
   resources_list.value = []
   loading.value = true
-  getResource().then((resource_data) => {
-    for (const resource of resource_data) {
-      resources_list.value?.push({
-        label: resource,
-        value: resource,
+
+  try {
+    const resource_data = await getResource()
+    for (const item of resource_data) {
+      resources_list.value.push({
+        label: item,
+        value: item,
       })
     }
-  })
-  loading.value = false
+
+    const savedResource = settingsStore.settings.panel.lastResource
+    if (savedResource && resource_data.includes(savedResource)) {
+      resource.value = savedResource
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
-function post_resource() {
+async function post_resource() {
   if (!resource.value) {
     // @ts-ignore
     window.$message.error(t("panel.selectResource"))
     return
-  } else {
-    postResource(resource.value)
+  }
+
+  const success = await postResource(resource.value)
+  if (success) {
+    await persistLastResource(resource.value)
   }
 }
+
+onMounted(async () => {
+  if (!settingsStore.initialized) {
+    await settingsStore.fetchSettings()
+  }
+
+  await Promise.all([get_device(), get_resource()])
+})
 
 function StartTask() {
   const selectedTaskIds = configStore.taskList.filter((task) => task.checked).map((task) => task.id)

@@ -47,9 +47,24 @@ class About(BaseModel):
     issueUrl: str = ""
 
 
+class PanelLastConnectedDevice(BaseModel):
+    type: Literal["Adb", "Win32"]
+    fingerprint: str = ""
+    adb_path: str = ""
+    address: str = ""
+    class_name: str = ""
+    window_name: str = ""
+
+
+class Panel(BaseModel):
+    lastResource: str = ""
+    lastConnectedDevice: Optional[PanelLastConnectedDevice] = None
+
+
 class SettingsModel(BaseModel):
     update: Update = Update()
     notification: Notification = Notification()
     ui: UI = UI()
     runtime: Runtime = Runtime()
     about: About = About()
+    panel: Panel = Panel()
