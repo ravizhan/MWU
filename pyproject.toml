@@ -7,14 +7,14 @@ requires-python = ">=3.12"
 dependencies = [
     "apscheduler>=3.11.2",
     "aiosqlite>=0.22.1",
-    "fastapi>=0.129.0",
+    "fastapi>=0.134.0",
     "httpx>=0.28.1",
-    "maafw>=5.6.0",
+    "maafw>=5.7.2",
     "nuitka[all]>=4.0.1",
     "numpy>=2.3.5",
     "pillow>=12.1.1",
     "plyer>=2.1.0",
-    "sqlalchemy>=2.0.46",
+    "sqlalchemy>=2.0.47",
     "uvicorn>=0.41.0",
     "websockets>=16.0",
 ]
