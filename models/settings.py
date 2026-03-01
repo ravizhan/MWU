@@ -48,12 +48,15 @@ class About(BaseModel):
 
 
 class PanelLastConnectedDevice(BaseModel):
-    type: Literal["Adb", "Win32"]
+    type: Literal["Adb", "Win32", "Gamepad", "PlayCover"]
     fingerprint: str = ""
     adb_path: str = ""
     address: str = ""
     class_name: str = ""
     window_name: str = ""
+    hWnd: int = 0
+    gamepad_type: int = 0
+    uuid: str = ""
 
 
 class Panel(BaseModel):

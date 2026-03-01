@@ -1,6 +1,6 @@
 module github.com/ravizhan/MWU/updater
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/mholt/archives v0.1.5

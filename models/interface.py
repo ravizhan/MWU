@@ -37,6 +37,8 @@ class Win32Controller(BaseModel):
             "PostThreadMessage",
             "SendMessageWithCursorPos",
             "PostMessageWithCursorPos",
+            "SendMessageWithWindowPos",
+            "PostMessageWithWindowPos",
         ]
     ] = None
     keyboard: Optional[
@@ -48,6 +50,8 @@ class Win32Controller(BaseModel):
             "PostThreadMessage",
             "SendMessageWithCursorPos",
             "PostMessageWithCursorPos",
+            "SendMessageWithWindowPos",
+            "PostMessageWithWindowPos",
         ]
     ] = None
     screencap: Optional[
@@ -65,6 +69,49 @@ class Win32Controller(BaseModel):
     @classmethod
     def check_regex(cls, v: Any, info: ValidationInfo):
         return validate_regex(v, info)
+
+    @model_validator(mode="after")
+    def method_to_int(self):
+        maps = {
+            "screencap": {
+                "GDI": 1,
+                "FramePool": 2,
+                "DXGI_DesktopDup": 4,
+                "DXGI_DesktopDup_Window": 8,
+                "PrintWindow": 16,
+                "ScreenDC": 32,
+            },
+            "keyboard": {
+                "Seize": 1,
+                "SendMessage": 2,
+                "PostMessage": 4,
+                "LegacyEvent": 8,
+                "PostThreadMessage": 16,
+                "SendMessageWithCursorPos": 32,
+                "PostMessageWithCursorPos": 64,
+                "SendMessageWithWindowPos": 128,
+                "PostMessageWithWindowPos": 256,
+            },
+            "mouse": {
+                "Seize": 1,
+                "SendMessage": 2,
+                "PostMessage": 4,
+                "LegacyEvent": 8,
+                "PostThreadMessage": 16,
+                "SendMessageWithCursorPos": 32,
+                "PostMessageWithCursorPos": 64,
+                "SendMessageWithWindowPos": 128,
+                "PostMessageWithWindowPos": 256,
+            },
+        }
+        # 将输入的字符串方法转换为对应的整数值
+        for field, mapping in maps.items():
+            value = getattr(self, field, None)
+            if isinstance(value, str):
+                if value in mapping:
+                    setattr(self, field, mapping[value])
+                else:
+                    raise ValueError(f"无效的 {field} 方法: {value}")
 
 
 class PlayCoverController(BaseModel):
@@ -94,6 +141,28 @@ class GamepadController(BaseModel):
     @classmethod
     def check_regex(cls, v: Any, info: ValidationInfo):
         return validate_regex(v, info)
+
+    @model_validator(mode="after")
+    def method_to_int(self):
+        maps = {
+            "screencap": {
+                "GDI": 1,
+                "FramePool": 2,
+                "DXGI_DesktopDup": 4,
+                "DXGI_DesktopDup_Window": 8,
+                "PrintWindow": 16,
+                "ScreenDC": 32,
+            },
+            "gamepad_type": {"Xbox360": 0, "DualShock4": 1, "DS4": 1},
+        }
+        # 将输入的字符串方法转换为对应的整数值
+        for field, mapping in maps.items():
+            value = getattr(self, field, None)
+            if isinstance(value, str):
+                if value in mapping:
+                    setattr(self, field, mapping[value])
+                else:
+                    raise ValueError(f"无效的 {field} 方法: {value}")
 
 
 class Controller(BaseModel):

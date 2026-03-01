@@ -6,7 +6,12 @@ from queue import SimpleQueue
 import json
 import plyer
 import threading
-from maa.controller import AdbController
+from maa.controller import (
+    AdbController,
+    Win32Controller,
+    PlayCoverController,
+    GamepadController,
+)
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
@@ -18,6 +23,8 @@ from pathlib import Path
 import httpx
 import io
 from PIL import Image
+
+from models.api import DeviceModel
 from models.interface import InterfaceModel
 from models.settings import SettingsModel
 
@@ -97,36 +104,148 @@ class MaaWorker:
                 self.send_log(f"外部通知发送失败: {e}")
 
     def get_device(self) -> dict:
-        devices = {"adb": [], "win32": []}
+        devices = {"adb": [], "win32": [], "playcover": [], "gamepad": []}
+        win32_seen: set[int] = set()
+        gamepad_seen: set[int] = set()
+
         for controller in self.interface.controller:
-            if controller.type == "Adb":
-                for device in Toolkit.find_adb_devices():
-                    # 这两个字段的数字在JS里会整数溢出，转为字符串处理
-                    device.input_methods = str(device.input_methods)
-                    device.screencap_methods = str(device.screencap_methods)
-                    if device not in devices["adb"]:
-                        devices["adb"].append(device)
-            elif controller.type == "Win32":
-                for device in Toolkit.find_desktop_windows():
-                    class_match = not controller.win32.class_regex or re.search(
-                        controller.win32.class_regex, device.class_name
-                    )
-                    window_match = not controller.win32.window_regex or re.search(
-                        controller.win32.window_regex, device.window_name
-                    )
-                    if class_match and window_match and device not in devices["win32"]:
-                        devices["win32"].append(device)
+            match controller.type:
+                case "Adb":
+                    for device in Toolkit.find_adb_devices():
+                        data = {
+                            "name": device.name,
+                            "type": "adb",
+                            "adb_path": device.adb_path,
+                            "address": device.address,
+                            "screencap_methods": str(device.screencap_methods),
+                            "input_methods": str(device.input_methods),
+                        }
+                        if data not in devices["adb"]:
+                            devices["adb"].append(data)
+                case "Win32":
+                    if sys.platform != "win32":
+                        continue
+                    if not controller.win32:
+                        continue
+                    for device in Toolkit.find_desktop_windows():
+                        class_name = device.class_name
+                        window_name = device.window_name
+                        class_match = not controller.win32.class_regex or re.search(
+                            controller.win32.class_regex, class_name
+                        )
+                        window_match = not controller.win32.window_regex or re.search(
+                            controller.win32.window_regex, window_name
+                        )
+                        if not (class_match and window_match):
+                            continue
+
+                        hwnd = int(device.hwnd)
+                        if hwnd in win32_seen:
+                            continue
+                        win32_seen.add(hwnd)
+
+                        devices["win32"].append(
+                            {
+                                "type": "win32",
+                                "hWnd": hwnd,
+                                "class_name": class_name,
+                                "window_name": window_name,
+                                "screencap_methods": controller.win32.screencap or 1,
+                                "input_methods": (
+                                    controller.win32.mouse
+                                    or controller.win32.keyboard
+                                    or 1
+                                ),
+                            }
+                        )
+                case "PlayCover":
+                    if sys.platform != "darwin":
+                        continue
+                    # TODO
+                    # uuid = controller.playcover.uuid
+                    # if controller.playcover and uuid:
+                    #     uuid = str(controller.playcover.uuid)
+                    # devices["playcover"].append(
+                    #     {
+                    #         "type": "playcover",
+                    #         "address": "127.0.0.1:1717",
+                    #         "uuid": uuid,
+                    #     }
+                    # )
+                    pass
+                case "Gamepad":
+                    if sys.platform != "win32":
+                        continue
+                    if not controller.gamepad:
+                        continue
+                    for device in Toolkit.find_desktop_windows():
+                        class_name = device.class_name
+                        window_name = device.window_name
+                        class_match = not controller.gamepad.class_regex or re.search(
+                            controller.gamepad.class_regex, class_name
+                        )
+                        window_match = not controller.gamepad.window_regex or re.search(
+                            controller.gamepad.window_regex, window_name
+                        )
+                        if not (class_match and window_match):
+                            continue
+
+                        hwnd = int(device.hwnd)
+                        if hwnd in gamepad_seen:
+                            continue
+                        gamepad_seen.add(hwnd)
+
+                        devices["gamepad"].append(
+                            {
+                                "type": "gamepad",
+                                "hWnd": hwnd,
+                                "class_name": class_name,
+                                "window_name": window_name,
+                                "screencap_methods": controller.gamepad.screencap or 1,
+                                "gamepad_type": controller.gamepad.gamepad_type or 0,
+                            }
+                        )
         return devices
 
-    def connect_device(self, device) -> bool:
-        controller = AdbController(
-            adb_path=device.adb_path,
-            address=device.address,
-            screencap_methods=device.screencap_methods,
-            input_methods=device.input_methods,
-            config=device.config,
-        )
-        status = controller.post_connection().wait().succeeded
+    def connect_device(self, device_config: DeviceModel) -> bool:
+        device_type = self._resolve_device_type(device_config)
+        if not device_type:
+            self.send_log("未知的设备类型")
+            return False
+
+        match device_type:
+            case "adb":
+                controller = AdbController(
+                    adb_path=device_config.adb_path,
+                    address=device_config.address,
+                    screencap_methods=int(device_config.screencap_methods or 0),
+                    input_methods=int(device_config.input_methods or 0),
+                )
+                status = controller.post_connection().wait().succeeded
+            case "win32":
+                controller = Win32Controller(
+                    hWnd=device_config.hWnd,
+                    screencap_method=int(device_config.screencap_methods or 0),
+                    mouse_method=int(device_config.input_methods or 0),
+                    keyboard_method=int(device_config.input_methods or 0),
+                )
+                status = controller.post_connection().wait().succeeded
+            case "gamepad":
+                controller = GamepadController(
+                    hWnd=device_config.hWnd,
+                    gamepad_type=int(device_config.gamepad_type or 0),
+                    screencap_method=int(device_config.screencap_methods or 0),
+                )
+                status = controller.post_connection().wait().succeeded
+            case "playcover":
+                controller = PlayCoverController(
+                    address=device_config.address or "127.0.0.1:1717",
+                    uuid=device_config.uuid,
+                )
+                status = controller.post_connection().wait().succeeded
+            case _:
+                self.send_log("未知的设备类型")
+                return False
         conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
             plyer.notification.notify(

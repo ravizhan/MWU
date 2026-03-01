@@ -71,6 +71,9 @@ import {
   startTask,
   stopTask,
   type AdbDevice,
+  type ConnectableDevice,
+  type GamepadDevice,
+  type PlayCoverDevice,
   type Win32Device,
   getResource,
   postResource,
@@ -94,7 +97,7 @@ const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
 const settingsStore = useSettingsStore()
 const scroll_show = ref(window.innerWidth > 768)
-const device = ref<AdbDevice | Win32Device | null>(null)
+const device = ref<ConnectableDevice | null>(null)
 const resource = ref<string | null>(null)
 const devices_tree = ref<object[]>([])
 const resources_list = ref<object[]>([])
@@ -162,44 +165,103 @@ watch(
 function isAdbDevice(value: unknown): value is AdbDevice {
   if (!value || typeof value !== "object") return false
   const candidate = value as Partial<AdbDevice>
-  return typeof candidate.adb_path === "string" && typeof candidate.address === "string"
+  return candidate.type === "Adb"
 }
 
-function buildDeviceFingerprint(deviceInfo: AdbDevice | Win32Device): string {
+function isWin32Device(value: unknown): value is Win32Device {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<Win32Device>
+  return candidate.type === "Win32"
+}
+
+function isGamepadDevice(value: unknown): value is GamepadDevice {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<GamepadDevice>
+  return candidate.type === "Gamepad"
+}
+
+function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
   if (isAdbDevice(deviceInfo)) {
-    return `${deviceInfo.adb_path}|${deviceInfo.address}`
+    return `adb|${deviceInfo.adb_path}|${deviceInfo.address}`
   }
-  return `${deviceInfo.class_name}|${deviceInfo.window_name}`
+  if (isWin32Device(deviceInfo)) {
+    return `win32|${deviceInfo.hWnd}`
+  }
+  if (isGamepadDevice(deviceInfo)) {
+    return `gamepad|${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
+  }
+  return `playcover|${deviceInfo.address}|${deviceInfo.uuid}`
 }
 
 function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): string {
   if (stored.fingerprint) {
     return stored.fingerprint
   }
-  if (stored.type === "Adb") {
-    return `${stored.adb_path}|${stored.address}`
+  const normalizedType = stored.type.toLowerCase()
+  if (normalizedType === "adb") {
+    return `adb|${stored.adb_path}|${stored.address}`
   }
-  return `${stored.class_name}|${stored.window_name}`
+  if (normalizedType === "win32") {
+    return `win32|${stored.hWnd}`
+  }
+  if (normalizedType === "gamepad") {
+    return `gamepad|${stored.hWnd}|${stored.gamepad_type}`
+  }
+  return `playcover|${stored.address}|${stored.uuid}`
 }
 
-async function persistLastConnectedDevice(deviceInfo: AdbDevice | Win32Device) {
-  const storedDevice: PanelLastConnectedDevice = isAdbDevice(deviceInfo)
-    ? {
-        type: "Adb",
-        fingerprint: buildDeviceFingerprint(deviceInfo),
-        adb_path: deviceInfo.adb_path,
-        address: deviceInfo.address,
-        class_name: "",
-        window_name: "",
-      }
-    : {
-        type: "Win32",
-        fingerprint: buildDeviceFingerprint(deviceInfo),
-        adb_path: "",
-        address: "",
-        class_name: deviceInfo.class_name,
-        window_name: deviceInfo.window_name,
-      }
+async function persistLastConnectedDevice(deviceInfo: ConnectableDevice) {
+  let storedDevice: PanelLastConnectedDevice
+
+  if (isAdbDevice(deviceInfo)) {
+    storedDevice = {
+      type: "Adb",
+      fingerprint: buildDeviceFingerprint(deviceInfo),
+      adb_path: deviceInfo.adb_path,
+      address: deviceInfo.address,
+      class_name: "",
+      window_name: "",
+      hWnd: 0,
+      gamepad_type: 0,
+      uuid: "",
+    }
+  } else if (isWin32Device(deviceInfo)) {
+    storedDevice = {
+      type: "Win32",
+      fingerprint: buildDeviceFingerprint(deviceInfo),
+      adb_path: "",
+      address: "",
+      class_name: deviceInfo.class_name,
+      window_name: deviceInfo.window_name,
+      hWnd: deviceInfo.hWnd,
+      gamepad_type: 0,
+      uuid: "",
+    }
+  } else if (isGamepadDevice(deviceInfo)) {
+    storedDevice = {
+      type: "Gamepad",
+      fingerprint: buildDeviceFingerprint(deviceInfo),
+      adb_path: "",
+      address: "",
+      class_name: deviceInfo.class_name,
+      window_name: deviceInfo.window_name,
+      hWnd: deviceInfo.hWnd,
+      gamepad_type: deviceInfo.gamepad_type,
+      uuid: "",
+    }
+  } else {
+    storedDevice = {
+      type: "PlayCover",
+      fingerprint: buildDeviceFingerprint(deviceInfo),
+      adb_path: "",
+      address: deviceInfo.address,
+      class_name: "",
+      window_name: deviceInfo.name,
+      hWnd: 0,
+      gamepad_type: 0,
+      uuid: deviceInfo.uuid,
+    }
+  }
 
   await settingsStore.updateSetting("panel", "lastConnectedDevice", storedDevice)
 }
@@ -218,6 +280,16 @@ async function get_device() {
     {
       label: "Win32",
       key: "Win32",
+      children: [],
+    },
+    {
+      label: "Gamepad",
+      key: "Gamepad",
+      children: [],
+    },
+    {
+      label: "PlayCover",
+      key: "PlayCover",
       children: [],
     },
   ]
@@ -240,32 +312,50 @@ async function get_device() {
       })
     }
 
+    for (const dev of devices_data.gamepad) {
+      ;(devices_tree.value[2] as any).children.push({
+        label: dev.window_name + " (" + dev.class_name + ")",
+        key: dev,
+      })
+    }
+
+    for (const dev of devices_data.playcover) {
+      ;(devices_tree.value[3] as any).children.push({
+        label: dev.name + " (" + dev.address + ")",
+        key: dev,
+      })
+    }
+
     const savedDevice = settingsStore.settings.panel.lastConnectedDevice
     if (savedDevice) {
       const targetFingerprint = getStoredDeviceFingerprint(savedDevice)
-      const matchedAdb = devices_data.adb.find(
-        (dev) => buildDeviceFingerprint(dev) === targetFingerprint,
-      )
-      const matchedWin32 = devices_data.win32.find(
-        (dev) => buildDeviceFingerprint(dev) === targetFingerprint,
-      )
-      device.value = matchedAdb || matchedWin32 || null
+      const allDevices: ConnectableDevice[] = [
+        ...devices_data.adb,
+        ...devices_data.win32,
+        ...devices_data.gamepad,
+        ...devices_data.playcover,
+      ]
+      const matchedDevice = allDevices.find((dev) => {
+        if (buildDeviceFingerprint(dev) === targetFingerprint) {
+          return true
+        }
+        if (isWin32Device(dev)) {
+          return `${dev.class_name}|${dev.window_name}` === targetFingerprint
+        }
+        return false
+      })
+      device.value = matchedDevice || null
     }
 
-    if ((devices_tree.value[0] as any).children.length === 0) {
-      ;(devices_tree.value[0] as any).children.push({
-        label: t("panel.noDevice"),
-        key: "none",
-        disabled: true,
-      })
-    }
-
-    if ((devices_tree.value[1] as any).children.length === 0) {
-      ;(devices_tree.value[1] as any).children.push({
-        label: t("panel.noDevice"),
-        key: "none",
-        disabled: true,
-      })
+    const emptyGroupKeys = ["none-adb", "none-win32", "none-gamepad", "none-playcover"]
+    for (let i = 0; i < devices_tree.value.length; i++) {
+      if ((devices_tree.value[i] as any).children.length === 0) {
+        ;(devices_tree.value[i] as any).children.push({
+          label: t("panel.noDevice"),
+          key: emptyGroupKeys[i],
+          disabled: true,
+        })
+      }
     }
   } finally {
     loading.value = false

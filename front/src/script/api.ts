@@ -12,23 +12,47 @@ interface ApiResponse {
 }
 
 export interface AdbDevice {
+  type: "Adb"
   name: string
   adb_path: string
   address: string
   screencap_methods: string
   input_methods: string
-  config: Record<string, any>
+  config: Record<string, unknown>
 }
 
 export interface Win32Device {
-  hwnd: number
+  type: "Win32"
+  hWnd: number
   class_name: string
   window_name: string
+  screencap_methods: number
+  input_methods: number
 }
+
+export interface GamepadDevice {
+  type: "Gamepad"
+  hWnd: number
+  class_name: string
+  window_name: string
+  screencap_methods: number
+  gamepad_type: number
+}
+
+export interface PlayCoverDevice {
+  type: "PlayCover"
+  name: string
+  address: string
+  uuid: string
+}
+
+export type ConnectableDevice = AdbDevice | Win32Device | GamepadDevice | PlayCoverDevice
 
 interface Devices {
   adb: AdbDevice[]
   win32: Win32Device[]
+  gamepad: GamepadDevice[]
+  playcover: PlayCoverDevice[]
 }
 
 interface DeviceResponse {
@@ -86,7 +110,7 @@ export function getDevices(): Promise<Devices> {
     .then((data: DeviceResponse) => data.devices)
 }
 
-export function postDevices(device: AdbDevice | Win32Device): Promise<boolean> {
+export function postDevices(device: ConnectableDevice): Promise<boolean> {
   return fetch("/api/device", {
     method: "POST",
     body: JSON.stringify(device),

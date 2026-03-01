@@ -48,12 +48,15 @@ export interface AboutInfo {
 
 // 面板持久化设备信息
 export interface PanelLastConnectedDevice {
-  type: "Adb" | "Win32"
+  type: "Adb" | "Win32" | "Gamepad" | "PlayCover"
   fingerprint: string
   adb_path: string
   address: string
   class_name: string
   window_name: string
+  hWnd: number
+  gamepad_type: number
+  uuid: string
 }
 
 // 面板持久化设置
