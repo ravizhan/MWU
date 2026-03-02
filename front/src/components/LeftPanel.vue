@@ -2,17 +2,30 @@
   <n-card content-style="padding: 0;margin: 5px" hoverable>
     <n-tabs type="segment" animated>
       <n-tab-pane name="device" :tab="t('panel.device')">
-        <n-flex class="pb-[12px]">
-          <n-tree-select
-            v-model:value="device"
-            :placeholder="t('panel.selectDevice')"
-            :options="devices_tree"
+        <n-flex class="pb-[12px]" :wrap="false">
+          <n-select
+            v-model:value="selectedController"
+            :placeholder="t('panel.selectDeviceType')"
+            :options="controllerOptions"
             :loading="loading"
-            :override-default-node-click-behavior="override"
-            remote
-            indent="6"
-            @click="get_device"
-            class="max-w-80%"
+            @update:value="handleControllerChange"
+            class="max-w-35%"
+          />
+          <n-input
+            v-if="selectedController === 'PlayCover'"
+            v-model:value="playCoverAddress"
+            :placeholder="t('panel.playcoverAddress')"
+            class="max-w-45%"
+          />
+          <n-select
+            v-else
+            v-model:value="selectedDeviceKey"
+            :placeholder="t('panel.selectDevice')"
+            :options="deviceOptions"
+            :loading="loading"
+            :disabled="!selectedController || selectedControllerDisabled"
+            @click="refreshDevices"
+            class="max-w-45%"
           />
           <n-button strong secondary type="info" @click="connectDevices">{{
             t("panel.connect")
@@ -27,7 +40,7 @@
             :options="resources_list"
             :loading="loading"
             remote
-            @click="get_resource"
+            @click="getResourceList"
             class="max-w-80%"
           />
           <n-button strong secondary type="info" @click="post_resource">{{
@@ -66,6 +79,8 @@
 import { watch, ref, computed, onMounted } from "vue"
 import { useI18n } from "vue-i18n"
 import {
+  type DeviceControllerCapability,
+  type DeviceControllerType,
   getDevices,
   postDevices,
   startTask,
@@ -82,44 +97,85 @@ import { useTaskConfigStore } from "../stores/taskConfig"
 import { useIndexStore } from "../stores"
 import { useSettingsStore } from "../stores/settings"
 import type { PanelLastConnectedDevice } from "../types/settings"
-import type { TreeSelectOverrideNodeClickBehavior } from "naive-ui"
 import { useMessage, useDialog } from "naive-ui"
 import TaskSelectList from "./TaskSelectList.vue"
 import type { TaskListItem } from "../stores/interface"
 
-if (typeof window !== "undefined") {
-  window.$message = useMessage()
-}
-
+const message = useMessage()
 const dialog = useDialog()
 const { t } = useI18n()
 const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
 const settingsStore = useSettingsStore()
-const scroll_show = ref(window.innerWidth > 768)
-const device = ref<ConnectableDevice | null>(null)
-const resource = ref<string | null>(null)
-const devices_tree = ref<object[]>([])
-const resources_list = ref<object[]>([])
-const loading = ref(false)
-const override: TreeSelectOverrideNodeClickBehavior = ({ option }) => {
-  if (option.children) {
-    return "toggleExpand"
-  }
-  return "default"
+
+if (typeof window !== "undefined") {
+  window.$message = message
 }
 
-// 计算选中的任务ID列表
+const scroll_show = ref(window.innerWidth > 768)
+const selectedController = ref<DeviceControllerType | null>(null)
+const selectedDeviceKey = ref<string | null>(null)
+const availableDevices = ref<ConnectableDevice[]>([])
+const controllerCapabilities = ref<DeviceControllerCapability[]>([])
+const playCoverAddress = ref("")
+const resource = ref<string | null>(null)
+const resources_list = ref<Array<{ label: string; value: string }>>([])
+const loading = ref(false)
+
 const selectedTaskIds = computed(() => {
   return configStore.taskList.filter((task) => task.checked).map((task) => task.id)
 })
 
-// 处理任务列表更新（拖拽排序）
+const controllerOptions = computed(() => {
+  return controllerCapabilities.value.map((item) => ({
+    label: item.label,
+    value: item.type,
+    disabled: !item.enabled,
+  }))
+})
+
+const selectedControllerCapability = computed(() => {
+  if (!selectedController.value) {
+    return null
+  }
+  return controllerCapabilities.value.find((item) => item.type === selectedController.value) || null
+})
+
+const selectedControllerDisabled = computed(() => {
+  return selectedControllerCapability.value ? !selectedControllerCapability.value.enabled : false
+})
+
+const deviceOptions = computed(() => {
+  if (availableDevices.value.length === 0) {
+    return [
+      {
+        label: t("panel.noDevice"),
+        value: "none-device",
+        disabled: true,
+      },
+    ]
+  }
+  return availableDevices.value.map((item) => ({
+    label: buildDeviceLabel(item),
+    value: buildDeviceFingerprint(item),
+  }))
+})
+
+const selectedDevice = computed(() => {
+  if (!selectedDeviceKey.value) {
+    return null
+  }
+  return (
+    availableDevices.value.find(
+      (item) => buildDeviceFingerprint(item) === selectedDeviceKey.value,
+    ) || null
+  )
+})
+
 function handleTasksUpdate(tasks: TaskListItem[]) {
   configStore.taskList = tasks
 }
 
-// 处理选中状态更新
 function handleSelectedTasksUpdate(selectedIds: string[]) {
   configStore.taskList = configStore.taskList.map((task) => ({
     ...task,
@@ -127,40 +183,28 @@ function handleSelectedTasksUpdate(selectedIds: string[]) {
   }))
 }
 
-// 处理配置任务
 function handleConfigTask(taskId: string) {
   indexStore.SelectTask(taskId)
 }
 
+function saveTaskConfig() {
+  if (configStore.configLoaded) {
+    configStore.debouncedSave()
+  }
+}
+
 watch(
-  () => configStore.taskList,
-  (newList) => {
-    if (newList.length) {
-      indexStore.SelectTask(newList[0]!.id)
+  () => configStore.taskList.length,
+  (length) => {
+    if (length > 0) {
+      indexStore.SelectTask(configStore.taskList[0]!.id)
     }
   },
   { immediate: true },
 )
 
-watch(
-  () => configStore.taskList,
-  () => {
-    if (configStore.configLoaded) {
-      configStore.debouncedSave()
-    }
-  },
-  { deep: true },
-)
-
-watch(
-  () => configStore.options,
-  () => {
-    if (configStore.configLoaded) {
-      configStore.debouncedSave()
-    }
-  },
-  { deep: true },
-)
+watch(() => configStore.taskList, saveTaskConfig, { deep: true })
+watch(() => configStore.options, saveTaskConfig, { deep: true })
 
 function isAdbDevice(value: unknown): value is AdbDevice {
   if (!value || typeof value !== "object") return false
@@ -180,6 +224,16 @@ function isGamepadDevice(value: unknown): value is GamepadDevice {
   return candidate.type === "Gamepad"
 }
 
+function buildDeviceLabel(deviceInfo: ConnectableDevice): string {
+  if (isAdbDevice(deviceInfo)) {
+    return `${deviceInfo.name} (${deviceInfo.address})`
+  }
+  if (isWin32Device(deviceInfo) || isGamepadDevice(deviceInfo)) {
+    return `${deviceInfo.window_name} (${deviceInfo.class_name})`
+  }
+  return deviceInfo.address
+}
+
 function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
   if (isAdbDevice(deviceInfo)) {
     return `adb|${deviceInfo.adb_path}|${deviceInfo.address}`
@@ -191,6 +245,11 @@ function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
     return `gamepad|${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
   }
   return `playcover|${deviceInfo.address}|${deviceInfo.uuid}`
+}
+
+function getPlayCoverDefaultAddress(capabilities: DeviceControllerCapability[]): string {
+  const playCoverCapability = capabilities.find((item) => item.type === "PlayCover")
+  return playCoverCapability?.default_address || "127.0.0.1:1717"
 }
 
 function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): string {
@@ -256,10 +315,10 @@ async function persistLastConnectedDevice(deviceInfo: ConnectableDevice) {
       adb_path: "",
       address: deviceInfo.address,
       class_name: "",
-      window_name: deviceInfo.name,
+      window_name: deviceInfo.name || "",
       hWnd: 0,
       gamepad_type: 0,
-      uuid: deviceInfo.uuid,
+      uuid: deviceInfo.uuid || "",
     }
   }
 
@@ -270,113 +329,126 @@ async function persistLastResource(name: string) {
   await settingsStore.updateSetting("panel", "lastResource", name)
 }
 
-async function get_device() {
-  devices_tree.value = [
-    {
-      label: "Adb",
-      key: "Adb",
-      children: [],
-    },
-    {
-      label: "Win32",
-      key: "Win32",
-      children: [],
-    },
-    {
-      label: "Gamepad",
-      key: "Gamepad",
-      children: [],
-    },
-    {
-      label: "PlayCover",
-      key: "PlayCover",
-      children: [],
-    },
-  ]
+function restoreLastConnectedDevice() {
+  const savedDevice = settingsStore.settings.panel.lastConnectedDevice
+  if (!savedDevice || !selectedController.value) {
+    return
+  }
+  if (savedDevice.type !== selectedController.value) {
+    return
+  }
 
+  if (savedDevice.type === "PlayCover") {
+    playCoverAddress.value =
+      savedDevice.address || getPlayCoverDefaultAddress(controllerCapabilities.value)
+    return
+  }
+
+  const targetFingerprint = getStoredDeviceFingerprint(savedDevice)
+  const matchedDevice = availableDevices.value.find((item) => {
+    if (buildDeviceFingerprint(item) === targetFingerprint) {
+      return true
+    }
+    if (isWin32Device(item)) {
+      return `${item.class_name}|${item.window_name}` === targetFingerprint
+    }
+    return false
+  })
+  selectedDeviceKey.value = matchedDevice ? buildDeviceFingerprint(matchedDevice) : null
+}
+
+async function fetchDevices(controller?: DeviceControllerType, restoreStored = false) {
   loading.value = true
   try {
-    const devices_data = await getDevices()
+    const data = await getDevices(controller)
+    controllerCapabilities.value = data.controllers
+    selectedController.value = data.selected_type
 
-    for (const dev of devices_data.adb) {
-      ;(devices_tree.value[0] as any).children.push({
-        label: dev.name + " (" + dev.address + ")",
-        key: dev,
-      })
+    if (!data.selected_type) {
+      availableDevices.value = []
+      selectedDeviceKey.value = null
+      return
     }
 
-    for (const dev of devices_data.win32) {
-      ;(devices_tree.value[1] as any).children.push({
-        label: dev.window_name + " (" + dev.class_name + ")",
-        key: dev,
-      })
-    }
-
-    for (const dev of devices_data.gamepad) {
-      ;(devices_tree.value[2] as any).children.push({
-        label: dev.window_name + " (" + dev.class_name + ")",
-        key: dev,
-      })
-    }
-
-    for (const dev of devices_data.playcover) {
-      ;(devices_tree.value[3] as any).children.push({
-        label: dev.name + " (" + dev.address + ")",
-        key: dev,
-      })
-    }
-
-    const savedDevice = settingsStore.settings.panel.lastConnectedDevice
-    if (savedDevice) {
-      const targetFingerprint = getStoredDeviceFingerprint(savedDevice)
-      const allDevices: ConnectableDevice[] = [
-        ...devices_data.adb,
-        ...devices_data.win32,
-        ...devices_data.gamepad,
-        ...devices_data.playcover,
-      ]
-      const matchedDevice = allDevices.find((dev) => {
-        if (buildDeviceFingerprint(dev) === targetFingerprint) {
-          return true
-        }
-        if (isWin32Device(dev)) {
-          return `${dev.class_name}|${dev.window_name}` === targetFingerprint
-        }
-        return false
-      })
-      device.value = matchedDevice || null
-    }
-
-    const emptyGroupKeys = ["none-adb", "none-win32", "none-gamepad", "none-playcover"]
-    for (let i = 0; i < devices_tree.value.length; i++) {
-      if ((devices_tree.value[i] as any).children.length === 0) {
-        ;(devices_tree.value[i] as any).children.push({
-          label: t("panel.noDevice"),
-          key: emptyGroupKeys[i],
-          disabled: true,
-        })
+    if (data.selected_type === "PlayCover") {
+      availableDevices.value = []
+      selectedDeviceKey.value = null
+      if (restoreStored) {
+        restoreLastConnectedDevice()
       }
+      if (!playCoverAddress.value) {
+        playCoverAddress.value = getPlayCoverDefaultAddress(data.controllers)
+      }
+      return
+    }
+
+    availableDevices.value = data.devices
+    if (restoreStored) {
+      restoreLastConnectedDevice()
     }
   } finally {
     loading.value = false
   }
 }
 
+function handleControllerChange(value: DeviceControllerType) {
+  selectedDeviceKey.value = null
+  if (value === "PlayCover" && !playCoverAddress.value) {
+    playCoverAddress.value = getPlayCoverDefaultAddress(controllerCapabilities.value)
+  }
+  void fetchDevices(value)
+}
+
+function refreshDevices() {
+  if (!selectedController.value || selectedController.value === "PlayCover") {
+    return
+  }
+  void fetchDevices(selectedController.value)
+}
+
 async function connectDevices() {
-  if (!device.value) {
-    // @ts-ignore
-    window.$message.error(t("panel.selectDevice"))
+  if (!selectedController.value) {
+    message.error(t("panel.selectDeviceType"))
     return
   }
 
-  const success = await postDevices(device.value)
+  if (selectedControllerDisabled.value) {
+    message.error(t("panel.selectDeviceType"))
+    return
+  }
+
+  let currentDevice: ConnectableDevice | null = null
+  if (selectedController.value === "PlayCover") {
+    const address = playCoverAddress.value.trim()
+    if (!address) {
+      message.error(t("panel.playcoverAddress"))
+      return
+    }
+    const regex = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}:\d{1,5}$/
+    if (!regex.test(address)) {
+      message.error(t("panel.invalidPlaycoverAddress"))
+    }
+    currentDevice = {
+      type: "PlayCover",
+      address,
+    }
+  } else {
+    currentDevice = selectedDevice.value
+  }
+
+  if (!currentDevice) {
+    message.error(t("panel.selectDevice"))
+    return
+  }
+
+  const success = await postDevices(currentDevice)
   indexStore.setConnected(success)
   if (success) {
-    await persistLastConnectedDevice(device.value)
+    await persistLastConnectedDevice(currentDevice)
   }
 }
 
-async function get_resource() {
+async function getResourceList() {
   resources_list.value = []
   loading.value = true
 
@@ -400,8 +472,7 @@ async function get_resource() {
 
 async function post_resource() {
   if (!resource.value) {
-    // @ts-ignore
-    window.$message.error(t("panel.selectResource"))
+    message.error(t("panel.selectResource"))
     return
   }
 
@@ -416,15 +487,16 @@ onMounted(async () => {
     await settingsStore.fetchSettings()
   }
 
-  await Promise.all([get_device(), get_resource()])
+  await Promise.all([
+    fetchDevices(settingsStore.settings.panel.lastConnectedDevice?.type, true),
+    getResourceList(),
+  ])
 })
 
 function StartTask() {
-  const selectedTaskIds = configStore.taskList.filter((task) => task.checked).map((task) => task.id)
-  const payload = configStore.buildExecutionPayload(selectedTaskIds)
+  const payload = configStore.buildExecutionPayload(selectedTaskIds.value)
   if (payload.task_list.length === 0) {
-    // @ts-ignore
-    window.$message.error(t("panel.selectTask"))
+    message.error(t("panel.selectTask"))
     return
   }
   startTask(payload)
@@ -438,8 +510,7 @@ function resetConfig() {
     negativeText: t("common.cancel"),
     onPositiveClick: async () => {
       await configStore.resetConfig()
-      // @ts-ignore
-      window.$message.success(t("panel.configReset"))
+      message.success(t("panel.configReset"))
     },
   })
 }

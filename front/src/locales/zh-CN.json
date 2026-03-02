@@ -187,8 +187,11 @@
   },
   "panel": {
     "device": "设备连接",
+    "selectDeviceType": "请选择设备类型",
     "resource": "资源选择",
     "selectDevice": "请选择一个设备",
+    "playcoverAddress": "请输入 PlayCover 地址",
+    "invalidPlaycoverAddress": "PlayCover地址非法，请重新输入",
     "selectResource": "请选择一个资源",
     "connect": "连接",
     "confirm": "确定",

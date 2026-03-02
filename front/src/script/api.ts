@@ -11,6 +11,8 @@ interface ApiResponse {
   message: string
 }
 
+export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover"
+
 export interface AdbDevice {
   type: "Adb"
   name: string
@@ -41,23 +43,31 @@ export interface GamepadDevice {
 
 export interface PlayCoverDevice {
   type: "PlayCover"
-  name: string
+  name?: string
   address: string
-  uuid: string
+  uuid?: string
 }
 
 export type ConnectableDevice = AdbDevice | Win32Device | GamepadDevice | PlayCoverDevice
 
-interface Devices {
-  adb: AdbDevice[]
-  win32: Win32Device[]
-  gamepad: GamepadDevice[]
-  playcover: PlayCoverDevice[]
+export interface DeviceControllerCapability {
+  type: DeviceControllerType
+  label: string
+  enabled: boolean
+  reason: string
+  search_mode: "select" | "input"
+  default_address: string
+}
+
+export interface DeviceSearchData {
+  controllers: DeviceControllerCapability[]
+  selected_type: DeviceControllerType | null
+  devices: ConnectableDevice[]
 }
 
 interface DeviceResponse {
   status: string
-  devices: Devices
+  data: DeviceSearchData
 }
 
 interface ResourceResponse {
@@ -104,10 +114,11 @@ export function stopTask(): void {
     })
 }
 
-export function getDevices(): Promise<Devices> {
-  return fetch("/api/device", { method: "GET" })
+export function getDevices(controller?: DeviceControllerType): Promise<DeviceSearchData> {
+  const query = controller ? `?controller=${encodeURIComponent(controller)}` : ""
+  return fetch(`/api/device${query}`, { method: "GET" })
     .then((res) => res.json())
-    .then((data: DeviceResponse) => data.devices)
+    .then((data: DeviceResponse) => data.data)
 }
 
 export function postDevices(device: ConnectableDevice): Promise<boolean> {

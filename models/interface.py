@@ -112,6 +112,7 @@ class Win32Controller(BaseModel):
                     setattr(self, field, mapping[value])
                 else:
                     raise ValueError(f"无效的 {field} 方法: {value}")
+        return self
 
 
 class PlayCoverController(BaseModel):
@@ -163,6 +164,7 @@ class GamepadController(BaseModel):
                     setattr(self, field, mapping[value])
                 else:
                     raise ValueError(f"无效的 {field} 方法: {value}")
+        return self
 
 
 class Controller(BaseModel):

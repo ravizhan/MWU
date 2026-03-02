@@ -187,8 +187,11 @@
   },
   "panel": {
     "device": "Connect Device",
+    "selectDeviceType": "Please select a device type",
     "resource": "Select Resource",
     "selectDevice": "Please select a device",
+    "playcoverAddress": "Please enter PlayCover address",
+    "invalidPlaycoverAddress": "PlayCover Address Invalid",
     "selectResource": "Please select a resource",
     "connect": "Connect",
     "confirm": "Confirm",

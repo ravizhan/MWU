@@ -169,9 +169,9 @@ async def stream_live(fps: int = 15):
 
 
 @app.get("/api/device")
-def get_device():
-    devices = app_state.worker.get_device()
-    return {"status": "success", "devices": devices}
+def get_device(controller: str | None = None):
+    data = app_state.worker.get_device(controller)
+    return {"status": "success", "data": data}
 
 
 @app.post("/api/device")

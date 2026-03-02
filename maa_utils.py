@@ -103,30 +103,97 @@ class MaaWorker:
             except Exception as e:
                 self.send_log(f"外部通知发送失败: {e}")
 
-    def get_device(self) -> dict:
-        devices = {"adb": [], "win32": [], "playcover": [], "gamepad": []}
+    def _is_controller_supported(self, controller) -> tuple[bool, str]:
+        match controller.type:
+            case "Adb":
+                return True, ""
+            case "Win32":
+                if sys.platform != "win32":
+                    return False, "platform_not_supported"
+                if not controller.win32:
+                    return False, "controller_config_missing"
+                return True, ""
+            case "PlayCover":
+                if sys.platform != "darwin":
+                    return False, "platform_not_supported"
+                return True, ""
+            case "Gamepad":
+                if sys.platform != "win32":
+                    return False, "platform_not_supported"
+                if not controller.gamepad:
+                    return False, "controller_config_missing"
+                return True, ""
+            case _:
+                return False, "controller_not_supported"
+
+    def _build_device_capabilities(self) -> list[dict]:
+        capabilities: dict[str, dict] = {}
+        for controller in self.interface.controller:
+            controller_type = controller.type
+            capability = capabilities.setdefault(
+                controller_type,
+                {
+                    "type": controller_type,
+                    "label": controller.label or controller.name or controller_type,
+                    "enabled": False,
+                    "reason": "",
+                    "search_mode": (
+                        "input" if controller_type == "PlayCover" else "select"
+                    ),
+                    "default_address": (
+                        "127.0.0.1:1717" if controller_type == "PlayCover" else ""
+                    ),
+                },
+            )
+
+            supported, reason = self._is_controller_supported(controller)
+            if supported:
+                capability["enabled"] = True
+                capability["reason"] = ""
+            elif not capability["enabled"] and not capability["reason"]:
+                capability["reason"] = reason
+
+        controller_order = ["Adb", "Win32", "Gamepad", "PlayCover"]
+        ordered = [
+            capabilities[controller_type]
+            for controller_type in controller_order
+            if controller_type in capabilities
+        ]
+        ordered.extend(
+            capability
+            for controller_type, capability in capabilities.items()
+            if controller_type not in controller_order
+        )
+        return ordered
+
+    def _find_devices_by_type(self, controller_type: str) -> list[dict]:
+        devices: list[dict] = []
         win32_seen: set[int] = set()
         gamepad_seen: set[int] = set()
 
         for controller in self.interface.controller:
-            match controller.type:
+            if controller.type != controller_type:
+                continue
+
+            supported, _ = self._is_controller_supported(controller)
+            if not supported:
+                continue
+
+            match controller_type:
                 case "Adb":
                     for device in Toolkit.find_adb_devices():
                         data = {
                             "name": device.name,
-                            "type": "adb",
+                            "type": "Adb",
                             "adb_path": device.adb_path,
                             "address": device.address,
                             "screencap_methods": str(device.screencap_methods),
                             "input_methods": str(device.input_methods),
                         }
-                        if data not in devices["adb"]:
-                            devices["adb"].append(data)
+                        if data not in devices:
+                            devices.append(data)
                 case "Win32":
-                    if sys.platform != "win32":
-                        continue
-                    if not controller.win32:
-                        continue
+                    assert controller.win32 is not None
                     for device in Toolkit.find_desktop_windows():
                         class_name = device.class_name
                         window_name = device.window_name
@@ -144,9 +211,9 @@ class MaaWorker:
                             continue
                         win32_seen.add(hwnd)
 
-                        devices["win32"].append(
+                        devices.append(
                             {
-                                "type": "win32",
+                                "type": "Win32",
                                 "hWnd": hwnd,
                                 "class_name": class_name,
                                 "window_name": window_name,
@@ -159,25 +226,9 @@ class MaaWorker:
                             }
                         )
                 case "PlayCover":
-                    if sys.platform != "darwin":
-                        continue
-                    # TODO
-                    # uuid = controller.playcover.uuid
-                    # if controller.playcover and uuid:
-                    #     uuid = str(controller.playcover.uuid)
-                    # devices["playcover"].append(
-                    #     {
-                    #         "type": "playcover",
-                    #         "address": "127.0.0.1:1717",
-                    #         "uuid": uuid,
-                    #     }
-                    # )
-                    pass
+                    continue
                 case "Gamepad":
-                    if sys.platform != "win32":
-                        continue
-                    if not controller.gamepad:
-                        continue
+                    assert controller.gamepad is not None
                     for device in Toolkit.find_desktop_windows():
                         class_name = device.class_name
                         window_name = device.window_name
@@ -195,9 +246,9 @@ class MaaWorker:
                             continue
                         gamepad_seen.add(hwnd)
 
-                        devices["gamepad"].append(
+                        devices.append(
                             {
-                                "type": "gamepad",
+                                "type": "Gamepad",
                                 "hWnd": hwnd,
                                 "class_name": class_name,
                                 "window_name": window_name,
@@ -207,14 +258,42 @@ class MaaWorker:
                         )
         return devices
 
-    def connect_device(self, device_config: DeviceModel) -> bool:
-        device_type = self._resolve_device_type(device_config)
-        if not device_type:
-            self.send_log("未知的设备类型")
-            return False
+    def get_device(self, controller_type: str | None = None) -> dict:
+        capabilities = self._build_device_capabilities()
+        all_types = [item["type"] for item in capabilities]
+        enabled_types = [item["type"] for item in capabilities if item["enabled"]]
 
+        selected_type = controller_type if controller_type in all_types else None
+        if not selected_type:
+            if enabled_types:
+                selected_type = enabled_types[0]
+            elif all_types:
+                selected_type = all_types[0]
+
+        selected_capability = next(
+            (item for item in capabilities if item["type"] == selected_type), None
+        )
+        devices: list[dict] = []
+        if (
+            selected_type
+            and selected_capability
+            and selected_capability["enabled"]
+            and selected_capability["search_mode"] == "select"
+        ):
+            devices = self._find_devices_by_type(selected_type)
+
+        return {
+            "controllers": capabilities,
+            "selected_type": selected_type,
+            "devices": devices,
+        }
+
+    def connect_device(self, device_config: DeviceModel) -> bool:
+        device_type = device_config.type
+        status = False
+        controller = None
         match device_type:
-            case "adb":
+            case "Adb":
                 controller = AdbController(
                     adb_path=device_config.adb_path,
                     address=device_config.address,
@@ -222,7 +301,7 @@ class MaaWorker:
                     input_methods=int(device_config.input_methods or 0),
                 )
                 status = controller.post_connection().wait().succeeded
-            case "win32":
+            case "Win32":
                 controller = Win32Controller(
                     hWnd=device_config.hWnd,
                     screencap_method=int(device_config.screencap_methods or 0),
@@ -230,22 +309,19 @@ class MaaWorker:
                     keyboard_method=int(device_config.input_methods or 0),
                 )
                 status = controller.post_connection().wait().succeeded
-            case "gamepad":
+            case "Gamepad":
                 controller = GamepadController(
                     hWnd=device_config.hWnd,
                     gamepad_type=int(device_config.gamepad_type or 0),
                     screencap_method=int(device_config.screencap_methods or 0),
                 )
                 status = controller.post_connection().wait().succeeded
-            case "playcover":
+            case "PlayCover":
                 controller = PlayCoverController(
                     address=device_config.address or "127.0.0.1:1717",
                     uuid=device_config.uuid,
                 )
                 status = controller.post_connection().wait().succeeded
-            case _:
-                self.send_log("未知的设备类型")
-                return False
         conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
             plyer.notification.notify(
@@ -576,6 +652,6 @@ class MaaWorker:
                 img_byte_arr = io.BytesIO()
                 image_pil.save(img_byte_arr, format="JPEG")
                 return img_byte_arr.getvalue()
-        except Exception as e:
+        except Exception:
             pass
         return None
