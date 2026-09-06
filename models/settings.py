@@ -85,6 +85,7 @@ class Notification(BaseModel):
 
 class UI(BaseModel):
     darkMode: bool | str | None = "auto"
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
 
 
 class Runtime(BaseModel):
@@ -146,6 +147,14 @@ class Panel(BaseModel):
         return v
 
 
+class TelemetryConsent(BaseModel):
+    """Persisted user consent for the currently configured telemetry target."""
+
+    consent: Literal["unknown", "granted", "denied"] = "unknown"
+    configId: str = ""
+    failureAttachments: bool = False
+
+
 class SettingsModel(BaseModel):
     @model_validator(mode="before")
     @classmethod
@@ -202,3 +211,4 @@ class SettingsModel(BaseModel):
     about: About = About()
     panel: Panel = Panel()
     globalOptionValues: dict[str, TaskOptionValue] = Field(default_factory=dict)
+    telemetry: TelemetryConsent = TelemetryConsent()

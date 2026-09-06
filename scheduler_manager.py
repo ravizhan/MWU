@@ -76,6 +76,7 @@ def _build_task_from_kwargs(
     return ScheduledTask(
         id=job_id,
         name=kwargs.get("task_name", ""),
+        task_identity=kwargs.get("task_identity", None),
         description=kwargs.get("task_description", ""),
         wakeup_enabled=bool(kwargs.get("wakeup_enabled", False)),
         trigger_config=trigger_config,
@@ -117,11 +118,43 @@ async def scheduled_job_fired(**kwargs) -> None:
         return
     from maa_worker import execution  # 延迟导入避免循环依赖
 
+    # fire-time 身份校验：task_identity 缺失或 task name 不在当前 PI 中时，
+    # 落库一条失败记录（含 job id 与具体未知名称）并通知，不让校验异常
+    # 逃出 APScheduler 回调形成无记录触发。
+    worker = state.worker
+    if (
+        kwargs.get("task_identity") != "name"
+        or worker is None
+        or not getattr(worker, "interface", None)
+    ):
+        await _record_fire_time_skip(
+            state, task, "任务身份标记缺失（task_identity != name）"
+        )
+        return
+    from models.task_config import find_unknown_task_names
+
+    unknown_names = find_unknown_task_names(worker.interface, task.task_list)
+    if unknown_names:
+        await _record_fire_time_skip(
+            state,
+            task,
+            "任务名称不在当前 interface 中: " + ", ".join(unknown_names),
+        )
+        return
+
     await execution.submit_scheduled(
         state,
         task,
         origin="in_app",
     )
+
+
+async def _record_fire_time_skip(state: AppState, task: ScheduledTask, reason: str):
+    """fire-time 载荷/身份失效：落库 failed 记录 + 通知，不派发执行。"""
+    logger.warning(f"定时任务 {task.id} 触发但被拒绝: {reason}")
+    from maa_worker import execution
+
+    await execution.record_fire_time_rejection(state, task, reason)
 
 
 class SchedulerManager:
@@ -185,7 +218,34 @@ class SchedulerManager:
             timezone=get_localzone(),
         )
         self.scheduler.start(paused=paused)
+        await self._validate_persisted_jobs()
         logger.info(f"调度器已启动（paused={paused}）")
+
+    async def _validate_persisted_jobs(self) -> None:
+        """启动时（暂停状态）校验每条持久化 kwargs 的任务身份。
+
+        严格新格式切换：缺 task_identity 标记或旧 entry 身份的任务明确列出
+        job id，拒绝恢复并使启动以清晰错误结束。不自动迁移/删除。
+        """
+        assert self.scheduler is not None
+        invalid_jobs: list[str] = []
+        for job in self.scheduler.get_jobs():
+            kwargs = job.kwargs or {}
+            if kwargs.get("task_identity") != "name":
+                invalid_jobs.append(job.id)
+                continue
+            try:
+                trigger_config = self._build_trigger_config(job.trigger)
+                _build_task_from_kwargs(job.id, kwargs, trigger_config)
+            except Exception as e:
+                logger.warning(f"持久化任务 {job.id} 载荷校验失败: {e}")
+                invalid_jobs.append(job.id)
+        if invalid_jobs:
+            raise RuntimeError(
+                '以下定时任务使用了不支持的任务身份格式（缺少 task_identity="name"），'
+                "无法恢复。请在备份 config/scheduler.sqlite 后删除并重建这些任务: "
+                + ", ".join(invalid_jobs)
+            )
 
     async def shutdown(self):
         """关闭调度器"""
@@ -282,19 +342,7 @@ class SchedulerManager:
     ) -> tuple[list[str], TaskOptionsByTask, list]:
         worker = self._state.worker
         if not worker or not getattr(worker, "interface", None):
-            normalized_task_list: list[str] = []
-            if isinstance(task_list, list):
-                seen_task_ids: set[str] = set()
-                for task_id in task_list:
-                    if not isinstance(task_id, str) or task_id in seen_task_ids:
-                        continue
-                    normalized_task_list.append(task_id)
-                    seen_task_ids.add(task_id)
-            return (
-                normalized_task_list,
-                {task_id: {} for task_id in normalized_task_list},
-                [],
-            )
+            raise RuntimeError("Worker 未就绪，无法校验任务载荷")
 
         ntl, nto, npt = normalize_task_execution_payload(
             task_list,
@@ -323,6 +371,7 @@ class SchedulerManager:
 
         task = ScheduledTask(
             id=task_id,
+            task_identity="name",
             name=task_create.name,
             description=task_create.description,
             enabled=task_create.enabled,
@@ -357,6 +406,7 @@ class SchedulerManager:
                 id=task_id,
                 kwargs={
                     "task_id": task_id,
+                    "task_identity": "name",
                     "task_name": task.name,
                     "task_description": task.description or "",
                     "task_list": normalized_task_list,
@@ -558,6 +608,7 @@ class SchedulerManager:
             )
             merged_task = ScheduledTask(
                 id=task_id,
+                task_identity="name",
                 name=new_name,
                 description=new_description,
                 enabled=new_enabled,
@@ -612,6 +663,7 @@ class SchedulerManager:
                     trigger=trigger,
                     kwargs={
                         "task_id": task_id,
+                        "task_identity": "name",
                         "task_name": new_name,
                         "task_description": new_description,
                         "task_list": normalized_task_list,

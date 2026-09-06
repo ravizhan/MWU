@@ -24,6 +24,7 @@ export interface TaskPresetSnapshot {
 }
 
 export interface PersistedTaskConfig {
+  taskIdentity: "name"
   selectedPreset: string
   presets: Record<string, TaskPresetSnapshot>
 }

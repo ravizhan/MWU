@@ -62,6 +62,7 @@ class FakeBackend(SystemSchedulerBackend):
 
 def make_task(task_id: str, wakeup_enabled=True, enabled=True) -> ScheduledTask:
     return ScheduledTask(
+        task_identity="name",
         id=_uuid(task_id),
         name=f"任务{task_id}",
         wakeup_enabled=wakeup_enabled,
@@ -165,6 +166,7 @@ class TestNonCronTrigger:
         backend = FakeBackend()
         scheduler = make_scheduler(backend)
         task = ScheduledTask(
+            task_identity="name",
             id="date-1",
             name="日期任务",
             wakeup_enabled=True,
@@ -179,6 +181,7 @@ class TestNonCronTrigger:
         backend = FakeBackend()
         scheduler = make_scheduler(backend)
         task = ScheduledTask(
+            task_identity="name",
             id="date-1",
             name="日期任务",
             wakeup_enabled=True,
@@ -224,6 +227,7 @@ class TestNonNativeRegisterUnregister:
         scheduler = make_scheduler(backend)
         # 非法/非 Cron 触发器也不会被解析：supports_native=False 时直接跳过
         task = ScheduledTask(
+            task_identity="name",
             id="date-1",
             name="日期任务",
             wakeup_enabled=True,

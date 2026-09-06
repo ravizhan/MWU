@@ -12,6 +12,7 @@ import time
 import webbrowser
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import uvicorn
@@ -19,6 +20,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+
 from pydantic import BaseModel
 
 import json_utils as json
@@ -40,8 +42,18 @@ from models.scheduler import (
 )
 from models.settings import SettingsModel
 from models.task_config import (
+    TaskConfigFormatError,
     TaskConfigModel,
     normalize_task_config,
+    validate_task_config_identity,
+)
+from services.interface_content import (
+    InterfaceContentError,
+    InterfaceContentService,
+)
+from services.telemetry_service import (
+    TelemetryConsentStaleError,
+    TelemetryService,
 )
 from scheduler_manager import SchedulerManager
 from services.system_scheduler import SystemScheduler
@@ -53,13 +65,10 @@ from services.update_service import (
 )
 
 
-def _resolve_app_root_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+from services.runtime_info import app_root as _app_root
 
 
-APP_ROOT_DIR = _resolve_app_root_dir()
+APP_ROOT_DIR = _app_root()
 CONFIG_DIR = APP_ROOT_DIR / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 TASK_CONFIG_FILE = CONFIG_DIR / "task_config.json"
@@ -111,12 +120,35 @@ class ScanSelectRescanRequest(BaseModel):
     option_name: str
 
 
+class InterfaceDocumentRequest(BaseModel):
+    source: str
+    locale: Literal["zh-CN", "en-US"]
+
+
+class TelemetryConsentRequest(BaseModel):
+    configId: str
+    consent: Literal["granted", "denied"]
+    failureAttachments: bool = False
+
+
+class DeviceConnectRequest(BaseModel):
+    """/api/device 平面请求：设备 + 必需 resource_name（准备并连接，不加载资源）。"""
+
+    device: DeviceModel
+    resource_name: str
+
+
 if not CONFIG_DIR.exists():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with SETTINGS_FILE.open("w", encoding="utf-8") as f:
         json.dump(SettingsModel().model_dump(), f, indent=4, ensure_ascii=False)
     with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
-        json.dump(TaskConfigModel().model_dump(), f, indent=4, ensure_ascii=False)
+        json.dump(
+            TaskConfigModel(taskIdentity="name").model_dump(),
+            f,
+            indent=4,
+            ensure_ascii=False,
+        )
 
 
 app_state = AppState()
@@ -194,24 +226,50 @@ async def log_monitor():
     while not app_state.is_shutting_down:
         while not app_state.message_conn.empty():
             message = app_state.message_conn.get_nowait()
-            app_state.history_message.append(message)
+            # focus.interaction 不进入历史回放（仅实时广播）
+            if message.event != "focus.interaction":
+                app_state.history_message.append(message)
             if app_state.broadcaster:
                 await app_state.broadcaster.broadcast(message)
+        # modal 周期提醒（每 5 分钟一次）
+        interactions = app_state.focus_interactions
+        if interactions is not None and app_state.worker is not None:
+            _send_modal_reminders(interactions, app_state.worker.events)
         await asyncio.sleep(0.1)
+
+
+def _send_modal_reminders(interactions, events):
+    for item in interactions.get_pending():
+        state = interactions._find(item["id"])
+        if state is None or not state.reminder_due:
+            continue
+        state.mark_reminded()
+        events.send_notification(
+            "等待确认",
+            f"有阻塞任务等待确认：{item['content'][:50]}",
+        )
+        events.send_log(f"提醒（第 {state.reminder_count} 次）：modal 等待确认中")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state.is_shutting_down = False
-    app_state.worker = MaaWorker(app_state, interface)
     app_state.broadcaster = LogBroadcaster()
-    with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-        config_data = json.load(f)
     with interface_lock:
-        app_state.settings = SettingsModel.model_validate(
-            config_data,
+        # 必须走 load_settings_model：它会先 _prune_illegal_device_entries，
+        # 把旧版已删除的设备类型（如 WlRoots）条目移除，避免启动即崩溃。
+        app_state.settings = settings_io.load_settings_model(
+            SETTINGS_FILE,
             context={"interface": interface},
         )
+    # Consent must be loaded and gated before constructing Worker/native
+    # services.  Source/debug builds remain an inactive, no-client form.
+    app_state.telemetry_service = TelemetryService(
+        interface,
+        app_state.settings,
+        SETTINGS_FILE,
+    )
+    app_state.worker = MaaWorker(app_state, interface)
     if _PENDING_SCHEDULED_TASK_ID is not None:
         app_state.pending_scheduled_task_id = _PENDING_SCHEDULED_TASK_ID
     # 初始化系统级调度
@@ -275,10 +333,15 @@ async def lifespan(app: FastAPI):
         app_state.active_execution_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.active_execution_task
+    # 唤醒所有 pending modal（cancelled），确保工作线程不被回调阻塞
+    if app_state.focus_interactions is not None:
+        app_state.focus_interactions.wake_all_for_stop()
     if app_state.scheduler_manager:
         await app_state.scheduler_manager.shutdown()
     if app_state.worker:
         app_state.worker.shutdown()
+    if app_state.telemetry_service:
+        app_state.telemetry_service.flush_and_close_limited()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -318,7 +381,10 @@ def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
         with TASK_CONFIG_FILE.open("r", encoding="utf-8") as f:
             config_data = json.load(f)
     else:
-        config_data = TaskConfigModel().model_dump()
+        config_data = TaskConfigModel(taskIdentity="name").model_dump()
+
+    # 严格新格式校验：旧格式（缺标记/entry 身份/未知任务键）报错且原文件不变
+    validate_task_config_identity(config_data, interface)
 
     task_config = TaskConfigModel(**config_data)
     normalized_config = normalize_task_config(task_config, interface)
@@ -330,6 +396,29 @@ def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
             json.dump(normalized_data, f, indent=4, ensure_ascii=False)
 
     return normalized_config, should_write_back
+
+
+def _validate_scheduler_task_names(task_list: list[str]) -> JSONResponse | None:
+    """定时任务载荷中的 task name 校验；未知名称返回 422 信封。"""
+    from models.task_config import find_unknown_task_names
+
+    unknown = find_unknown_task_names(interface, task_list)
+    if not unknown:
+        return None
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "failed",
+            "message": "任务名称不在当前 interface 中",
+            "errors": [
+                {
+                    "field": f"task_list[{task_list.index(name)}]",
+                    "message": f"未知任务: {name}",
+                }
+                for name in unknown
+            ],
+        },
+    )
 
 
 @app.middleware("http")
@@ -398,6 +487,32 @@ def rescan_scan_select(payload: ScanSelectRescanRequest):
     }
 
 
+@app.post("/api/interface/document")
+def resolve_interface_document(payload: InterfaceDocumentRequest):
+    """解析当前已加载 PI 中的文档内容。
+
+    仅接受 PI 文档字段及其翻译值组成的来源集合；
+    不开放任意 URL 代理或任意路径读取。
+    """
+    service = InterfaceContentService(interface, APP_ROOT_DIR, interface_translations)
+    allowed = service.collect_document_sources()
+    source = payload.source.strip()
+    if not source or source not in allowed:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "failed", "message": "未知文档来源"},
+        )
+    try:
+        content = service.resolve_document(payload.source, payload.locale)
+    except InterfaceContentError as exc:
+        return {
+            "status": "failed",
+            "message": str(exc),
+            "source": source,
+        }
+    return {"status": "success", "content": content}
+
+
 async def video_stream_generator(fps: int = 15):
     fps = max(1, min(60, fps))
     interval = 1.0 / fps
@@ -432,15 +547,38 @@ def get_device(controller: str | None = None):
 
 
 @app.post("/api/device")
-async def connect_device(device: DeviceModel):
+async def connect_device(request: DeviceConnectRequest):
     if app_state.worker is None:
         msg = "Worker未初始化"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
-    if await asyncio.to_thread(app_state.worker.device.connect, device):
+    device = request.device
+    resource_name = request.resource_name.strip()
+    if not resource_name:
+        return {"status": "failed", "message": "resource_name 不能为空"}
+    # 与 _complete_run 共用准备临界区；获取锁后重查运行/更新/关停状态
+    async with app_state.preparation_lock:
+        if app_state.update_in_progress or app_state.is_shutting_down:
+            return {"status": "failed", "message": "更新或关停中，暂不连接设备"}
+        if app_state.active_run is not None:
+            return {"status": "failed", "message": "任务运行中，暂不连接设备"}
+        settings = app_state.settings or SettingsModel()
+        global_options = settings.globalOptionValues or {}
+        try:
+            prepared = await asyncio.to_thread(
+                app_state.worker.device.prepare_connection,
+                device,
+                resource_name,
+                global_options,
+                [],
+            )
+        except Exception as e:
+            app_state.send_log(f"设备准备失败: {e}")
+            return {"status": "failed", "message": str(e)}
+        if not prepared:
+            msg = app_state.worker.device_state.last_device_error or "设备连接失败"
+            return {"status": "failed", "message": msg}
         return {"status": "success"}
-    msg = app_state.worker.device_state.last_device_error or "设备连接失败"
-    return {"status": "failed", "message": msg}
 
 
 @app.post("/api/device/custom")
@@ -509,19 +647,34 @@ async def set_resource(name: str):
         msg = "Worker未初始化"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
-    if not app_state.worker.device_state.connected:
-        msg = "请先连接设备后再选择资源"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
-    try:
-        ok = await asyncio.to_thread(app_state.worker.device.set_resource, name)
-        if not ok:
-            msg = app_state.worker.device_state.last_resource_error or "设置资源失败"
+    async with app_state.preparation_lock:
+        if app_state.update_in_progress or app_state.is_shutting_down:
+            return {"status": "failed", "message": "更新或关停中，暂不设置资源"}
+        if app_state.active_run is not None:
+            return {"status": "failed", "message": "任务运行中，暂不设置资源"}
+        if not app_state.worker.device_state.connected:
+            msg = "请先连接设备后再选择资源"
+            app_state.send_log(msg)
             return {"status": "failed", "message": msg}
-    except Exception as e:
-        app_state.send_log(f"设置资源失败: {e}")
-        return {"status": "failed", "message": str(e)}
-    return {"status": "success"}
+        # 准备阶段记录的资源不一致：连接上下文已变化，需重新连接
+        prepared = app_state.worker.device_state.prepared_resource_name
+        if prepared is not None and prepared != name:
+            return {
+                "status": "failed",
+                "code": "resource_context_changed",
+                "message": "连接时的资源上下文已变化，请重新连接设备",
+            }
+        try:
+            ok = await asyncio.to_thread(app_state.worker.device.set_resource, name)
+            if not ok:
+                msg = (
+                    app_state.worker.device_state.last_resource_error or "设置资源失败"
+                )
+                return {"status": "failed", "message": msg}
+        except Exception as e:
+            app_state.send_log(f"设置资源失败: {e}")
+            return {"status": "failed", "message": str(e)}
+        return {"status": "success"}
 
 
 @app.get("/api/settings")
@@ -536,9 +689,7 @@ def get_settings():
 
 @app.post("/api/settings")
 def set_settings(settings: SettingsModel):
-    written = settings_io.write_settings_preserving_custom_devices(
-        SETTINGS_FILE, settings
-    )
+    written = settings_io.write_settings_preserving_protected(SETTINGS_FILE, settings)
     # Re-validate so app_state reflects preserved customDevices from disk.
     with interface_lock:
         app_state.settings = SettingsModel.model_validate(
@@ -548,11 +699,67 @@ def set_settings(settings: SettingsModel):
     return {"status": "success"}
 
 
+@app.get("/api/telemetry")
+def get_telemetry():
+    service = app_state.telemetry_service
+    if service is None:
+        return {
+            "status": "success",
+            "configured": False,
+            "buildAllowed": False,
+            "active": False,
+            "configId": "",
+            "recipient": None,
+            "consent": "unknown",
+            "failureAttachments": False,
+        }
+    return {"status": "success", **service.status_payload()}
+
+
+@app.post("/api/telemetry/consent")
+def set_telemetry_consent(payload: TelemetryConsentRequest):
+    service = app_state.telemetry_service
+    if service is None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "failed", "message": "遥测服务未初始化"},
+        )
+    try:
+        result = service.apply_consent(
+            payload.configId,
+            payload.consent,
+            payload.failureAttachments,
+        )
+        app_state.settings = service.settings
+        return {"status": "success", **result}
+    except TelemetryConsentStaleError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"status": "failed", "message": str(exc)},
+        )
+    except Exception as exc:
+        # apply_consent writes atomically before replacing in-memory state, so
+        # this path leaves the previous authorization unchanged.
+        return JSONResponse(
+            status_code=500,
+            content={"status": "failed", "message": str(exc)},
+        )
+
+
 @app.get("/api/task-config")
 def get_task_config():
     try:
         task_config, _ = _load_normalized_task_config()
         return {"status": "success", "config": task_config.model_dump()}
+    except TaskConfigFormatError as e:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "failed",
+                "code": e.code,
+                "message": str(e),
+            },
+        )
     except Exception as e:
         app_state.send_log(f"获取任务配置失败: {e}")
         return {"status": "failed", "message": str(e)}
@@ -561,6 +768,7 @@ def get_task_config():
 @app.post("/api/task-config")
 def save_task_config(config: TaskConfigModel):
     try:
+        validate_task_config_identity(config.model_dump(), interface)
         normalized_config = normalize_task_config(config, interface)
         with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
             json.dump(normalized_config.model_dump(), f, indent=4, ensure_ascii=False)
@@ -831,6 +1039,21 @@ async def start(payload: ManualStartPayload):
     admission = await execution.submit_manual(app_state, payload)
     if admission.accepted:
         return {"status": "success", "run_id": admission.run_id}
+    if admission.invalid_task_names:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "failed",
+                "message": "任务名称不在当前 interface 中",
+                "errors": [
+                    {
+                        "field": f"task_list[{payload.task_list.index(name)}]",
+                        "message": f"未知任务: {name}",
+                    }
+                    for name in admission.invalid_task_names
+                ],
+            },
+        )
     if admission.conflict is not None:
         return {"status": "conflict", "conflict": admission.conflict.model_dump()}
     return {"status": "failed", "message": admission.skip_status or "任务启动失败"}
@@ -842,6 +1065,103 @@ async def stop():
     if ok:
         return {"status": "success"}
     return {"status": "failed", "message": "任务未开始"}
+
+
+@app.get("/api/focus/interactions")
+def get_focus_interactions():
+    """获取当前 pending 的焦点交互（dialog / modal）。"""
+    interactions = app_state.focus_interactions
+    if interactions is None:
+        return {"status": "success", "data": []}
+    return {"status": "success", "data": interactions.get_pending()}
+
+
+@app.post("/api/focus/interactions/{interaction_id}/ack")
+def acknowledge_focus_interaction(interaction_id: str):
+    """确认一个焦点交互。409 = 已结束；404 = 不存在。"""
+    interactions = app_state.focus_interactions
+    if interactions is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "failed", "message": "交互服务未初始化"},
+        )
+    state = interactions.acknowledge(interaction_id)
+    if state is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "failed", "message": "交互不存在或已清理"},
+        )
+    if state.state != "acknowledged":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "failed",
+                "message": "交互已结束",
+                "data": state.to_public_dict(),
+            },
+        )
+    return {"status": "success", "data": state.to_public_dict()}
+
+
+@app.post("/api/focus/interactions/{interaction_id}/cancel")
+def cancel_focus_interaction(interaction_id: str):
+    """取消一个焦点交互。409 = 已结束；404 = 不存在。"""
+    interactions = app_state.focus_interactions
+    if interactions is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "failed", "message": "交互服务未初始化"},
+        )
+    state = interactions.cancel(interaction_id)
+    if state is None:
+        return JSONResponse(
+            status_code=404,
+            content={"status": "failed", "message": "交互不存在或已清理"},
+        )
+    if state.state != "cancelled":
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "failed",
+                "message": "交互已结束",
+                "data": state.to_public_dict(),
+            },
+        )
+    return {"status": "success", "data": state.to_public_dict()}
+
+
+@app.post("/api/privilege/restart-elevated")
+async def restart_elevated():
+    """以管理员权限重启当前程序。
+
+    重启前：停止运行中的任务、取消 pending modal、完成已授权的有限遥测收尾。
+    不跨进程自动重放任务 payload；用户在新实例中重新启动。
+    提权后继续监听 0.0.0.0:5566（用户明确选择保留局域网访问）。
+    """
+    from services.privilege_service import is_elevated, request_elevation
+
+    if is_elevated():
+        return {"status": "failed", "message": "当前已是管理员权限"}
+    # 停止运行
+    if app_state.worker is not None and app_state.worker.task_state.running:
+        app_state.worker.tasks.stop()
+    # 取消 pending modal
+    if app_state.focus_interactions is not None:
+        app_state.focus_interactions.wake_all_for_stop()
+    # 已授权遥测的有限收尾（≤2s flush）
+    if app_state.telemetry_service is not None:
+        app_state.telemetry_service.flush_and_close_limited()
+    # 提权重启（服务端构造命令，无客户端输入）
+    submitted = await asyncio.to_thread(request_elevation, APP_ROOT_DIR)
+    if not submitted:
+        return {"status": "failed", "message": "提权请求被拒绝"}
+
+    def _exit():
+        time.sleep(1)
+        os._exit(0)
+
+    threading.Thread(target=_exit, daemon=True).start()
+    return {"status": "success", "message": "提权重启已提交"}
 
 
 @app.post("/api/internal/scheduler/native-dispatch")
@@ -942,6 +1262,9 @@ async def create_scheduler_task(task_create: ScheduledTaskCreate):
         msg = "调度器未初始化"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
+    invalid = _validate_scheduler_task_names(task_create.task_list)
+    if invalid is not None:
+        return invalid
     try:
         task = await app_state.scheduler_manager.create_task(task_create)
         return {"status": "success", "task": task.model_dump()}
@@ -958,6 +1281,10 @@ async def update_scheduler_task(task_id: str, task_update: ScheduledTaskUpdate):
         msg = "调度器未初始化"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
+    if task_update.task_list is not None:
+        invalid = _validate_scheduler_task_names(task_update.task_list)
+        if invalid is not None:
+            return invalid
     try:
         task = await app_state.scheduler_manager.update_task(task_id, task_update)
         if task is None:

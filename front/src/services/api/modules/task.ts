@@ -22,12 +22,10 @@ export function startTask(payload: ManualStartPayload): Promise<ManualStartResul
         // Conflict is surfaced by the caller via StartConflictDialog, not a toast
         return { accepted: false, conflict: data.conflict }
       }
-      showGlobalMessage("error", data.message || "任务启动失败")
       return { accepted: false, error: data.message || "任务启动失败" }
     })
     .catch((error) => {
       console.error("Failed to start task:", error)
-      showGlobalMessage("error", "任务启动失败")
       return { accepted: false, error: "任务启动失败" }
     })
 }

@@ -1,3 +1,4 @@
+import math
 import re
 from typing import Any, Literal
 
@@ -152,7 +153,7 @@ class MacOSController(BaseModel):
 
     title_regex: re.Pattern | None = None
     input: Literal["GlobalEvent", "PostToPid"] | None = None
-    screencap: Literal["ScreenCaptureKit"] | None = None
+    screencap: Literal["ScreenCaptureKit"] | None = "ScreenCaptureKit"
 
     @field_validator("title_regex", mode="before")
     @classmethod
@@ -160,10 +161,18 @@ class MacOSController(BaseModel):
         return validate_regex(v, info)
 
 
-class WlRootsController(BaseModel):
-    """WlRoots 控制器配置（仅 Linux）"""
+class LinuxControllerConfig(BaseModel):
+    """Linux 控制器配置（仅 Linux）
+
+    截图与输入方式枚举与 MaaFramework beta6 LinuxControlUnitMgr 一致：
+    Wlr=1 / UInput=2 / Libei=4 / PipeWire=4。ExtImage 虽在 SDK 枚举中保留，
+    但控制方式文档未列出且 LinuxControlUnitMgr 未实现，不向用户提供。
+    """
 
     use_win32_vk_code: bool | None = False
+    pipewire_source: Literal["Gamescope", "Portal"] | None = "Gamescope"
+    screencap: Literal["Wlr", "PipeWire"] | None = "Wlr"
+    input: Literal["Wlr", "UInput", "Libei"] | None = "Wlr"
 
 
 class GamepadController(BaseModel):
@@ -218,7 +227,7 @@ class Controller(BaseModel):
     label: str | None = None
     description: str | None = None
     icon: str | None = None
-    type: Literal["Adb", "Win32", "MacOS", "PlayCover", "WlRoots", "Gamepad"]
+    type: Literal["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
     display_short_side: int | None = 720
     display_long_side: int | None = None
     display_raw: bool | None = False
@@ -229,19 +238,19 @@ class Controller(BaseModel):
     win32: Win32Controller | None = None
     macos: MacOSController | None = None
     playcover: PlayCoverController | None = None
-    wlroots: WlRootsController | None = None
+    linux: LinuxControllerConfig | None = None
     gamepad: GamepadController | None = None
 
     @model_validator(mode="after")
     def check_display_fields_mutual_exclusive(self):
-        # 检查是否设置了多个互斥字段（非默认值）
-        fields_set = []
-        if self.display_short_side is not None and self.display_short_side != 720:
-            fields_set.append("display_short_side")
-        if self.display_long_side is not None:
-            fields_set.append("display_long_side")
-        if self.display_raw is True:
-            fields_set.append("display_raw")
+        # 互斥判定按“是否显式提供”进行：显式给出 short_side=720 也算提供；
+        # 仅当三个字段都未显式给出时才使用默认 short=720。
+        explicitly_set = self.model_fields_set
+        fields_set = [
+            name
+            for name in ("display_short_side", "display_long_side", "display_raw")
+            if name in explicitly_set
+        ]
         if len(fields_set) > 1:
             raise ValueError(
                 "display_short_side, display_long_side 和 display_raw 必须互斥"
@@ -407,6 +416,40 @@ class Option(BaseModel):
         return self
 
 
+def is_option_applicable(
+    option: "Option",
+    controller_name: str | None,
+    resource_name: str | None,
+) -> bool:
+    """option 是否适用于给定控制器/资源上下文。
+
+    pipeline override 与 pretask 使用同一语义：
+    受限而未选择对应上下文的 option 不激活。
+    """
+    if option.controller:
+        if controller_name is None or controller_name not in option.controller:
+            return False
+    if option.resource:
+        if resource_name is None or resource_name not in option.resource:
+            return False
+    return True
+
+
+def is_option_applicable_any(
+    option: "Option",
+    controller_names: set[str],
+    resource_name: str | None,
+) -> bool:
+    """多活跃控制器变体（pipeline override 使用）。"""
+    if option.controller and not controller_names.intersection(option.controller):
+        return False
+    if option.resource and (
+        resource_name is None or resource_name not in option.resource
+    ):
+        return False
+    return True
+
+
 class PresetTask(BaseModel):
     name: str
     enabled: bool | None = True
@@ -419,6 +462,59 @@ class Preset(BaseModel):
     description: str | None = None
     icon: str | None = None
     task: list[PresetTask] | None = None
+
+
+def _validate_sample_rate(value: Any, field_name: str) -> float:
+    """有限数值采样率校验：NaN/无穷大/越界是 PI 配置错误，不截断。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} 必须是数值")
+    as_float = float(value)
+    if not math.isfinite(as_float):
+        raise ValueError(f"{field_name} 必须是有限数值")
+    if as_float < 0 or as_float > 1:
+        raise ValueError(f"{field_name} 必须在 [0, 1] 范围内")
+    return as_float
+
+
+class SentryTelemetryConfig(BaseModel):
+    """interface.json telemetry.sentry 配置（PI v2.9.2）"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    dsn: str
+    tracing: bool | None = True
+    traces_sample_rate: float | None = 1.0
+    failure_attachments_sample_rate: float | None = 1.0
+    environment: str | None = None
+
+    @field_validator("dsn")
+    @classmethod
+    def dsn_not_blank(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("telemetry.sentry.dsn 必须是非空字符串")
+        return value
+
+    @field_validator("traces_sample_rate")
+    @classmethod
+    def check_traces_sample_rate(cls, value):
+        if value is None:
+            return None
+        return _validate_sample_rate(value, "traces_sample_rate")
+
+    @field_validator("failure_attachments_sample_rate")
+    @classmethod
+    def check_failure_attachments_sample_rate(cls, value):
+        if value is None:
+            return None
+        return _validate_sample_rate(value, "failure_attachments_sample_rate")
+
+
+class TelemetryConfig(BaseModel):
+    """interface.json telemetry 配置：缺失 sentry/dsn 即不启用。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    sentry: SentryTelemetryConfig | None = None
 
 
 class InterfaceModel(BaseModel):
@@ -449,13 +545,15 @@ class InterfaceModel(BaseModel):
     setting: list[SettingSection] | None = None
     import_: list[str] | None = Field(None, alias="import")
     preset: list[Preset] | None = None
+    telemetry: TelemetryConfig | None = None
 
     @model_validator(mode="after")
     def set_variable_if_none(self):
         if self.label is None:
             self.label = self.name
-        if self.title is None and self.label and self.version:
-            self.title = f"{self.label} {self.version}"
+        if self.title is None:
+            base = self.name if self.version is None else f"{self.name} {self.version}"
+            self.title = base
         return self
 
     @model_validator(mode="after")

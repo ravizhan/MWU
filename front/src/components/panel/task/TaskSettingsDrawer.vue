@@ -50,7 +50,7 @@ const drawerVisible = computed({
   set: (visible: boolean) => indexStore.setTaskSettingsDrawerVisible(visible),
 })
 const drawerTitle = computed(() => {
-  const task = selectedTaskId.value ? interfaceStore.getTaskByEntry(selectedTaskId.value) : null
+  const task = selectedTaskId.value ? interfaceStore.getTaskByName(selectedTaskId.value) : null
   if (!task) {
     return t("panel.taskSettings")
   }

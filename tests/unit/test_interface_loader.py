@@ -13,7 +13,7 @@ from models.interface_loader import (
     _normalize_import_list,
     _normalize_root_relative_path,
     _read_json_dict,
-    _register_options,
+    _validate_options,
     _register_presets,
     _register_tasks,
     _resolve_import_path,
@@ -220,12 +220,6 @@ class TestRegisterTasks:
         with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
             _register_tasks([{"name": "A", "entry": ""}], Path(), _MergeState())
 
-    def test_entry_conflict(self):
-        state = _MergeState()
-        _register_tasks([{"name": "A", "entry": "E"}], Path("/a.json"), state)
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            _register_tasks([{"name": "B", "entry": "E"}], Path("/b.json"), state)
-
     def test_name_conflict(self):
         state = _MergeState()
         _register_tasks([{"name": "A", "entry": "E1"}], Path("/a.json"), state)
@@ -234,24 +228,18 @@ class TestRegisterTasks:
 
 
 # ---------------------------------------------------------------------------
-# _register_options — conflict detection
+# _validate_options — 结构校验
 # ---------------------------------------------------------------------------
 
 
-class TestRegisterOptions:
+class TestValidateOptions:
     def test_not_dict_raises(self):
         with pytest.raises(InterfaceLoadError, match="必须是对象"):
-            _register_options([], Path(), _MergeState())
+            _validate_options([], Path())
 
     def test_empty_key_raises(self):
         with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
-            _register_options({"": {"type": "select"}}, Path(), _MergeState())
-
-    def test_conflict(self):
-        state = _MergeState()
-        _register_options({"opt": {}}, Path("/a.json"), state)
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            _register_options({"opt": {}}, Path("/b.json"), state)
+            _validate_options({"": {"type": "select"}}, Path())
 
 
 # ---------------------------------------------------------------------------
@@ -572,7 +560,7 @@ class TestLoadInterfaceModel:
             ("Root pretask", "prepare-root")
         ]
 
-    def test_imported_pretasks_merge_root_first_depth_first(self, tmp_path):
+    def test_imported_pretasks_merge_preorder(self, tmp_path):
         (tmp_path / "inner.json5").write_text(
             stdlib_json.dumps({"pretask": {"name": "Inner", "exec": "prepare-inner"}})
         )
@@ -601,8 +589,8 @@ class TestLoadInterfaceModel:
         assert isinstance(model.pretask, list)
         assert [pretask.name for pretask in model.pretask] == [
             "Root",
-            "Inner",
             "Outer",
+            "Inner",
         ]
 
     def test_imported_fragment_pretask_loads_with_valid_context_and_option(
@@ -777,7 +765,7 @@ class TestLoadInterfaceModel:
         ):
             load_interface_model(tmp_path)
 
-    def test_pretask_option_must_be_reachable_from_resource_task(self, tmp_path):
+    def test_pretask_option_not_reachable_from_task_is_allowed(self, tmp_path):
         _write_interface(
             tmp_path,
             {
@@ -813,14 +801,10 @@ class TestLoadInterfaceModel:
             },
         )
 
-        with pytest.raises(
-            InterfaceLoadError,
-            match=(
-                r"pretask\[0\]\.option\[unreachable\]"
-                r" 无法从资源包 main 的任何任务到达"
-            ),
-        ):
-            load_interface_model(tmp_path)
+        # pretask.option 的合法来源不再要求能从任务到达，只要求 option 键存在
+        model = load_interface_model(tmp_path)
+        assert model.pretask is not None
+        assert [p.option for p in model.pretask] == [["unreachable"]]
 
     def test_scan_select_expansion(self, tmp_path):
         imgs = tmp_path / "images"
@@ -849,8 +833,8 @@ class TestLoadInterfaceModel:
         assert model.option["skin"].cases is not None
         assert len(model.option["skin"].cases) == 2
 
-    def test_import_conflict_entry(self, tmp_path):
-        """Importing an entry defined in root raises conflict."""
+    def test_import_shared_entry_is_allowed(self, tmp_path):
+        """不同 task name 共用 entry 不再是冲突。"""
         (tmp_path / "extra.json5").write_text(
             '{task: [{name: "X", entry: "RootTask"}]}'
         )
@@ -865,8 +849,12 @@ class TestLoadInterfaceModel:
                 "import": ["extra.json5"],
             },
         )
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            load_interface_model(tmp_path)
+        model = load_interface_model(tmp_path)
+        assert model.task is not None
+        assert {t.name: t.entry for t in model.task} == {
+            "RootTask": "RootTask",
+            "X": "RootTask",
+        }
 
     def test_import_fragment_with_illegal_key(self, tmp_path):
         """Import file with key outside the allowed sections is rejected."""
@@ -1092,3 +1080,146 @@ class TestLoadInterfaceModel:
             ),
         ):
             load_interface_model(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# PI v2.9.2 合并语义
+# ---------------------------------------------------------------------------
+
+
+class TestMergeSemanticsV292:
+    def _base_interface(self, imports=None, **extra):
+        if imports is not None:
+            extra["import"] = imports
+        data = {
+            "interface_version": 2,
+            "name": "Test",
+            "controller": [{"name": "adb", "type": "Adb"}],
+            "resource": [{"name": "main", "path": ["resource"]}],
+        }
+        data.update(extra)
+        return data
+
+    def test_later_imported_option_replaces_whole_definition(self, tmp_path):
+        """option 同名键整体替换为后导入定义，不做字段级合并。"""
+        (tmp_path / "first.json5").write_text(
+            stdlib_json.dumps(
+                {
+                    "option": {
+                        "mode": {
+                            "type": "select",
+                            "label": "First label",
+                            "cases": [{"name": "a"}, {"name": "b"}],
+                            "default_case": "a",
+                        }
+                    }
+                }
+            )
+        )
+        (tmp_path / "second.json5").write_text(
+            stdlib_json.dumps(
+                {
+                    "option": {
+                        "mode": {
+                            "type": "select",
+                            "label": "Second label",
+                            "cases": [{"name": "x"}],
+                            "default_case": "x",
+                        }
+                    }
+                }
+            )
+        )
+        _write_interface(
+            tmp_path,
+            self._base_interface(imports=["first.json5", "second.json5"]),
+        )
+
+        model = load_interface_model(tmp_path)
+        assert model.option is not None
+        mode = model.option["mode"]
+        assert mode.label == "Second label"
+        assert [case.name for case in mode.cases or []] == ["x"]
+        assert mode.default_case == "x"
+
+    def test_group_first_definition_wins(self, tmp_path):
+        """group 按名称保留第一次出现的完整定义。"""
+        (tmp_path / "first.json5").write_text(
+            stdlib_json.dumps(
+                {"group": [{"name": "g1", "label": "First", "default_expand": True}]}
+            )
+        )
+        (tmp_path / "second.json5").write_text(
+            stdlib_json.dumps(
+                {"group": [{"name": "g1", "label": "Second"}, {"name": "g2"}]}
+            )
+        )
+        _write_interface(
+            tmp_path,
+            self._base_interface(
+                group=[{"name": "g0"}],
+                imports=["first.json5", "second.json5"],
+            ),
+        )
+
+        model = load_interface_model(tmp_path)
+        assert model.group is not None
+        groups = {g.name: g for g in model.group}
+        assert list(groups) == ["g0", "g1", "g2"]
+        assert groups["g1"].label == "First"
+
+    def test_task_group_reference_validated(self, tmp_path):
+        _write_interface(
+            tmp_path,
+            self._base_interface(
+                group=[{"name": "real"}],
+                task=[{"name": "T", "entry": "T", "group": ["missing"]}],
+            ),
+        )
+        with pytest.raises(InterfaceLoadError, match=r"引用了不存在的分组: missing"):
+            load_interface_model(tmp_path)
+
+    def test_task_group_reference_valid(self, tmp_path):
+        _write_interface(
+            tmp_path,
+            self._base_interface(
+                group=[{"name": "real"}],
+                task=[{"name": "T", "entry": "T", "group": ["real"]}],
+            ),
+        )
+        model = load_interface_model(tmp_path)
+        assert model.task is not None
+        assert model.task[0].group == ["real"]
+
+    def test_imported_task_shares_entry_with_distinct_options(self, tmp_path):
+        """两个 name 共用 entry，各自携带不同选项定义。"""
+        (tmp_path / "extra.json5").write_text(
+            stdlib_json.dumps(
+                {
+                    "task": [
+                        {
+                            "name": "Fast",
+                            "entry": "Farm",
+                            "option": ["speed"],
+                        }
+                    ],
+                    "option": {
+                        "speed": {"type": "select", "cases": [{"name": "high"}]}
+                    },
+                }
+            )
+        )
+        _write_interface(
+            tmp_path,
+            self._base_interface(
+                task=[{"name": "Slow", "entry": "Farm", "option": ["safety"]}],
+                option={"safety": {"type": "select", "cases": [{"name": "on"}]}},
+                imports=["extra.json5"],
+            ),
+        )
+        model = load_interface_model(tmp_path)
+        assert model.task is not None
+        by_name = {t.name: t for t in model.task}
+        assert by_name["Slow"].option == ["safety"]
+        assert by_name["Fast"].option == ["speed"]
+        assert by_name["Slow"].entry == by_name["Fast"].entry == "Farm"

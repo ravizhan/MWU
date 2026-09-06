@@ -26,6 +26,7 @@ from models.scheduler import (
     TaskExecution,
 )
 from models.task_config import (
+    find_unknown_task_names,
     normalize_global_option_values,
     normalize_task_execution_payload,
 )
@@ -43,6 +44,8 @@ class Admission:
     run_id: str | None = None
     conflict: StartConflict | None = None
     skip_status: str | None = None
+
+    invalid_task_names: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -248,10 +251,62 @@ async def _record_skip(
     return Admission(accepted=False, run_id=run_id, skip_status=status)
 
 
+async def record_fire_time_rejection(
+    state: AppState, task: ScheduledTask, reason: str
+) -> None:
+    """fire-time 载荷/身份失效：落库一条 failed 记录并经现有通知渠道告警。
+
+    归属用户配置漂移，不产生 Sentry Error Event（调用方保证不派发执行）。
+    """
+    run_id = str(uuid.uuid4())
+    execution = TaskExecution(
+        id=run_id,
+        task_id=task.id,
+        task_name=task.name,
+        origin="in_app",
+        started_at=_utc_now(),
+        finished_at=_utc_now(),
+        status="failed",
+        error_message=reason,
+    )
+    try:
+        await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
+    except Exception as e:
+        logger.error(f"写入 fire-time 拒绝记录失败: {e}")
+    worker = state.worker
+    if worker is not None:
+        try:
+            await asyncio.to_thread(
+                worker.events.send_notification,
+                "定时任务触发失败",
+                f"{task.name}: {reason}",
+                level="error",
+            )
+        except Exception as e:
+            logger.error(f"发送 fire-time 拒绝通知失败: {e}")
+
+
 async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admission:
     """手动启动准入"""
+    telemetry = getattr(state, "telemetry_service", None)
+    worker = state.worker
+    if worker is not None and getattr(worker, "interface", None) is not None:
+        unknown_names = find_unknown_task_names(worker.interface, payload.task_list)
+        if unknown_names:
+            if telemetry is not None:
+                telemetry.record_execution_rejected(
+                    origin="manual", error_code="config_error"
+                )
+            return Admission(
+                accepted=False,
+                invalid_task_names=unknown_names,
+            )
     if state.update_in_progress:
         run_id = str(uuid.uuid4())
+        if telemetry is not None:
+            telemetry.record_execution_rejected(
+                run_id=run_id, origin="manual", error_code="mwu.execution.rejected"
+            )
         return Admission(
             accepted=False,
             run_id=run_id,
@@ -265,6 +320,10 @@ async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admissi
         )
     if state.active_run is not None:
         conflict = _conflict_from_active(state)
+        if telemetry is not None:
+            telemetry.record_execution_rejected(
+                origin="manual", error_code=conflict.code
+            )
         return Admission(accepted=False, conflict=conflict)
 
     run_id = str(uuid.uuid4())
@@ -318,7 +377,34 @@ async def submit_scheduled(
     """调度触发准入（应用内 / 原生冷启动）；时间仅记录实际开始执行时刻"""
     occurrence_id = f"{task.id}:{_utc_now().isoformat()}"
 
+    telemetry = getattr(state, "telemetry_service", None)
+    worker = state.worker
+    if worker is not None and getattr(worker, "interface", None) is not None:
+        unknown_names = find_unknown_task_names(worker.interface, task.task_list)
+        if unknown_names:
+            if telemetry is not None:
+                telemetry.record_execution_rejected(
+                    origin=origin, error_code="config_error"
+                )
+            return await _record_skip(
+                state,
+                task.id,
+                task.name,
+                origin,
+                "failed",
+                occurrence_id=occurrence_id,
+                error=(
+                    "任务名称不在当前 interface 中: "
+                    + ", ".join(unknown_names)
+                    + f"（job {task.id}）"
+                ),
+            )
+
     if state.update_in_progress:
+        if telemetry is not None:
+            telemetry.record_execution_rejected(
+                origin=origin, error_code="mwu.execution.rejected"
+            )
         return await _record_skip(
             state,
             task.id,
@@ -335,6 +421,8 @@ async def submit_scheduled(
             if state.active_run.origin == "manual"
             else "skipped_busy_scheduled"
         )
+        if telemetry is not None:
+            telemetry.record_execution_rejected(origin=origin, error_code=skip_status)
         return await _record_skip(
             state,
             task.id,
@@ -370,6 +458,7 @@ async def submit_scheduled(
         # recording/event path without bypassing ManualStartPayload validation.
         payload = (
             ManualStartPayload(
+                task_identity="name",
                 task_list=task.task_list,
                 task_options=task.task_options,
                 preTasks=task.preTasks,
@@ -437,7 +526,19 @@ async def _complete_run(
     status: ExecutionStatus = "failed"
     error: str | None = None
     task_started = False
+    suppress_prepare_telemetry = False
     event_task_list = payload.task_list if payload is not None else (task_list or [])
+    active_run = state.active_run
+    telemetry = getattr(state, "telemetry_service", None)
+    if telemetry is not None:
+        try:
+            telemetry.start_run(
+                run_id,
+                active_run.origin if active_run is not None else "in_app",
+                event_task_list,
+            )
+        except Exception:
+            logger.debug("启动遥测 run 事务失败", exc_info=True)
     try:
         if worker is None:
             raise RuntimeError("Worker 未就绪")
@@ -465,63 +566,89 @@ async def _complete_run(
             global_values,
             worker.interface,
         )
+        if telemetry is not None:
+            try:
+                telemetry.set_run_context(
+                    run_id,
+                    controller_type=(
+                        payload.device.device_type
+                        if payload is not None and payload.device
+                        else None
+                    ),
+                    resource_name=payload.resource_name
+                    if payload is not None
+                    else None,
+                )
+            except Exception:
+                logger.debug("设置遥测 run 上下文失败", exc_info=True)
 
-        # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
-        # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。
+        # 3-5. 准备临界区：权限 → 释放旧连接 → PI pretask + 用户命令 →
+        # connect + set_resource。preparation_lock 与直接 device/resource API 互斥。
         # stop_flag 由 TaskService.start() 在任务线程启动时重置；此处不得重置，
         # 否则 stop_active() 在准入后、本阶段前设置的停止请求会被吞掉。
         effective_controller = payload.controller_name or payload.device.controller_name
-        try:
+        device_model = worker.device.build_device_model_from_config(
+            payload.device.controller_name,
+            payload.device.device_type,
+            payload.device.device_address,
+        )
+        async with state.preparation_lock:
+            # 获取锁后重查：准入后可能已被停止/更新/关停
+            if state.active_run is None or state.active_run.run_id != run_id:
+                raise PretaskStopped("运行已被取代或取消")
+            if state.update_in_progress or state.is_shutting_down:
+                raise PretaskStopped("更新或关停中，运行终止")
+
+            # PI pretask + 用户命令 + 低层 connect（不加载 resource）。
             # shield 包裹：协程被取消时仍等待 pretask 线程退出后再传播取消，
             # 避免 finally 提前清槽导致新运行与未退出的 pretask 进程并发。
-            await asyncio.shield(
-                asyncio.to_thread(
-                    worker.pretasks.run_all,
-                    effective_controller,
-                    payload.resource_name,
-                    normalized_task_options,
-                    normalized_pre_tasks,
-                    global_options=normalized_global_options,
+            try:
+                prepared = await asyncio.shield(
+                    asyncio.to_thread(
+                        worker.device.prepare_connection,
+                        device_model,
+                        payload.resource_name,
+                        normalized_global_options,
+                        normalized_pre_tasks,
+                    )
                 )
-            )
-        except PretaskStopped:
-            raise
-        except PretaskError as exc:
-            if worker.task_state.stop_flag:
-                raise PretaskStopped(str(exc)) from exc
-            raise RuntimeError(str(exc)) from exc
+            except PretaskStopped:
+                raise
+            except PretaskError as exc:
+                if worker.task_state.stop_flag:
+                    raise PretaskStopped(str(exc)) from exc
+                raise RuntimeError(str(exc)) from exc
+            if not prepared:
+                raise RuntimeError(
+                    "设备准备失败: "
+                    + (worker.device_state.last_device_error or "未知错误")
+                )
 
-        # 4. 复用已匹配连接；不匹配先解锁
-        device_state = worker.device_state
-        need_connect = not (
-            device_state.connected
-            and device_state.configuration_locked
-            and device_state.controller_name == payload.device.controller_name
-            and device_state.current_resource_name == payload.resource_name
-        )
-        if need_connect and device_state.configuration_locked:
-            await asyncio.to_thread(worker.device.reset_connection_state)
-
-        # 5. 按设置重试 connect + set_resource
-        if need_connect:
+            # set_resource + 按设置重试（重试只重试 connect+set_resource，
+            # 不重放已成功的准备程序）
             settings = load_settings()
             max_retry = settings.runtime.maxRetryCount
             retry_interval = settings.runtime.retryInterval
-            device_model = worker.device.build_device_model_from_config(
-                payload.device.controller_name,
-                payload.device.device_type,
-                payload.device.device_address,
-            )
             connected = False
             last_err: Exception | None = None
             for attempt in range(1, max_retry + 1):
                 try:
-                    if not await asyncio.to_thread(worker.device.connect, device_model):
-                        raise RuntimeError("connect() 返回 False")
-                    if not await asyncio.to_thread(
-                        worker.device.set_resource, payload.resource_name
+                    if not worker.device_state.connected:
+                        if not await asyncio.to_thread(
+                            worker.device.connect, device_model
+                        ):
+                            raise RuntimeError("connect() 返回 False")
+                    # prepare_connection 复用 locked 上下文时 resource 已加载，
+                    # set_resource() 对 locked 状态一律拒绝，重试只会耗尽次数。
+                    # 仅当 resource 未加载（新连接）时才真正调用 set_resource()。
+                    if (
+                        worker.device_state.current_resource_name
+                        != payload.resource_name
                     ):
-                        raise RuntimeError("set_resource() 返回 False")
+                        if not await asyncio.to_thread(
+                            worker.device.set_resource, payload.resource_name
+                        ):
+                            raise RuntimeError("set_resource() 返回 False")
                     connected = True
                     break
                 except Exception as e:
@@ -541,6 +668,15 @@ async def _complete_run(
             pre_tasks=normalized_pre_tasks,
             global_options=normalized_global_options,
         ):
+            if (
+                worker.task_state.stop_flag
+                or state.update_in_progress
+                or state.is_shutting_down
+            ):
+                raise PretaskStopped("运行已终止")
+            # A second legacy/parallel task admission is a busy gate, not a
+            # preparation failure and must not create a Sentry Error event.
+            suppress_prepare_telemetry = bool(worker.task_state.running)
             raise RuntimeError("任务启动失败（可能已有任务在运行）")
         # 任务线程已启动：run_process 自行发出终端事件；标记以便停止/失败时不重复发、不误取消
         task_started = True
@@ -578,6 +714,19 @@ async def _complete_run(
         status = "failed"
         error = str(e)
         logger.error(f"执行运行 {run_id} 失败: {e}")
+        if (
+            telemetry is not None
+            and not task_started
+            and not suppress_prepare_telemetry
+        ):
+            try:
+                telemetry.capture_prepare_failed(
+                    run_id,
+                    e,
+                    task_name=event_task_list[0] if event_task_list else None,
+                )
+            except Exception:
+                logger.debug("发送遥测准备失败事件失败", exc_info=True)
         if worker is not None:
             worker.events.send_log(f"任务执行失败: {e}")
             if not task_started:
@@ -607,6 +756,13 @@ async def _complete_run(
                 except Exception as emit_err:
                     logger.error(f"发送任务失败事件失败: {emit_err}")
         try:
+            # Finish Sentry before SQLite bookkeeping: the transaction covers
+            # the real execution terminal state, not storage latency.
+            if telemetry is not None:
+                try:
+                    telemetry.finish_run(run_id, status)
+                except Exception:
+                    logger.debug("完成遥测 run 事务失败", exc_info=True)
             await asyncio.shield(
                 asyncio.to_thread(
                     finish_execution, state.scheduler_db_path, run_id, status, error

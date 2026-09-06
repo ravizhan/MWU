@@ -1,11 +1,13 @@
 import type { RealtimeEvent, RealtimeEventName } from "@/types/realtimeModel"
 import type { useIndexStore } from "@/stores/panel/session"
 import type { useSettingsStore } from "@/stores/settings/settings"
+import type { FocusInteractionStoreContract } from "@/stores/focus/focusInteraction"
 import { formatRealtimeLog, showBrowserRealtimeNotification, showToastMessage } from "./events"
 
 export interface RealtimeStoreRefs {
   indexStore: ReturnType<typeof useIndexStore>
   settingsStore: ReturnType<typeof useSettingsStore>
+  focusInteractionStore?: FocusInteractionStoreContract
 }
 
 /**
@@ -47,6 +49,22 @@ function handleTaskFailed(event: RealtimeEvent, stores: RealtimeStoreRefs): void
   stores.indexStore.setTaskRunning(false)
 }
 
+/** 焦点交互（dialog/modal）：details.phase=created → pending 入列；finished → 移除。 */
+function handleFocusInteraction(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
+  if (!stores.focusInteractionStore || !event.details) {
+    return
+  }
+  stores.focusInteractionStore.applyRealtime(event.details)
+  // modal 内容在 details 里没有（message 才是内容），补齐最新一条 pending 的内容
+  const store = stores.focusInteractionStore
+  if (event.details.phase === "created" && store.pending.length > 0) {
+    const latest = store.pending[store.pending.length - 1]
+    if (!latest.content) {
+      latest.content = event.message
+    }
+  }
+}
+
 /**
  * Per-event-type handlers. Events not listed here fall through to
  * handleCommon (log + notify channels only).
@@ -60,6 +78,7 @@ const typeHandlers: Partial<
   "task.started": handleTaskStarted,
   "task.completed": handleTaskCompleted,
   "task.failed": handleTaskFailed,
+  "focus.interaction": handleFocusInteraction,
 }
 
 /**

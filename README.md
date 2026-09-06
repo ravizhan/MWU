@@ -374,8 +374,9 @@ def run_process(self, task_list, options):
         state = self.worker.task_state
         self.worker.events.emit_task_started(task_list)
         for task in task_list:
+            # PI 任务名即标识（v2.9.2 起不再使用 entry 定位任务）
+            state.current_pi_task_name = task
             if state.stop_flag:
-                self.worker.tasker.post_stop().wait()
                 state.last_status = "stopped"
                 state.last_error = "任务已终止"
                 self.worker.events.send_log("任务已终止")
@@ -401,11 +402,16 @@ def run_process(self, task_list, options):
             while not t.done:
                 time.sleep(0.5)
                 if state.stop_flag:
-                    self.worker.tasker.post_stop().wait()
                     state.last_status = "stopped"
                     state.last_error = "任务已终止"
                     self.worker.events.send_log("任务已终止")
                     return
+            # 任一任务失败即终止整批（首败终止语义）
+            if not t.succeeded:
+                state.last_status = "failed"
+                state.last_error = "任务执行失败"
+                self.worker.events.emit_task_failed([task], state.last_error)
+                return
 
         state.last_status = "success"
         state.last_error = None
@@ -436,7 +442,6 @@ def _run_my_custom_entry(task_service, options):
     while not t.done:
         time.sleep(0.5)
         if state.stop_flag:
-            task_service.worker.tasker.post_stop().wait()
             state.last_status = "stopped"
             state.last_error = "任务已终止"
             task_service.worker.events.send_log("任务已终止")

@@ -1,5 +1,5 @@
 <template>
-  <template v-if="option">
+  <template v-if="option && applicable">
     <div
       class="flex items-center justify-between w-full gap-4 py-2 px-3 border-b border-solid last:border-b-0"
       :style="{
@@ -69,7 +69,9 @@ import type {
   SwitchOption,
 } from "@/types/interfaceModel"
 import type { NullableTaskOptionValue } from "@/types/schedulerModel"
+import { useDeviceConnectionStore } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import { isOptionApplicable } from "@/utils/interface/applicability"
 import { tryCatch } from "@/utils/tryCatch"
 import OptionCheckboxControl from "@/components/common/controls/OptionCheckboxControl.vue"
 import OptionHotkeyControl from "@/components/common/controls/OptionHotkeyControl.vue"
@@ -89,8 +91,19 @@ const {
 
 const { locale } = useI18n()
 const interfaceStore = useInterfaceStore()
+const deviceStore = useDeviceConnectionStore()
 const taskOptions = computed(() => rawTaskOptions)
 const option = computed(() => interfaceStore.interface?.option?.[name])
+// 不适用的 option 隐藏子树；值保留在 taskOptions 中，切回环境即恢复
+// option.controller 存的是规范控制器名，必须用 selectedControllerName
+// （selectedController 是 UI display_label，label≠name 时会误判不适用）。
+const applicable = computed(() =>
+  isOptionApplicable(
+    option.value,
+    deviceStore.selectedControllerName,
+    deviceStore.resource || null,
+  ),
+)
 const scanSelectRefreshing = ref(false)
 
 const resolvedLabel = computed(() =>

@@ -585,7 +585,7 @@ watch(
     }
 
     const compatibleTaskIds = formData.value.task_list.filter((taskId) =>
-      interfaceStore.isTaskCompatibleByEntry(taskId, controllerName, resourceName),
+      interfaceStore.isTaskCompatibleByName(taskId, controllerName, resourceName),
     )
     const removedCount = formData.value.task_list.length - compatibleTaskIds.length
     if (removedCount <= 0) {

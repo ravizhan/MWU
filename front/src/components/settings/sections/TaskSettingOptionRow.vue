@@ -1,5 +1,5 @@
 <template>
-  <template v-if="option">
+  <template v-if="option && applicable">
     <div
       class="flex items-center justify-between w-full gap-4 py-2 px-3 border-b border-solid last:border-b-0"
       :style="{
@@ -68,7 +68,9 @@ import type {
   SwitchOption,
 } from "@/types/interfaceModel"
 import type { TaskOptionValue } from "@/types/schedulerModel"
+import { useDeviceConnectionStore } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import { isOptionApplicable } from "@/utils/interface/applicability"
 import { buildDefaultsFromOptionMap } from "@/utils/task-config/options"
 import { tryCatch } from "@/utils/tryCatch"
 import OptionCheckboxControl from "@/components/common/controls/OptionCheckboxControl.vue"
@@ -85,8 +87,17 @@ const { name, level } = defineProps<{
 const { locale } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
+const deviceStore = useDeviceConnectionStore()
 const scanSelectRefreshing = ref(false)
 const option = computed(() => interfaceStore.interface?.option?.[name])
+// 不适用的 option 隐藏行；globalOptionValues 中的已存值保留
+const applicable = computed(() =>
+  isOptionApplicable(
+    option.value,
+    deviceStore.selectedControllerName,
+    deviceStore.resource || null,
+  ),
+)
 
 const resolvedLabel = computed(() =>
   resolveInterfaceText(interfaceStore.interface, locale.value, option.value?.label, name),

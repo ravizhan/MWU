@@ -142,6 +142,7 @@ class TestScheduledTaskCreate:
 
     def test_valid_create(self):
         task = ScheduledTaskCreate(
+            task_identity="name",
             name="test",
             trigger_config={"type": "cron", "cron": "0 9 * * *"},
             task_list=["task1"],
@@ -150,6 +151,7 @@ class TestScheduledTaskCreate:
 
     def test_name_stripped(self):
         task = ScheduledTaskCreate(
+            task_identity="name",
             name="  hello  ",
             trigger_config={"type": "cron", "cron": "0 9 * * *"},
             task_list=["task1"],
@@ -188,13 +190,42 @@ class TestScheduledTaskDeviceConfig:
         )
         assert d.device_address == "12345|1"
 
-    def test_wlroots_socket_path(self):
+    def test_macos_cgwindow_id(self):
         d = ScheduledTaskDeviceConfig(
             controller_name="c",
-            device_type="WlRoots",
-            device_address=" /run/user/1000/wayland-1 ",
+            device_type="MacOS",
+            device_address=" 0042 ",
         )
-        assert d.device_address == "/run/user/1000/wayland-1"
+        assert d.device_address == "42"
+
+    def test_macos_non_positive_rejected(self):
+        with pytest.raises(ValidationError):
+            ScheduledTaskDeviceConfig(
+                controller_name="c",
+                device_type="MacOS",
+                device_address="0",
+            )
+
+    def test_linux_json_address(self):
+        d = ScheduledTaskDeviceConfig(
+            controller_name="c",
+            device_type="Linux",
+            device_address=(
+                '{"wlr_socket_path": "/run/user/1000/wayland-1", "kind": "wlr"}'
+            ),
+        )
+        assert (
+            d.device_address
+            == '{"kind": "wlr", "wlr_socket_path": "/run/user/1000/wayland-1"}'
+        )
+
+    def test_linux_invalid_json_rejected(self):
+        with pytest.raises(ValidationError):
+            ScheduledTaskDeviceConfig(
+                controller_name="c",
+                device_type="Linux",
+                device_address="not-json",
+            )
 
 
 class TestManualStartPayload:

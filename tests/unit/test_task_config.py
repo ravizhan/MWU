@@ -2,6 +2,8 @@
 
 from typing import cast
 
+import pytest
+
 from models.interface import (
     Controller,
     HotkeyCase,
@@ -461,22 +463,22 @@ class TestNormalizeTaskExecutionPayload:
             tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")],
         )
         task_list, _, _ = normalize_task_execution_payload(
-            ["TaskA", "TaskB", "TaskA", "InvalidTask"],
+            ["A", "B", "A", "InvalidTask"],
             {},
             iface,
         )
-        assert task_list == ["TaskA", "TaskB"]
+        assert task_list == ["A", "B"]
 
     def test_orders_by_input_order(self):
         iface = _make_interface(
             tasks=[Task(name="B", entry="TaskB"), Task(name="A", entry="TaskA")],
         )
         task_list, _, _ = normalize_task_execution_payload(
-            ["TaskB", "TaskA"],
+            ["B", "A"],
             {},
             iface,
         )
-        assert task_list == ["TaskB", "TaskA"]
+        assert task_list == ["B", "A"]
 
     def test_normalizes_task_options(self):
         iface = _make_interface(
@@ -515,33 +517,33 @@ class TestNormalizeSnapshot:
     def test_empty_snapshot(self):
         iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
         result = normalize_snapshot(None, iface)
-        assert "TaskA" in result.taskOrder
-        assert result.taskChecked["TaskA"] is False
+        assert "A" in result.taskOrder
+        assert result.taskChecked["A"] is False
 
     def test_removes_invalid_task_ids(self):
         iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
         result = normalize_snapshot(
             {
-                "taskOrder": ["TaskA", "InvalidTask"],
+                "taskOrder": ["A", "InvalidTask"],
                 "taskChecked": {},
                 "taskOptions": {},
             },
             iface,
         )
         assert "InvalidTask" not in result.taskOrder
-        assert "TaskA" in result.taskOrder
+        assert "A" in result.taskOrder
 
     def test_merges_default_tasks(self):
         iface = _make_interface(
             tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")],
         )
         result = normalize_snapshot(
-            {"taskOrder": ["TaskB"], "taskChecked": {"TaskB": True}, "taskOptions": {}},
+            {"taskOrder": ["B"], "taskChecked": {"B": True}, "taskOptions": {}},
             iface,
         )
-        assert result.taskOrder == ["TaskB", "TaskA"]
-        assert result.taskChecked["TaskB"] is True
-        assert result.taskChecked["TaskA"] is False
+        assert result.taskOrder == ["B", "A"]
+        assert result.taskChecked["B"] is True
+        assert result.taskChecked["A"] is False
 
     def test_deduplicates_duplicate_ids(self):
         """Duplicate task IDs in input are silently de-duped."""
@@ -723,3 +725,124 @@ class TestTaskConfigModel:
     def test_normalize_raw_config_ignores_non_string_preset_names(self):
         model = TaskConfigModel.model_validate({"presets": {1: {"taskOrder": []}}})
         assert model.presets == {}
+
+
+# ---------------------------------------------------------------------------
+# 任务身份切换（PI v2.9：name 为唯一身份）
+# ---------------------------------------------------------------------------
+
+
+class TestTaskIdentityName:
+    def test_two_tasks_sharing_entry_get_separate_options(self):
+        """两个 name 共用 entry：选项按 name 分别归一。"""
+        iface = _make_interface(
+            tasks=[
+                Task(name="Slow", entry="Farm", option=["safety"]),
+                Task(name="Fast", entry="Farm", option=["speed"]),
+            ],
+            options={
+                "safety": _make_option("select", cases=["on"]),
+                "speed": _make_option("select", cases=["high"]),
+            },
+        )
+        result = normalize_task_options_by_task(
+            {"Slow": {"safety": "on"}, "Fast": {"speed": "high"}},
+            ["Slow", "Fast"],
+            iface,
+        )
+        assert result["Slow"] == {"safety": "on"}
+        assert result["Fast"] == {"speed": "high"}
+
+    def test_default_order_uses_names_not_entries(self):
+        iface = _make_interface(
+            tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")]
+        )
+        result = normalize_snapshot(None, iface)
+        assert result.taskOrder == ["A", "B"]
+
+    def test_unknown_names_reported_by_helper(self):
+        from models.task_config import find_unknown_task_names
+
+        iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
+        assert find_unknown_task_names(iface, ["A", "B", "B", 42]) == ["B"]
+        assert find_unknown_task_names(iface, ["A"]) == []
+
+    def test_wrong_identity_marker_rejected(self):
+        from pydantic import ValidationError
+
+        # pydantic 将 model_validator 抛出的 TaskConfigFormatError 包装为 ValidationError
+        with pytest.raises(ValidationError, match="taskIdentity"):
+            TaskConfigModel.model_validate(
+                {"taskIdentity": "entry", "selectedPreset": "x"}
+            )
+
+    def test_validate_task_config_identity_rejects_missing_marker(self):
+        from models.task_config import (
+            TaskConfigFormatError,
+            validate_task_config_identity,
+        )
+
+        iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
+        with pytest.raises(TaskConfigFormatError):
+            validate_task_config_identity({"selectedPreset": "x"}, iface)
+
+    def test_validate_task_config_identity_rejects_unknown_task_keys(self):
+        from models.task_config import (
+            TaskConfigFormatError,
+            validate_task_config_identity,
+        )
+
+        iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
+        # "TaskA" 是 entry 身份的旧键：必须拒绝
+        with pytest.raises(TaskConfigFormatError):
+            validate_task_config_identity(
+                {
+                    "taskIdentity": "name",
+                    "presets": {
+                        "__mwu_reserved_custom_preset__": {
+                            "taskOrder": ["TaskA"],
+                            "taskChecked": {},
+                            "taskOptions": {},
+                        }
+                    },
+                },
+                iface,
+            )
+
+    def test_validate_task_config_identity_accepts_new_format(self):
+        from models.task_config import validate_task_config_identity
+
+        iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
+        validate_task_config_identity(
+            {
+                "taskIdentity": "name",
+                "presets": {
+                    "__mwu_reserved_custom_preset__": {
+                        "taskOrder": ["A"],
+                        "taskChecked": {"A": True},
+                        "taskOptions": {"A": {}},
+                    }
+                },
+            },
+            iface,
+        )
+
+    def test_new_task_appended_and_options_seeded_for_new_format(self):
+        """严格切换不删除新格式任务：新增任务补缺省、新 option 补默认值。"""
+        iface = _make_interface(
+            tasks=[Task(name="A", entry="A", option=["diff"])],
+            options={"diff": _make_option("select", cases=["x", "y"])},
+        )
+        config = TaskConfigModel(
+            presets={
+                CUSTOM_PRESET_NAME: {
+                    "taskOrder": ["A"],
+                    "taskChecked": {"A": True},
+                    "taskOptions": {"A": {}},
+                }
+            }
+        )
+        result = normalize_task_config(config, iface)
+        custom = result.presets[CUSTOM_PRESET_NAME]
+        assert custom.taskOrder == ["A"]
+        assert custom.taskOptions["A"] == {"diff": "x"}

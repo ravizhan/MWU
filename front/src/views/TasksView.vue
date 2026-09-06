@@ -1,4 +1,12 @@
 <template>
+  <NAlert
+    v-if="configStore.configLoadError"
+    type="error"
+    class="col-span-full mb-[-0.5rem]"
+    :title="t('tasks.configError.title')"
+  >
+    {{ configStore.configLoadError.message }}{{ t("tasks.configError.hint") }}
+  </NAlert>
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start max-w-7xl mx-auto">
     <!-- Left: Task list with start/stop -->
     <NCard

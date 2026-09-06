@@ -112,19 +112,72 @@ describe("customDeviceAddressSchema", () => {
     ).toBe(false)
   })
 
-  it("accepts and trims a WlRoots socket path", () => {
-    expect(
-      customDeviceAddressSchema.parse({
-        type: "WlRoots",
-        address: " /run/user/1000/wayland-1 ",
-      }),
-    ).toEqual({ type: "WlRoots", address: "/run/user/1000/wayland-1" })
+  it("accepts and canonicalizes a MacOS CGWindowID", () => {
+    expect(customDeviceAddressSchema.parse({ type: "MacOS", address: " 0042 " })).toEqual({
+      type: "MacOS",
+      address: "42",
+    })
   })
 
-  it("rejects an empty WlRoots socket path", () => {
-    expect(customDeviceAddressSchema.safeParse({ type: "WlRoots", address: "   " }).success).toBe(
-      false,
-    )
+  it("rejects a non-positive MacOS CGWindowID", () => {
+    expect(customDeviceAddressSchema.safeParse({ type: "MacOS", address: "0" }).success).toBe(false)
+  })
+
+  it("accepts and canonicalizes a Linux Wlr address", () => {
+    expect(
+      customDeviceAddressSchema.parse({
+        type: "Linux",
+        address: '{ "wlr_socket_path": " /run/user/1000/wayland-1 ", "kind": "wlr" }',
+      }),
+    ).toEqual({
+      type: "Linux",
+      address: '{"kind": "wlr", "wlr_socket_path": "/run/user/1000/wayland-1"}',
+    })
+  })
+
+  it("accepts a Linux portal address without a runtime socket", () => {
+    expect(
+      customDeviceAddressSchema.parse({ type: "Linux", address: '{"kind":"portal"}' }),
+    ).toEqual({ type: "Linux", address: '{"kind": "portal"}' })
+  })
+
+  it("adds the default UInput path when dimensions are provided", () => {
+    expect(
+      customDeviceAddressSchema.parse({
+        type: "Linux",
+        address:
+          '{"kind":"gamescope","display_no":0,"uinput_screen_width":1920,"uinput_screen_height":1080}',
+      }),
+    ).toEqual({
+      type: "Linux",
+      address:
+        '{"display_no": 0, "kind": "gamescope", "uinput_path": "/dev/uinput", "uinput_screen_height": 1080, "uinput_screen_width": 1920}',
+    })
+  })
+
+  it("rejects Linux addresses with missing kind-specific fields", () => {
+    expect(
+      customDeviceAddressSchema.safeParse({ type: "Linux", address: '{"kind":"wlr"}' }).success,
+    ).toBe(false)
+    expect(
+      customDeviceAddressSchema.safeParse({ type: "Linux", address: '{"kind":"gamescope"}' })
+        .success,
+    ).toBe(false)
+    expect(
+      customDeviceAddressSchema.safeParse({
+        type: "Linux",
+        address: '{"kind":"portal","uinput_screen_width":1920}',
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects unknown Linux address fields", () => {
+    expect(
+      customDeviceAddressSchema.safeParse({
+        type: "Linux",
+        address: '{"kind":"portal","runtime_fd":3}',
+      }).success,
+    ).toBe(false)
   })
 })
 
@@ -151,10 +204,29 @@ describe("runtimeDeviceAddressSchema", () => {
     ).toBe(false)
   })
 
-  it("accepts a scanned WlRoots socket path", () => {
-    expect(runtimeDeviceAddressSchema.parse({ type: "WlRoots", address: " wayland-1 " })).toEqual({
-      type: "WlRoots",
-      address: "wayland-1",
+  it("accepts a scanned MacOS CGWindowID", () => {
+    expect(runtimeDeviceAddressSchema.parse({ type: "MacOS", address: " 0042 " })).toEqual({
+      type: "MacOS",
+      address: "42",
+    })
+  })
+
+  it("canonicalizes a scanned Linux address", () => {
+    expect(
+      runtimeDeviceAddressSchema.parse({
+        type: "Linux",
+        address: '{ "kind": "gamescope", "display_no": 0 }',
+      }),
+    ).toEqual({
+      type: "Linux",
+      address: '{"display_no": 0, "kind": "gamescope"}',
+    })
+  })
+
+  it("accepts a lenient scanned Linux address before connection details are filled", () => {
+    expect(runtimeDeviceAddressSchema.parse({ type: "Linux", address: '{"kind":"wlr"}' })).toEqual({
+      type: "Linux",
+      address: '{"kind": "wlr"}',
     })
   })
 })

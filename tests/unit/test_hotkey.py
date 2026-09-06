@@ -9,9 +9,9 @@ from maa_worker.pipeline_override import PipelineOverrideService
 from models.interface import (
     Controller,
     HotkeyCase,
+    LinuxControllerConfig,
     Option,
     OptionCase,
-    WlRootsController,
 )
 
 
@@ -22,7 +22,7 @@ class TestSplitHotkeyCombo:
             ("", ("", [])),
             (" + ", ("", [])),
             ("A", ("A", [])),
-            (" ALT + Shift + A ", ("A", ["ALT", "Shift"])),
+            (" ALT + Shift + A ", ("A", ["ALT", "SHIFT"])),
         ],
     )
     def test_primary_is_last_nonempty_part(self, value, expected):
@@ -35,26 +35,57 @@ class TestHotkeyValueToCodes:
         [
             ("Win32", (0x41, 0x12, 0)),
             ("Adb", (29, 57, 0)),
-            ("WlRoots", (30, 56, 0)),
-            (None, (0x41, 0x12, 0)),
-            ("UnknownController", (0x41, 0x12, 0)),
+            ("Linux", (30, 56, 0)),
         ],
     )
     def test_alt_a_uses_controller_key_map(self, controller_type, expected):
         assert hotkey_value_to_codes("ALT+A", controller_type) == expected
 
-    def test_unknown_key_and_empty_value_use_zero_codes(self):
-        assert hotkey_value_to_codes("ALT+Unknown", "Win32") == (0, 0x12, 0)
-        assert hotkey_value_to_codes("", "Win32") == (0, 0, 0)
+    def test_unknown_controller_type_rejected(self):
+        with pytest.raises(ValueError, match="受支持的控制器类型"):
+            hotkey_value_to_codes("ALT+A", "WlRoots")
+        with pytest.raises(ValueError, match="受支持的控制器类型"):
+            hotkey_value_to_codes("ALT+A", None)
+        with pytest.raises(ValueError, match="受支持的控制器类型"):
+            hotkey_value_to_codes("ALT+A", "UnknownController")
+
+    def test_linux_use_win32_vk_code_uses_win32_table(self):
+        assert hotkey_value_to_codes("ALT+A", "Linux", use_win32_vk_code=True) == (
+            0x41,
+            0x12,
+            0,
+        )
+
+    def test_macos_uses_cgkeycode_table(self):
+        # MacOS A=0 是有效 CGKeyCode，不能复用 Win32 值
+        assert hotkey_value_to_codes("A", "MacOS") == (0, 0, 0)
+        assert hotkey_value_to_codes("Ctrl+A", "MacOS") == (0, 59, 0)
+        assert hotkey_value_to_codes("ENTER", "MacOS") == (36, 0, 0)
+        assert hotkey_value_to_codes("F1", "MacOS") == (122, 0, 0)
+
+    def test_macos_allows_command_modifier(self):
+        assert hotkey_value_to_codes("Cmd+A", "MacOS") == (0, 55, 0)
+
+    def test_unknown_key_raises_config_error(self):
+        with pytest.raises(ValueError, match="不在 Win32 键码表中"):
+            hotkey_value_to_codes("ALT+Unknown", "Win32")
+        with pytest.raises(ValueError, match="不在 Win32 键码表中"):
+            hotkey_value_to_codes("Unknown", "Win32")
+
+    def test_empty_primary_raises(self):
+        with pytest.raises(ValueError, match="主键为空"):
+            hotkey_value_to_codes("", "Win32")
 
     def test_rejects_more_than_two_modifiers(self):
         with pytest.raises(ValueError, match="最多支持两个修饰键"):
             hotkey_value_to_codes("Ctrl+Alt+Shift+A", "Win32")
 
     @pytest.mark.parametrize("value", ["Meta+A", "Command+A", "Win+A", "Super+A"])
-    def test_rejects_meta_aliases(self, value):
+    def test_rejects_meta_aliases_non_macos(self, value):
         with pytest.raises(ValueError, match="不支持 Meta/Command/Win"):
             hotkey_value_to_codes(value, "Win32")
+        with pytest.raises(ValueError, match="不支持 Meta/Command/Win"):
+            hotkey_value_to_codes(value, "Linux")
 
 
 class TestPipelineOverrideHotkey:
@@ -88,7 +119,31 @@ class TestPipelineOverrideHotkey:
 
         assert override == {"key": [0x12, 0x41]}
 
-    def test_wlroots_can_emit_win32_virtual_key_codes(self):
+    def test_bare_placeholder_is_primary(self):
+        option = Option(
+            type="hotkey",
+            hotkeys=[HotkeyCase(name="FightCombo")],
+            pipeline_override={"key": "{FightCombo}"},
+        )
+        worker = SimpleNamespace(
+            interface=SimpleNamespace(option={"K": option}),
+            device=SimpleNamespace(
+                get_active_controller_definitions=lambda: [
+                    Controller(name="win", type="Win32")
+                ]
+            ),
+            device_state=SimpleNamespace(current_resource_name=None),
+        )
+
+        override = PipelineOverrideService(worker)._build_option_override(
+            "K",
+            {"K": {"FightCombo": "A"}},
+            set(),
+        )
+
+        assert override == {"key": 0x41}
+
+    def test_linux_use_win32_vk_code_emits_win32_codes(self):
         option = Option(
             type="hotkey",
             hotkeys=[HotkeyCase(name="FightCombo")],
@@ -99,9 +154,9 @@ class TestPipelineOverrideHotkey:
             device=SimpleNamespace(
                 get_active_controller_definitions=lambda: [
                     Controller(
-                        name="wlr",
-                        type="WlRoots",
-                        wlroots=WlRootsController(use_win32_vk_code=True),
+                        name="linux",
+                        type="Linux",
+                        linux=LinuxControllerConfig(use_win32_vk_code=True),
                     )
                 ]
             ),
@@ -115,6 +170,53 @@ class TestPipelineOverrideHotkey:
         )
 
         assert override == {"key": 0x41}
+
+    def test_macos_hotkey_primary_zero_is_valid(self):
+        option = Option(
+            type="hotkey",
+            hotkeys=[HotkeyCase(name="Combo")],
+            pipeline_override={"key": "{Combo.primary}"},
+        )
+        worker = SimpleNamespace(
+            interface=SimpleNamespace(option={"K": option}),
+            device=SimpleNamespace(
+                get_active_controller_definitions=lambda: [
+                    Controller(name="mac", type="MacOS")
+                ]
+            ),
+            device_state=SimpleNamespace(current_resource_name=None),
+        )
+
+        override = PipelineOverrideService(worker)._build_option_override(
+            "K",
+            {"K": {"Combo": "A"}},
+            set(),
+        )
+
+        assert override == {"key": 0}
+
+    def test_invalid_hotkey_value_raises_with_option_and_field(self):
+        option = Option(
+            type="hotkey",
+            hotkeys=[HotkeyCase(name="Combo")],
+            pipeline_override={"key": "{Combo.primary}"},
+        )
+        worker = SimpleNamespace(
+            interface=SimpleNamespace(option={"K": option}),
+            device=SimpleNamespace(
+                get_active_controller_definitions=lambda: [
+                    Controller(name="win", type="Win32")
+                ]
+            ),
+            device_state=SimpleNamespace(current_resource_name=None),
+        )
+
+        with pytest.raises(ValueError, match=r"选项 K 的快捷键字段 Combo"):
+            PipelineOverrideService(worker)._build_option_override(
+                "K",
+                {"K": {"Combo": "NoSuchKey"}},
+                set(),
+            )
 
 
 def test_saved_global_value_is_not_shadowed_by_task_default():
@@ -132,6 +234,7 @@ def test_saved_global_value_is_not_shadowed_by_task_default():
             global_option=["GlobalMode"],
             task=[
                 SimpleNamespace(
+                    name="Task",
                     entry="Task",
                     pipeline_override={},
                     option=[],

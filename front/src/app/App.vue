@@ -8,6 +8,7 @@
     <NMessageProvider placement="top">
       <NDialogProvider>
         <FeedbackBridge />
+        <FocusInteractionBridge />
         <NEl
           tag="div"
           class="min-h-screen transition-colors duration-300 overflow-x-hidden"
@@ -15,7 +16,7 @@
         >
           <!-- Navbar -->
           <AppNavbar
-            :name="name"
+            :name="resolvedTitle"
             :is-dark="settingsStore.isDarkMode"
             :menu-value="menuValue"
             :menu-options="menuOptions"
@@ -35,6 +36,22 @@
 
           <!-- Update dialog -->
           <UpdateDialog v-model:show="showUpdateDialog" :update-info="updateInfo" />
+
+          <!-- Welcome dialog (per name+locale+content fingerprint) -->
+          <NModal v-model:show="showWelcome" preset="card" :title="resolvedTitle" class="max-w-2xl">
+            <div class="markdown-body whitespace-pre-wrap">{{ resolvedWelcome }}</div>
+            <template #footer>
+              <div class="flex justify-end">
+                <NButton size="small" @click="closeWelcome">{{ t("common.confirm") }}</NButton>
+              </div>
+            </template>
+          </NModal>
+
+          <!-- Administrator elevation confirm (permission_required) -->
+          <ElevationDialog />
+
+          <!-- Telemetry consent (first run, per target) -->
+          <TelemetryConsentDialog />
         </NEl>
       </NDialogProvider>
     </NMessageProvider>
@@ -63,19 +80,57 @@ import AppNavbar from "@/app/AppNavbar.vue"
 import UpdateDialog from "@/components/settings/dialogs/UpdateDialog.vue"
 import { checkUpdateApi, type UpdateInfo } from "@/services/api"
 import FeedbackBridge from "@/services/feedback/FeedbackBridge.vue"
+import FocusInteractionBridge from "@/components/common/FocusInteractionBridge.vue"
+import ElevationDialog from "@/components/common/ElevationDialog.vue"
+import TelemetryConsentDialog from "@/components/common/TelemetryConsentDialog.vue"
 import { useNaiveTheme } from "@/app/theme"
 import { useInterfaceStore, useSettingsStore, useTaskConfigStore } from "@/stores"
 import { tryCatch } from "@/utils/tryCatch"
+import { telemetryConsentVisible } from "@/services/telemetry/consentState"
+import { useInterfaceMetadata } from "@/app/useInterfaceMetadata"
 
-const { t } = useI18n()
+const { t, locale: i18nLocale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const settingsStore = useSettingsStore()
-const name = computed(() => interfaceStore.interface?.name || "MWU")
 
 const { theme, themeOverrides, locale, dateLocale } = useNaiveTheme()
+const { resolvedTitle, resolvedWelcome, resolvedIconUrl, welcomeShouldShow, markWelcomeShown } =
+  useInterfaceMetadata(i18nLocale)
+const showWelcome = ref(false)
+
+function closeWelcome(): void {
+  showWelcome.value = false
+  markWelcomeShown()
+}
+
+// 界面水合后：指纹变化时展示欢迎页。
+// 弹窗顺序：运行 modal（阻塞流水线，必须最上层）→ 遥测授权 → 欢迎页；
+// 授权未关闭前暂缓欢迎页，授权关闭后 watchEffect 重新触发。
+watchEffect(() => {
+  if (welcomeShouldShow.value && !telemetryConsentVisible.value) {
+    showWelcome.value = true
+  }
+})
+
+// favicon 跟随 PI icon（解析后资源 URL）；未配置时保留默认
+watchEffect(() => {
+  const iconUrl = resolvedIconUrl.value
+  if (!iconUrl) {
+    return
+  }
+  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+  if (!link) {
+    link = document.createElement("link")
+    link.rel = "icon"
+    document.head.appendChild(link)
+  }
+  if (link.href !== new URL(iconUrl, document.baseURI).href) {
+    link.href = iconUrl
+  }
+})
 
 const navItems = computed(() => [
   { key: "home", label: t("nav.home"), iconComponent: HomeOutline },
@@ -156,6 +211,12 @@ onMounted(async () => {
   await configStore.loadConfig()
   if (!settingsStore.initialized) {
     await settingsStore.fetchSettings()
+  }
+  // 服务端 ui.language 为权威：水合后同步 vue-i18n locale
+  const serverLanguage = settingsStore.settings.ui.language
+  if (serverLanguage === "zh-CN" || serverLanguage === "en-US") {
+    i18nLocale.value = serverLanguage
+    localStorage.setItem("locale", serverLanguage)
   }
 
   void checkForUpdatesOnLoad()

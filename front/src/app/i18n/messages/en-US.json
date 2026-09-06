@@ -82,7 +82,9 @@
       }
     },
     "taskSettings": {
-      "empty": "No configurable options"
+      "empty": "No configurable options",
+      "uncovered": "Other options",
+      "uncoveredDescription": "Global/resource/controller options not covered by settings sections"
     },
     "runtime": {
       "title": "Runtime Settings",
@@ -359,6 +361,49 @@
         "timeout": "Timeout must be between 1 and 3600 seconds",
         "commandRequired": "Please enter a command"
       }
+    }
+  },
+  "tasks": {
+    "list": "Tasks",
+    "viewMode": {
+      "group": "Groups",
+      "order": "Order",
+      "ungrouped": "Ungrouped"
+    },
+    "configError": {
+      "title": "Task config failed to load",
+      "hint": ". Use \"Reset\" on the tasks page to rebuild it."
+    }
+  },
+  "privilege": {
+    "title": "Administrator privileges required",
+    "description": "The selected controller requires administrator privileges. Restart with elevated permissions?",
+    "restart": "Restart as administrator",
+    "lanNote": "After restart the app keeps listening on 0.0.0.0:5566 for LAN access."
+  },
+  "telemetry": {
+    "consent": {
+      "title": "Anonymous Telemetry Consent",
+      "purpose": "Allow sending anonymous error and performance data to the project author to improve task stability? Data never includes your accounts, chats, or personal files.",
+      "recipient": "Recipient",
+      "scope": "Only reported: exception types with sanitized stacks, task results and durations. No local variables, config values, command lines, or environment variables.",
+      "attachments": "Attach diagnostic screenshot on failure",
+      "attachmentsNote": "Off by default. When enabled, a screenshot (which may contain account or chat info) and recent diagnostic logs are attached on task failure.",
+      "withdraw": "You can withdraw anytime in Settings → Telemetry.",
+      "grant": "Allow",
+      "deny": "Deny"
+    },
+    "settings": {
+      "title": "Telemetry",
+      "consent": "Anonymous telemetry",
+      "active": "Enabled",
+      "inactive": "Disabled",
+      "attachments": "Failure attachments",
+      "attachmentsNote": "Screenshots may contain account or chat info; authorized separately from the main switch",
+      "recipient": "Recipient",
+      "notConfigured": "This project has no telemetry configured (no DSN). Nothing is sent.",
+      "notBuildAllowed": "Telemetry is force-disabled for source runs and debug builds.",
+      "loading": "Loading…"
     }
   }
 }

@@ -90,6 +90,7 @@ export function useSchedulerTaskForm(): SchedulerTaskForm {
   const configStore = useTaskConfigStore()
 
   const formData = ref<SchedulerTaskFormData>({
+    task_identity: "name",
     name: "",
     description: "",
     enabled: true,
@@ -133,8 +134,14 @@ export function useSchedulerTaskForm(): SchedulerTaskForm {
   function initFormData(task?: ScheduledTask | null): SchedulerTaskFormData {
     wakeupEnabled.value = task ? (task.wakeup_enabled ?? false) : false
     if (task) {
-      const task_list = configStore.normalizeTaskIds(task.task_list)
+      const normalizedTaskIds = configStore.normalizeTaskIds(task.task_list)
+      const normalizedTaskIdSet = new Set(normalizedTaskIds)
+      const unknownTaskIds = [
+        ...new Set(task.task_list.filter((taskId) => !normalizedTaskIdSet.has(taskId))),
+      ]
+      const task_list = [...normalizedTaskIds, ...unknownTaskIds]
       return {
+        task_identity: "name",
         name: task.name,
         description: task.description || "",
         enabled: task.enabled,
@@ -148,6 +155,7 @@ export function useSchedulerTaskForm(): SchedulerTaskForm {
       }
     }
     return {
+      task_identity: "name",
       name: "",
       description: "",
       enabled: true,

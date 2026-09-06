@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from maa.agent_client import AgentClient
 
     from maa_utils import MaaWorker
+    from maa_worker.focus_interaction import FocusInteractionService
+    from services.telemetry_service import TelemetryService
     from models.scheduler import ExecutionOrigin
     from scheduler_manager import SchedulerManager
     from services.system_scheduler import SystemScheduler
@@ -35,6 +37,8 @@ class DeviceRuntimeState:
     controller_type: str | None = None
     controller_name: str | None = None
     current_resource_name: str | None = None
+    prepared_resource_name: str | None = None
+    portal_helper: Any = None
     connected: bool = False
     configuration_locked: bool = False
     last_device_error: str | None = None
@@ -50,6 +54,7 @@ class TaskRuntimeState:
     last_status: str = "idle"
     last_error: str | None = None
     current_task_name: str | None = None
+    current_pi_task_name: str | None = None
     pre_tasks: list | None = None
     current_pre_task_process: subprocess.Popen | None = None
 
@@ -131,6 +136,12 @@ class AppState:
         self.active_run: ActiveRun | None = None
         self.active_execution_task: asyncio.Task | None = None
         self.update_in_progress = False
+        # 准备临界区：_complete_run 与直接 device/resource API 共用（事件循环拥有）
+        self.preparation_lock: asyncio.Lock = asyncio.Lock()
+        # 焦点交互服务（dialog/modal 阻塞等待；MaaWorker 构造时绑定）
+        self.focus_interactions: "FocusInteractionService | None" = None
+        # 用户授权后的独立遥测服务；Worker/SinkHandler 只读取此实例
+        self.telemetry_service: "TelemetryService | None" = None
         # 系统级调度状态
         self.pending_scheduled_task_id: str | None = None
         self.native_token: str | None = None

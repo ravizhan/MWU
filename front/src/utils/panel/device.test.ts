@@ -15,9 +15,10 @@ import {
 import type {
   AdbDevice,
   GamepadDevice,
+  LinuxDevice,
+  MacOSDevice,
   PlayCoverDevice,
   Win32Device,
-  WlRootsDevice,
 } from "@/services/api"
 import type { PanelLastConnectedDevice } from "@/types/settingsModel"
 
@@ -56,10 +57,16 @@ const playCoverDevice: PlayCoverDevice = {
   uuid: "uuid-001",
 }
 
-const wlRootsDevice: WlRootsDevice = {
-  type: "WlRoots",
+const macOSDevice: MacOSDevice = {
+  type: "MacOS",
+  window_id: 42,
+  window_name: "MacOS window",
+}
+
+const linuxDevice: LinuxDevice = {
+  type: "Linux",
   name: "Wayland compositor",
-  address: "/run/user/1000/wayland-1",
+  address: '{"kind":"wlr","wlr_socket_path":"/run/user/1000/wayland-1"}',
 }
 
 describe("isAdbDevice", () => {
@@ -133,8 +140,12 @@ describe("getDeviceIdentity", () => {
     expect(getDeviceIdentity(playCoverDevice)).toBe("127.0.0.1:1717")
   })
 
-  it("returns socket path for WlRoots device", () => {
-    expect(getDeviceIdentity(wlRootsDevice)).toBe("/run/user/1000/wayland-1")
+  it("returns CGWindowID for MacOS device", () => {
+    expect(getDeviceIdentity(macOSDevice)).toBe("42")
+  })
+
+  it("returns address for Linux device", () => {
+    expect(getDeviceIdentity(linuxDevice)).toBe(linuxDevice.address)
   })
 })
 
@@ -174,6 +185,24 @@ describe("getStoredDeviceIdentity", () => {
       address: "127.0.0.1:1717",
     } as PanelLastConnectedDevice
     expect(getStoredDeviceIdentity(stored)).toBe("127.0.0.1:1717")
+  })
+
+  it("returns address for MacOS stored device", () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const stored = {
+      type: "MacOS",
+      address: "42",
+    } as PanelLastConnectedDevice
+    expect(getStoredDeviceIdentity(stored)).toBe("42")
+  })
+
+  it("returns address for Linux stored device", () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const stored = {
+      type: "Linux",
+      address: linuxDevice.address,
+    } as PanelLastConnectedDevice
+    expect(getStoredDeviceIdentity(stored)).toBe(linuxDevice.address)
   })
 })
 
@@ -278,8 +307,12 @@ describe("buildDeviceFingerprint", () => {
     expect(buildDeviceFingerprint(device)).toBe("playcover|127.0.0.1:1717|")
   })
 
-  it("builds wlroots|socket-path for WlRoots device", () => {
-    expect(buildDeviceFingerprint(wlRootsDevice)).toBe("wlroots|/run/user/1000/wayland-1")
+  it("builds macos|window-id for MacOS device", () => {
+    expect(buildDeviceFingerprint(macOSDevice)).toBe("macos|42")
+  })
+
+  it("builds linux|address for Linux device", () => {
+    expect(buildDeviceFingerprint(linuxDevice)).toBe(`linux|${linuxDevice.address}`)
   })
 })
 
@@ -344,5 +377,23 @@ describe("getStoredDeviceFingerprint", () => {
       uuid: "uuid-001",
     } as PanelLastConnectedDevice
     expect(getStoredDeviceFingerprint(stored)).toBe("playcover|127.0.0.1:1717|uuid-001")
+  })
+
+  it("builds fingerprint for MacOS stored device", () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const stored = {
+      type: "MacOS",
+      address: "42",
+    } as PanelLastConnectedDevice
+    expect(getStoredDeviceFingerprint(stored)).toBe("macos|42")
+  })
+
+  it("builds fingerprint for Linux stored device", () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const stored = {
+      type: "Linux",
+      address: linuxDevice.address,
+    } as PanelLastConnectedDevice
+    expect(getStoredDeviceFingerprint(stored)).toBe(`linux|${linuxDevice.address}`)
   })
 })

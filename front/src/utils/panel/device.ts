@@ -30,12 +30,20 @@ export function getDeviceIdentity(deviceInfo: ConnectableDevice): string {
   if (isGamepadDevice(deviceInfo)) {
     return `${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
   }
+  if (deviceInfo.type === "MacOS") {
+    return String(deviceInfo.window_id)
+  }
   return deviceInfo.address
 }
 
 /** Stable identity for a persisted last-connected snapshot (same semantics as getDeviceIdentity). */
 export function getStoredDeviceIdentity(stored: PanelLastConnectedDevice): string {
-  if (stored.type === "Adb" || stored.type === "PlayCover" || stored.type === "WlRoots") {
+  if (
+    stored.type === "Adb" ||
+    stored.type === "PlayCover" ||
+    stored.type === "MacOS" ||
+    stored.type === "Linux"
+  ) {
     return stored.address
   }
   if (stored.type === "Win32") {
@@ -78,6 +86,9 @@ export function buildDeviceLabel(deviceInfo: ConnectableDevice): string {
     const address = deviceInfo.class_name?.trim() || String(deviceInfo.hWnd)
     return formatNamedLabel(deviceInfo.window_name, address)
   }
+  if (deviceInfo.type === "MacOS") {
+    return formatNamedLabel(deviceInfo.window_name, String(deviceInfo.window_id))
+  }
   return formatNamedLabel(deviceInfo.name, deviceInfo.address)
 }
 
@@ -91,8 +102,11 @@ export function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
   if (isGamepadDevice(deviceInfo)) {
     return `gamepad|${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
   }
-  if (deviceInfo.type === "WlRoots") {
-    return `wlroots|${deviceInfo.address}`
+  if (deviceInfo.type === "MacOS") {
+    return `macos|${deviceInfo.window_id}`
+  }
+  if (deviceInfo.type === "Linux") {
+    return `linux|${deviceInfo.address}`
   }
   return `playcover|${deviceInfo.address}|${deviceInfo.uuid || ""}`
 }
@@ -116,8 +130,11 @@ export function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): st
   if (normalizedType === "gamepad") {
     return `gamepad|${stored.hWnd}|${stored.gamepad_type}`
   }
-  if (normalizedType === "wlroots") {
-    return `wlroots|${stored.address}`
+  if (normalizedType === "macos") {
+    return `macos|${stored.address}`
+  }
+  if (normalizedType === "linux") {
+    return `linux|${stored.address}`
   }
   return `playcover|${stored.address}|${stored.uuid}`
 }

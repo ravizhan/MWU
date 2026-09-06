@@ -36,14 +36,20 @@ export function useSchedulerTaskSave(
   const loading = ref(false)
 
   async function handleSave() {
+    const executionPayload = configStore.buildExecutionPayload(
+      formData.value.task_list,
+      formData.value.task_options,
+    )
     const taskPayload = {
       ...formData.value,
       wakeup_enabled:
         formData.value.trigger_config.type === "cron" && isCronNativeEligible.value
           ? wakeupEnabled.value
           : false,
-      ...configStore.buildExecutionPayload(formData.value.task_list, formData.value.task_options),
+      ...executionPayload,
+      task_list: [...new Set(formData.value.task_list)],
       preTasks: formData.value.preTasks ?? [],
+      task_identity: "name",
     }
 
     const parseResult = schedulerTaskFormSchema.safeParse(taskPayload)

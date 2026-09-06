@@ -91,9 +91,40 @@ describe("resolveInterfaceText", () => {
   })
 
   it("returns fallback for $ prefixed translation tokens", () => {
-    // $key is a translation/i18n token; the current impl does not resolve
-    // translations — returns fallback. Full i18n resolution is planned.
     expect(resolveInterfaceText(null, "en", "$dynamic", "fallback")).toBe("fallback")
+  })
+
+  it("resolves $key via nested translation path", () => {
+    const model = {
+      translations: {
+        "zh-CN": { docs: { main: "主文档" } },
+      },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    } as Partial<InterfaceModel>
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    expect(resolveInterfaceText(model as InterfaceModel, "zh-CN", "$docs.main")).toBe("主文档")
+  })
+
+  it("resolves $key via flat single key", () => {
+    const model = {
+      translations: {
+        "en-US": { "task.main.title": "Main Task" },
+      },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    } as Partial<InterfaceModel>
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    expect(resolveInterfaceText(model as InterfaceModel, "en-US", "$task.main.title")).toBe(
+      "Main Task",
+    )
+  })
+
+  it("falls back when translation key is missing in all locales", () => {
+    const model = {
+      translations: { "zh-CN": { other: "其他" } },
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    } as Partial<InterfaceModel>
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    expect(resolveInterfaceText(model as InterfaceModel, "zh-CN", "$missing", "fb")).toBe("fb")
   })
 })
 
@@ -135,101 +166,97 @@ describe("resolveInterfaceDocumentContent", () => {
   it("returns empty string for empty value", async () => {
     const result = await resolveInterfaceDocumentContent(mockModel, "en", "")
     expect(result).toBe("")
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it("returns external URL content as-is (not fetched)", async () => {
+  it("posts to the document API with source and locale", async () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ status: "success", content: "# Hello" }),
+    } as Response)
+
+    const result = await resolveInterfaceDocumentContent(mockModel, "zh-CN", "readme.md")
+    expect(result).toBe("# Hello")
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/interface/document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "readme.md", locale: "zh-CN" }),
+    })
+  })
+
+  it("returns resolved value when API responds 404 (unknown source)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      { ok: false, status: 404 } as Response,
+    )
+
     const result = await resolveInterfaceDocumentContent(
       mockModel,
       "en",
       "https://example.com/doc.md",
     )
     expect(result).toBe("https://example.com/doc.md")
-    expect(globalThis.fetch).not.toHaveBeenCalled()
+    // 404 响应体不解析，直接回退原值
   })
 
-  it("fetches and returns text for text file paths", async () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  it("returns resolved value when API returns failed status", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
       ok: true,
-      text: () => Promise.resolve("# Hello\nWorld"),
+      json: () => Promise.resolve({ status: "failed", message: "未知文档来源" }),
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     } as Response)
 
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", "readme.md")
-    expect(result).toBe("# Hello\nWorld")
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/file?path=readme.md")
+    const result = await resolveInterfaceDocumentContent(mockModel, "en", "script.py")
+    expect(result).toBe("script.py")
   })
 
-  it("returns the path itself when fetch fails, proving fetch was called", async () => {
+  it("returns original value when network fails", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("Network error"))
 
     const result = await resolveInterfaceDocumentContent(mockModel, "en", "doc.txt")
     expect(result).toBe("doc.txt")
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/file?path=doc.txt")
   })
 
-  it("returns the path itself when response is not ok, proving fetch was called", async () => {
+  it("resolves $translation keys before posting", async () => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: false,
-      text: () => Promise.resolve(""),
-    } as Response)
-
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", "broken.md")
-    expect(result).toBe("broken.md")
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/file?path=broken.md")
-  })
-
-  it("returns value as-is for non-text file extensions", async () => {
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", "script.py")
-    expect(result).toBe("script.py")
-    expect(globalThis.fetch).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    { ext: ".md", file: "doc.md" },
-    { ext: ".markdown", file: "doc.markdown" },
-    { ext: ".txt", file: "notes.txt" },
-    { ext: ".html", file: "page.html" },
-    { ext: ".htm", file: "page.htm" },
-  ])("fetches text files with $ext extension", async ({ file }) => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const translatedModel = {
+      translations: {
+        "zh-CN": { docs: { main: "指南" } },
+      },
+    } as Partial<InterfaceModel>
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
       ok: true,
-      text: () => Promise.resolve("content"),
+      json: () => Promise.resolve({ status: "success", content: "内容" }),
     } as Response)
 
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", file)
-    expect(result).toBe("content")
-  })
-
-  it("returns original value and does NOT fetch for invalid ../ paths", async () => {
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", "../secret.md")
-    // ../secret.md fails normalizeRootRelativePath, so buildResourceUrl returns
-    // undefined, and the function returns the resolvedValue without fetching
-    expect(result).toBe("../secret.md")
-    expect(globalThis.fetch).not.toHaveBeenCalled()
+    const result = await resolveInterfaceDocumentContent(
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      translatedModel as InterfaceModel,
+      "zh-CN",
+      "$docs.main",
+    )
+    expect(result).toBe("内容")
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/interface/document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "指南", locale: "zh-CN" }),
+    })
   })
 
   it("trims whitespace before checking", async () => {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
       ok: true,
-      text: () => Promise.resolve("trimmed content"),
+      json: () => Promise.resolve({ status: "success", content: "trimmed content" }),
     } as Response)
 
     const result = await resolveInterfaceDocumentContent(mockModel, "en", "  readme.md  ")
     expect(result).toBe("trimmed content")
-  })
-
-  it("handles resource/ paths correctly", async () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      text: () => Promise.resolve("resource content"),
-    } as Response)
-
-    const result = await resolveInterfaceDocumentContent(mockModel, "en", "resource/guide.md")
-    expect(result).toBe("resource content")
-    expect(globalThis.fetch).toHaveBeenCalledWith("/resource/guide.md")
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/interface/document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "readme.md", locale: "en" }),
+    })
   })
 })

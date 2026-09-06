@@ -61,6 +61,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     deviceStatePollTimer: number | null
     initialized: boolean
     startConflict: StartConflict | null
+    showElevationPrompt: boolean
     _fetchDevicesRequestId: number
     _fetchResourcesRequestId: number
   } => ({
@@ -78,6 +79,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     deviceStatePollTimer: null,
     initialized: false,
     startConflict: null,
+    showElevationPrompt: false,
     _fetchDevicesRequestId: 0,
     _fetchResourcesRequestId: 0,
   }),
@@ -531,6 +533,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       if (!currentDevice) {
         return { success: false, message: t("panel.selectDevice") }
       }
+      // 新契约：/api/device 平面请求携带必需 resource_name（准备并连接）
+      if (!this.resource) {
+        return { success: false, message: t("panel.selectResource") }
+      }
 
       const indexStore = useIndexStore()
       const settingsStore = useSettingsStore()
@@ -538,6 +544,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const result = await postDevices({
         controller_name: selectedCapability.name,
         device: currentDevice,
+        resource_name: this.resource,
       })
 
       indexStore.setConnected(result.success)
@@ -619,30 +626,35 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const interfaceStore = useInterfaceStore()
       const configStore = useTaskConfigStore()
 
-      await this.syncDeviceRuntimeState()
+      const selectedCapability = this.selectedControllerCapability
+      if (!selectedCapability || this.selectedControllerDisabled) {
+        showGlobalMessage("error", t("panel.selectDeviceType"))
+        return false
+      }
 
-      const alreadyConnected =
-        indexStore.Connected &&
-        this.isDeviceResourceLocked &&
-        this.connectedControllerName === this.selectedControllerName &&
-        this.connectedResourceName === this.resource
-
-      if (!alreadyConnected) {
-        const connectResult = await this.connectDevices()
-        if (!connectResult.success) {
-          showGlobalMessage("error", "设备连接失败: " + connectResult.message)
+      let selectedDevice: ConnectableDevice | null = null
+      if (selectedCapability.type === "PlayCover") {
+        const playCoverResult = this.buildPlayCoverDevice()
+        if ("error" in playCoverResult) {
+          showGlobalMessage("error", "设备连接失败: " + playCoverResult.error)
           return false
         }
-
-        const resourceResult = await this.postResourceSelection()
-        if (!resourceResult.success) {
-          showGlobalMessage("error", "资源设置失败: " + resourceResult.message)
+        selectedDevice = playCoverResult.device
+      } else {
+        selectedDevice = this.selectedDevice
+        if (!selectedDevice) {
+          showGlobalMessage("error", t("panel.selectDevice"))
           return false
         }
       }
 
+      if (!this.resource) {
+        showGlobalMessage("error", t("panel.selectResource"))
+        return false
+      }
+
       const isTaskCompatibleInCurrentContext = (taskId: string) =>
-        interfaceStore.isTaskCompatibleByEntry(taskId, this.selectedControllerName, this.resource)
+        interfaceStore.isTaskCompatibleByName(taskId, selectedCapability.name, this.resource)
 
       const selectedTaskIds = configStore.selectedTaskIds
       const allCompatibleTaskIds = configStore.taskList
@@ -663,23 +675,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       }
 
       const base = configStore.buildExecutionPayload(compatibleTaskIds)
-      const controllerName = this.selectedControllerName || ""
-      const deviceType = this.selectedControllerCapability?.type || "Adb"
-      let deviceAddress = buildDeviceAddress(this.selectedDevice)
-      if (deviceType === "PlayCover") {
-        const playCoverResult = this.buildPlayCoverDevice()
-        if ("error" in playCoverResult) {
-          showGlobalMessage("error", "设备连接失败: " + playCoverResult.error)
-          return false
-        }
-        if (playCoverResult.device.type !== "PlayCover") {
-          return false
-        }
-        deviceAddress = playCoverResult.device.address
-      }
+      const controllerName = selectedCapability.name
+      const deviceType = selectedCapability.type
+      const deviceAddress = buildDeviceAddress(selectedDevice)
 
       const payload: ManualStartPayload = {
         ...base,
+        task_identity: "name",
         controller_name: controllerName,
         device: {
           controller_name: controllerName,
@@ -700,6 +702,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         // No toast here — StartConflictDialog renders from startConflict
         this.startConflict = result.conflict ?? null
         return false
+      }
+      if (result.error) {
+        showGlobalMessage("error", result.error)
+        // 管理员权限不足：展示“以管理员权限重启”确认入口
+        if (result.error.includes("permission_required")) {
+          this.showElevationPrompt = true
+        }
       }
       // 非冲突失败同样清掉过期冲突：否则 stopActiveAndRestart 的重试条件
       // 会拿着旧的 busy_manual 继续空转，对话框也停留在已失效的冲突状态。
@@ -913,6 +922,9 @@ function buildDeviceAddress(device: ConnectableDevice | null): string {
   if (isGamepadDevice(device)) {
     return `${device.hWnd}|${device.gamepad_type}`
   }
+  if (device.type === "MacOS") {
+    return String(device.window_id)
+  }
   return device.address
 }
 
@@ -962,9 +974,23 @@ function buildStoredLastConnectedDevice(
       uuid: "",
     }
   }
-  if (deviceInfo.type === "WlRoots") {
+  if (deviceInfo.type === "MacOS") {
     return {
-      type: "WlRoots",
+      type: "MacOS",
+      controller_name: controllerName,
+      fingerprint: buildDeviceFingerprint(deviceInfo),
+      adb_path: "",
+      address: String(deviceInfo.window_id),
+      class_name: "",
+      window_name: deviceInfo.window_name,
+      hWnd: 0,
+      gamepad_type: 0,
+      uuid: "",
+    }
+  }
+  if (deviceInfo.type === "Linux") {
+    return {
+      type: "Linux",
       controller_name: controllerName,
       fingerprint: buildDeviceFingerprint(deviceInfo),
       adb_path: "",

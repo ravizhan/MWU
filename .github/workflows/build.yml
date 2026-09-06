@@ -144,15 +144,15 @@ jobs:
 
       - name: Build Executable
         if: ${{ matrix.os == 'windows-11-arm' || matrix.os == 'windows-2025' }}
-        run: uv run python -m nuitka --standalone --lto=yes --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --include-package=sentry_sdk -o MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'linux' }}
-        run: uv run python -m nuitka --standalone --lto=yes --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --include-package=sentry_sdk -o MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'macos' }}
-        run: uv run python -m nuitka --standalone --lto=yes --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --include-package=sentry_sdk -o MWU main.py
 
       - name: Build Updater
         if: ${{ matrix.platform != 'win' }}
@@ -191,6 +191,7 @@ jobs:
         run: |
           cp -r "page" "build/main.dist/page"
           git clone "https://github.com/MaaXYZ/MaaAgentBinary" "build/main.dist/MaaAgentBinary"
+          git -C "build/main.dist/MaaAgentBinary" checkout 173d43c4b5518064b27720b0cf08c781f291eba9
 
       - name: Create Version file
         run: echo "${{ github.ref_name }}" >> build/main.dist/version

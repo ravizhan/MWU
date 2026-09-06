@@ -45,6 +45,7 @@ describe("schedulerTaskFormSchema", () => {
   const validPayload = {
     name: "test task",
     trigger_config: { type: "cron" as const, cron: "0 9 * * *" },
+    task_identity: "name",
     task_list: ["task1"],
   }
 
@@ -71,5 +72,21 @@ describe("schedulerTaskFormSchema", () => {
     expect(schedulerTaskFormSchema.safeParse({ ...validPayload, task_list: [] }).success).toBe(
       false,
     )
+  })
+
+  it("rejects a missing task identity marker", () => {
+    const payloadWithoutIdentity = {
+      name: validPayload.name,
+      trigger_config: validPayload.trigger_config,
+      task_list: validPayload.task_list,
+    }
+
+    expect(schedulerTaskFormSchema.safeParse(payloadWithoutIdentity).success).toBe(false)
+  })
+
+  it("rejects the legacy entry task identity marker", () => {
+    expect(
+      schedulerTaskFormSchema.safeParse({ ...validPayload, task_identity: "entry" }).success,
+    ).toBe(false)
   })
 })

@@ -82,7 +82,9 @@
       }
     },
     "taskSettings": {
-      "empty": "暂无可配置项"
+      "empty": "暂无可配置项",
+      "uncovered": "其他选项",
+      "uncoveredDescription": "未被设置分区覆盖的全局/资源/控制器选项"
     },
     "runtime": {
       "title": "运行设置",
@@ -359,6 +361,49 @@
         "timeout": "超时时间必须在 1-3600 秒之间",
         "commandRequired": "请输入命令"
       }
+    }
+  },
+  "tasks": {
+    "list": "任务列表",
+    "viewMode": {
+      "group": "分组",
+      "order": "执行顺序",
+      "ungrouped": "未分组"
+    },
+    "configError": {
+      "title": "任务配置无法加载",
+      "hint": "。可在任务列表页点击“重置配置”重建。"
+    }
+  },
+  "privilege": {
+    "title": "需要管理员权限",
+    "description": "当前控制器声明需要管理员权限才能运行。是否以管理员权限重启程序？",
+    "restart": "以管理员权限重启",
+    "lanNote": "重启后程序将继续监听 0.0.0.0:5566，局域网内设备可访问。"
+  },
+  "telemetry": {
+    "consent": {
+      "title": "匿名遥测授权",
+      "purpose": "是否允许将运行期的匿名错误与性能数据发送给该项目作者，用于改进任务稳定性？数据不包含你的账号、聊天记录或个人文件。",
+      "recipient": "接收方",
+      "scope": "仅上报：异常类型与净化后的调用栈、任务运行结果与耗时。不包含局部变量、配置值、命令行或环境变量。",
+      "attachments": "失败时附带诊断截图",
+      "attachmentsNote": "默认关闭。开启后任务失败时会附带一张截图（可能包含账号或聊天信息）及最近诊断日志。",
+      "withdraw": "可随时在 设置 → 遥测 中关闭。",
+      "grant": "允许",
+      "deny": "拒绝"
+    },
+    "settings": {
+      "title": "遥测",
+      "consent": "匿名遥测",
+      "active": "已启用",
+      "inactive": "已关闭",
+      "attachments": "失败附件",
+      "attachmentsNote": "截图可能包含账号或聊天信息，与主开关分别授权",
+      "recipient": "接收方",
+      "notConfigured": "当前项目未配置遥测（无 DSN），不发送任何数据。",
+      "notBuildAllowed": "源码运行或调试构建下遥测已强制禁用。",
+      "loading": "加载中…"
     }
   }
 }

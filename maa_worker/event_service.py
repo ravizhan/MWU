@@ -1,5 +1,5 @@
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import plyer
 
@@ -56,6 +56,7 @@ class EventService:
         notify: list[str] | None = None,
         title: str | None = None,
         display: bool = True,
+        details: dict[str, Any] | None = None,
     ):
         notify = notify or []
         realtime_event = RealtimeEvent(
@@ -66,6 +67,7 @@ class EventService:
             notify=notify,
             title=title,
             display=display,
+            details=details,
         )
 
         self._publish_event(realtime_event)

@@ -16,6 +16,7 @@ import * as api from "@/services/api"
 import type { ScheduledTask, TaskExecution } from "@/types/schedulerModel"
 
 const mockTask = (id: string, enabled: boolean): ScheduledTask => ({
+  task_identity: "name",
   id,
   name: `task-${id}`,
   enabled,
@@ -91,6 +92,7 @@ describe("useSchedulerStore", () => {
       })
       const store = useSchedulerStore()
       const result = await store.createTask({
+        task_identity: "name",
         name: "new",
         enabled: true,
         wakeup_enabled: false,
@@ -110,6 +112,7 @@ describe("useSchedulerStore", () => {
       })
       const store = useSchedulerStore()
       const result = await store.createTask({
+        task_identity: "name",
         name: "new",
         enabled: true,
         wakeup_enabled: false,
@@ -133,7 +136,7 @@ describe("useSchedulerStore", () => {
         status: "success",
         task: updated,
       })
-      const result = await store.updateTask("1", { name: "updated" })
+      const result = await store.updateTask("1", { task_identity: "name", name: "updated" })
       expect(result).toBe(true)
       expect(store.tasks[0].name).toBe("updated")
     })
@@ -145,7 +148,7 @@ describe("useSchedulerStore", () => {
       })
       const store = useSchedulerStore()
       store.tasks = [mockTask("1", true)]
-      const result = await store.updateTask("1", { name: "updated" })
+      const result = await store.updateTask("1", { task_identity: "name", name: "updated" })
       expect(result).toBe(false)
       expect(store.error).toBe("update failed")
     })

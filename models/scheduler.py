@@ -6,7 +6,10 @@ from typing import Annotated, Any, Literal
 from pydantic import AfterValidator, BaseModel, BeforeValidator, Field, model_validator
 from pydantic_extra_types.cron import CronStr
 
-from models.device_address import canonicalize_runtime_device_address
+from models.device_address import (
+    DeviceType,
+    canonicalize_runtime_device_address,
+)
 
 TaskOptionValue = str | list[str] | dict[str, str]
 TaskOptionsByTask = dict[str, dict[str, TaskOptionValue]]
@@ -132,9 +135,7 @@ class ScheduledTaskDeviceConfig(BaseModel):
     """定时任务设备配置"""
 
     controller_name: str = Field(..., description="控制器名称")
-    device_type: Literal["Adb", "Win32", "Gamepad", "PlayCover", "WlRoots"] = Field(
-        ..., description="设备类型"
-    )
+    device_type: DeviceType = Field(..., description="设备类型")
     device_address: str = Field(..., description="设备地址")
 
     @model_validator(mode="after")
@@ -214,6 +215,9 @@ TriggerConfig = Annotated[
 class TaskExecutionPayload(BaseModel):
     """任务执行载荷"""
 
+    task_identity: Literal["name"] = Field(
+        ..., description="任务身份标记；PI v2.9 起固定为 name"
+    )
     task_list: list[str] = Field(default_factory=list, description="要执行的任务列表")
     task_options: TaskOptionsByTask = Field(
         default_factory=dict, description="任务选项"
@@ -280,6 +284,9 @@ class ScheduledTaskCreate(TaskExecutionPayload):
 class ScheduledTaskUpdate(BaseModel):
     """更新定时任务请求"""
 
+    task_identity: Literal["name"] | None = Field(
+        None, description="任务身份标记；给出 task_list 时必须为 name"
+    )
     name: TaskName | None = None
     description: str | None = Field(None, max_length=500)
     enabled: bool | None = None

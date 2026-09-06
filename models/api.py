@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from models.device_address import (
     DeviceType,
+    LinuxDeviceAddress,
     canonicalize_custom_device_address,
     canonicalize_ipv4_port,
 )
@@ -11,6 +12,7 @@ from models.device_address import (
 RealtimeEventName = Literal[
     "log",
     "focus.display",
+    "focus.interaction",
     "task.started",
     "task.completed",
     "task.failed",
@@ -39,16 +41,19 @@ class DeviceModel(BaseModel):
                 raise ValueError("Adb address must not be empty")
         elif self.type == "PlayCover":
             self.address = canonicalize_ipv4_port(self.address)
-        elif self.type == "WlRoots":
-            self.address = self.address.strip()
-            if not self.address:
-                raise ValueError("WlRoots socket path must not be empty")
+        elif self.type == "MacOS":
+            if not self.address.strip().isdigit() or int(self.address) <= 0:
+                raise ValueError("MacOS address must be a positive integer CGWindowID")
+            self.address = str(int(self.address))
+        elif self.type == "Linux":
+            parsed = LinuxDeviceAddress.from_compact_json(self.address)
+            self.address = parsed.to_compact_json()
         elif self.type == "Win32":
             if self.hWnd <= 0:
                 raise ValueError("Win32 hWnd must be positive")
         elif self.type == "Gamepad":
-            if self.hWnd <= 0:
-                raise ValueError("Gamepad hWnd must be positive")
+            if self.hWnd < 0:
+                raise ValueError("Gamepad hWnd must not be negative")
             if self.gamepad_type not in (0, 1):
                 raise ValueError("Gamepad type must be 0 or 1")
         return self

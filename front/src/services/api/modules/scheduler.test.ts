@@ -49,6 +49,7 @@ describe("scheduler API module", () => {
         }),
       )
       const task: ScheduledTaskCreate = {
+        task_identity: "name",
         name: "new-task",
         enabled: true,
         wakeup_enabled: false,
@@ -74,7 +75,7 @@ describe("scheduler API module", () => {
           return HttpResponse.json({ status: "success", task: { id: "1", name: "updated" } })
         }),
       )
-      const update: ScheduledTaskUpdate = { name: "updated" }
+      const update: ScheduledTaskUpdate = { task_identity: "name", name: "updated" }
       const response = await updateSchedulerTask("1", update)
       expect(response.status).toBe("success")
       expect(capturedBody).toEqual(update)

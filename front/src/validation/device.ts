@@ -59,6 +59,155 @@ const gamepadAddressSchema = z
     return `${hwndResult.data}|${typeResult.data}`
   })
 
+const linuxAddressShape = {
+  kind: z.enum(["wlr", "gamescope", "portal"]),
+  display_no: z.number().int().nonnegative().optional(),
+  wlr_socket_path: z
+    .string()
+    .transform((value) => value.trim())
+    .optional(),
+  uinput_path: z
+    .string()
+    .transform((value) => value.trim())
+    .optional(),
+  uinput_screen_width: z.number().int().positive().optional(),
+  uinput_screen_height: z.number().int().positive().optional(),
+  eis_socket_path: z
+    .string()
+    .transform((value) => value.trim())
+    .optional(),
+}
+
+const linuxAddressObjectSchema = z
+  .object(linuxAddressShape)
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.kind === "wlr" && !value.wlr_socket_path) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["wlr_socket_path"],
+        message: "wlr mode requires a non-empty wlr_socket_path",
+      })
+    }
+    if (value.kind === "gamescope" && value.display_no === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["display_no"],
+        message: "gamescope mode requires a non-negative display_no",
+      })
+    }
+
+    const hasUInputFields =
+      value.uinput_path !== undefined ||
+      value.uinput_screen_width !== undefined ||
+      value.uinput_screen_height !== undefined
+    if (
+      hasUInputFields &&
+      (value.uinput_screen_width === undefined || value.uinput_screen_height === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["uinput_screen_width"],
+        message: "UInput requires positive uinput_screen_width and uinput_screen_height",
+      })
+    }
+  })
+  .transform((value) => {
+    if (
+      !value.uinput_path &&
+      (value.uinput_screen_width !== undefined || value.uinput_screen_height !== undefined)
+    ) {
+      return { ...value, uinput_path: "/dev/uinput" }
+    }
+    return value
+  })
+
+const linuxRuntimeAddressObjectSchema = z
+  .object(linuxAddressShape)
+  .strict()
+  .transform((value) => {
+    if (
+      !value.uinput_path &&
+      (value.uinput_screen_width !== undefined || value.uinput_screen_height !== undefined)
+    ) {
+      return { ...value, uinput_path: "/dev/uinput" }
+    }
+    return value
+  })
+
+function decodeJsonAddress(address: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(address) }
+  } catch {
+    return { ok: false }
+  }
+}
+
+function canonicalizeLinuxAddress(value: object): string {
+  const serialize = (field: unknown): string => {
+    const serialized = JSON.stringify(field) ?? "null"
+    return serialized.replace(
+      /[^\u0000-\u007f]/g,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    )
+  }
+  const fields = Object.entries(value)
+    .filter(([, field]) => field !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, field]) => `${serialize(key)}: ${serialize(field)}`)
+  return `{${fields.join(", ")}}`
+}
+
+const linuxCustomAddressSchema = z
+  .string()
+  .trim()
+  .transform((address, ctx) => {
+    const decoded = decodeJsonAddress(address)
+    if (!decoded.ok) {
+      ctx.issues.push({
+        code: "custom",
+        input: address,
+        message: "Linux address must be a JSON object string",
+      })
+      return z.NEVER
+    }
+    const result = linuxAddressObjectSchema.safeParse(decoded.value)
+    if (!result.success) {
+      ctx.issues.push({
+        code: "custom",
+        input: address,
+        message: result.error.issues[0]?.message || "Invalid Linux device address",
+      })
+      return z.NEVER
+    }
+    return canonicalizeLinuxAddress(result.data)
+  })
+
+const linuxRuntimeAddressSchema = z
+  .string()
+  .trim()
+  .transform((address, ctx) => {
+    const decoded = decodeJsonAddress(address)
+    if (!decoded.ok) {
+      ctx.issues.push({
+        code: "custom",
+        input: address,
+        message: "Linux address must be a JSON object string",
+      })
+      return z.NEVER
+    }
+    const result = linuxRuntimeAddressObjectSchema.safeParse(decoded.value)
+    if (!result.success) {
+      ctx.issues.push({
+        code: "custom",
+        input: address,
+        message: result.error.issues[0]?.message || "Invalid Linux device address",
+      })
+      return z.NEVER
+    }
+    return canonicalizeLinuxAddress(result.data)
+  })
+
 /** Custom (user-entered) device address: strict validation. */
 export const customDeviceAddressSchema = z.discriminatedUnion("type", [
   z.object({
@@ -78,8 +227,12 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
     address: gamepadAddressSchema,
   }),
   z.object({
-    type: z.literal("WlRoots"),
-    address: z.string().trim().min(1, "WlRoots socket path must not be empty"),
+    type: z.literal("MacOS"),
+    address: positiveIntegerSchema,
+  }),
+  z.object({
+    type: z.literal("Linux"),
+    address: linuxCustomAddressSchema,
   }),
 ])
 
@@ -102,8 +255,12 @@ export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
     address: gamepadAddressSchema,
   }),
   z.object({
-    type: z.literal("WlRoots"),
-    address: z.string().trim().min(1, "WlRoots socket path must not be empty"),
+    type: z.literal("MacOS"),
+    address: positiveIntegerSchema,
+  }),
+  z.object({
+    type: z.literal("Linux"),
+    address: linuxRuntimeAddressSchema,
   }),
 ])
 

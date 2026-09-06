@@ -10,13 +10,13 @@ from models.interface import (
     GamepadController,
     HotkeyCase,
     InterfaceModel,
+    LinuxControllerConfig,
     MacOSController,
     Option,
     OptionCase,
     Resource,
     SettingSection,
     Win32Controller,
-    WlRootsController,
     _pipeline_override_contains_attach_option,
     validate_regex,
 )
@@ -125,13 +125,10 @@ class TestMacOSController:
             MacOSController.model_validate({"input": "Invalid"})
 
 
-class TestWlRootsController:
-    def test_win32_keycode_mode(self):
-        config = WlRootsController(use_win32_vk_code=True)
-        controller = Controller(name="wayland", type="WlRoots", wlroots=config)
-
-        assert controller.wlroots is not None
-        assert controller.wlroots.use_win32_vk_code is True
+class TestLinuxControllerConfig:
+    def test_invalid_screencap_rejected(self):
+        with pytest.raises(ValidationError):
+            LinuxControllerConfig(screencap="ExtImage")
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +173,7 @@ class TestGamepadController:
 
 class TestController:
     @pytest.mark.parametrize(
-        "ctrl_type", ["Adb", "Win32", "MacOS", "PlayCover", "Gamepad"]
+        "ctrl_type", ["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
     )
     def test_valid_types(self, ctrl_type):
         ctrl = Controller(name="c", type=ctrl_type)
@@ -336,10 +333,10 @@ class TestInterfaceModel:
         model = InterfaceModel(**_base_iface_data)
         assert model.label == "Test"
 
-    def test_title_set_when_label_and_version_present(self, _base_iface_data):
+    def test_title_set_when_name_and_version_present(self, _base_iface_data):
         data = {**_base_iface_data, "label": "My Game", "version": "1.0.0"}
         model = InterfaceModel.model_validate(data)
-        assert model.title == "My Game 1.0.0"
+        assert model.title == "Test 1.0.0"
 
     def test_import_alias(self, _base_iface_data):
         model = InterfaceModel(**_base_iface_data, **{"import": ["tasks.json5"]})
@@ -433,3 +430,55 @@ class TestInterfaceModel:
 
         with pytest.raises(ValidationError, match="不支持 Meta/Command/Win"):
             InterfaceModel.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# telemetry 配置（PI v2.9.2）
+# ---------------------------------------------------------------------------
+
+
+class TestTelemetryConfig:
+    def _base(self) -> dict:
+        return {
+            "interface_version": 2,
+            "name": "Test",
+            "controller": [{"name": "adb", "type": "Adb"}],
+            "resource": [{"name": "main", "path": ["resource"]}],
+        }
+
+    def test_blank_dsn_rejected(self):
+        from models.interface import InterfaceModel
+
+        data = self._base() | {"telemetry": {"sentry": {"dsn": "   "}}}
+        with pytest.raises(Exception):
+            InterfaceModel.model_validate(data)
+
+    def test_sample_rate_out_of_range_rejected(self):
+        from models.interface import InterfaceModel
+
+        for bad in (1.5, -0.1):
+            data = self._base() | {
+                "telemetry": {
+                    "sentry": {
+                        "dsn": "https://key@example.com/42",
+                        "traces_sample_rate": bad,
+                    }
+                }
+            }
+            with pytest.raises(Exception):
+                InterfaceModel.model_validate(data)
+
+    def test_sample_rate_nan_infinite_rejected(self):
+        from models.interface import InterfaceModel
+
+        for bad in (float("nan"), float("inf")):
+            data = self._base() | {
+                "telemetry": {
+                    "sentry": {
+                        "dsn": "https://key@example.com/42",
+                        "failure_attachments_sample_rate": bad,
+                    }
+                }
+            }
+            with pytest.raises(Exception):
+                InterfaceModel.model_validate(data)
