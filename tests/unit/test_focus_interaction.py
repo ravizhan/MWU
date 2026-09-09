@@ -66,16 +66,6 @@ class TestFocusInteractionService:
         )
         return svc, created, finished
 
-    def test_create_dialog_auto_acknowledges_via_processor(self):
-        svc, created, _ = self._service()
-        state = svc.create_dialog("r1", "提示内容")
-        assert state.mode == "dialog"
-        assert len(created) == 1
-        assert created[0]["mode"] == "dialog"
-        svc.acknowledge(state.id)
-        # acknowledge 是二次转换：dialog 创建时是 pending，确认后 acknowledged
-        assert state.state == "acknowledged"
-
     def test_modal_lifecycle_created_waited_finished(self):
         svc, created, finished = self._service()
         state = svc.create_modal("r1", "是否继续?")

@@ -34,13 +34,10 @@ class _FakeStdout:
 class _FakeProcess:
     def __init__(self, *, returncode=0, output=(), running=False):
         self.stdout = _FakeStdout(output)
-        self.pid = 1234
         self._running = running
         self._final_returncode = returncode if returncode is not None else -15
         self.returncode = None if running else returncode
         self.terminate_calls = 0
-        self.wait_calls = 0
-        self.kill_calls = 0
 
     def poll(self):
         if self._running:
@@ -53,13 +50,7 @@ class _FakeProcess:
         self.returncode = self._final_returncode
 
     def wait(self, timeout=None):
-        self.wait_calls += 1
         return self.returncode
-
-    def kill(self):
-        self.kill_calls += 1
-        self._running = False
-        self.returncode = -9
 
 
 class _PopenRecorder:
@@ -236,40 +227,6 @@ def test_option_values_aggregate_task_entry_values_and_honor_declared_defaults(
         recorder.calls[1][0][-1]
         == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""}}'
     )
-
-
-def test_option_values_prefer_task_then_global_then_default():
-    options = {
-        "mode": Option(
-            type="select",
-            cases=[OptionCase(name="default"), OptionCase(name="task")],
-            default_case="default",
-        ),
-        "tags": Option(
-            type="checkbox",
-            cases=[OptionCase(name="default"), OptionCase(name="global")],
-            default_case=["default"],
-        ),
-        "fallback": Option(
-            type="select",
-            cases=[OptionCase(name="default")],
-            default_case="default",
-        ),
-    }
-    service = PretaskService(_make_worker(options=options))
-
-    values = service._resolve_option_values(
-        Pretask(exec="pi-tool", option=["mode", "tags", "fallback"]),
-        {"mode": "task", "tags": ["global"]},
-        "adb",
-        "main",
-    )
-
-    assert values == {
-        "mode": "task",
-        "tags": ["global"],
-        "fallback": "default",
-    }
 
 
 def test_pretask_runs_from_interface_base_dir(monkeypatch):

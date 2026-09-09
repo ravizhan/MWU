@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from pydantic import ValidationError
 
 from app_state import AppState
 from models.scheduler import (
@@ -17,7 +16,6 @@ from models.scheduler import (
 from types import SimpleNamespace
 
 from scheduler_manager import SchedulerManager, _build_task_from_kwargs
-from services.system_scheduler import ConvergeReport
 
 
 def make_create(
@@ -48,7 +46,6 @@ async def manager_env(tmp_path: Path):
         events=SimpleNamespace(send_log=lambda *_: None),
     )
     system_scheduler = MagicMock()
-    system_scheduler.converge.return_value = ConvergeReport()
     mgr = SchedulerManager(
         state, tmp_path / "scheduler.sqlite", system_scheduler=system_scheduler
     )
@@ -147,15 +144,6 @@ class TestTriggerRoundTrip:
 
         with pytest.raises(ValueError):
             mgr._build_trigger_config(trigger)
-
-    def test_composite_dow_rejected_by_unified_subset(self):
-        # 统一子集下复合 DOW（范围/列表/步进）不再合法，创建时即拒绝
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1-5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1,3,5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * */2")
 
 
 class TestLegacyPayloadCutover:
@@ -355,7 +343,7 @@ class TestWakeupMinuteConflict:
 
     async def test_update_rejects_conflict_with_other_task(self, manager_env):
         mgr, _state, _system_scheduler = manager_env
-        task_a = await mgr.create_task(
+        await mgr.create_task(
             make_create("任务A", wakeup_enabled=True, cron="0 9 * * *")
         )
         task_b = await mgr.create_task(

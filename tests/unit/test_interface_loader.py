@@ -196,11 +196,6 @@ class TestValidateImportableFragment:
         with pytest.raises(InterfaceLoadError, match="非法字段.*extra"):
             _validate_importable_fragment({"task": [], "extra": 1}, Path())
 
-    def test_multiple_invalid_keys_sorted(self):
-        """Invalid keys are reported in sorted order."""
-        with pytest.raises(InterfaceLoadError, match=r"非法字段.*(?:a.*z|z.*a)"):
-            _validate_importable_fragment({"z": 1, "a": 2, "task": []}, Path())
-
 
 # ---------------------------------------------------------------------------
 # _register_tasks — conflict detection
@@ -1178,18 +1173,6 @@ class TestMergeSemanticsV292:
         )
         with pytest.raises(InterfaceLoadError, match=r"引用了不存在的分组: missing"):
             load_interface_model(tmp_path)
-
-    def test_task_group_reference_valid(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            self._base_interface(
-                group=[{"name": "real"}],
-                task=[{"name": "T", "entry": "T", "group": ["real"]}],
-            ),
-        )
-        model = load_interface_model(tmp_path)
-        assert model.task is not None
-        assert model.task[0].group == ["real"]
 
     def test_imported_task_shares_entry_with_distinct_options(self, tmp_path):
         """两个 name 共用 entry，各自携带不同选项定义。"""

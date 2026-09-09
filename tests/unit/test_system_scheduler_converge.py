@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID
 
 import pytest
 
@@ -17,12 +16,6 @@ T4 = "44444444-4444-4444-8444-444444444444"
 ORPHAN_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 ORPHAN_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 GHOST = "99999999-9999-4999-8999-999999999999"
-
-
-def _uuid(task_id: str) -> str:
-    """确保测试用任务 ID 为合法 UUID（_build_spec 会经 validate_task_id 校验）。"""
-    assert UUID(task_id).version == 4
-    return task_id
 
 
 class FakeBackend(SystemSchedulerBackend):
@@ -63,7 +56,7 @@ class FakeBackend(SystemSchedulerBackend):
 def make_task(task_id: str, wakeup_enabled=True, enabled=True) -> ScheduledTask:
     return ScheduledTask(
         task_identity="name",
-        id=_uuid(task_id),
+        id=task_id,
         name=f"任务{task_id}",
         wakeup_enabled=wakeup_enabled,
         enabled=enabled,

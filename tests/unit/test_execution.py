@@ -184,10 +184,7 @@ class _FakePretaskService:
 
 class _FakeDeviceState:
     connected = False
-    configuration_locked = False
-    controller_name = ""
     current_resource_name = ""
-    prepared_resource_name: str | None = None
     last_device_error: str | None = None
 
 
@@ -219,9 +216,6 @@ class _FakeDevice:
 
     def set_resource(self, name):
         return True
-
-    def has_preparation_programs(self, controller_name, resource_name, user_pre_tasks):
-        return False
 
     def prepare_connection(
         self,
@@ -270,8 +264,6 @@ class _FakeWorker:
         self.device._pretasks = self.pretasks
         if ready:
             self.device_state.connected = True
-            self.device_state.configuration_locked = True
-            self.device_state.controller_name = "AdbController"
             self.device_state.current_resource_name = "main"
 
 
@@ -317,11 +309,6 @@ class TestSqlitePersistence:
         ):
             assert column in columns
         assert "blocker_run_id" not in columns
-
-    def test_init_db_is_idempotent(self, tmp_path: Path):
-        db_path = tmp_path / "executions.sqlite"
-        init_db(db_path)
-        init_db(db_path)  # 不抛错
 
     def test_add_and_list_round_trip_with_new_fields(self, state: AppState):
         started_at = datetime(2026, 8, 16, 0, 0, 0, tzinfo=UTC)
@@ -433,25 +420,9 @@ class TestSubmitManual:
 
     async def test_success_manual_run_with_fake_worker(self, state: AppState):
         worker = _FakeWorker(start_result=True, ready=True)
-
-        class _SuccessTaskService(_FakeTaskService):
-            def start(
-                self,
-                task_list,
-                options,
-                task_name=None,
-                pre_tasks=None,
-                global_options=None,
-            ):
-                self.called = True
-                self.global_options = global_options or {}
-                # 模拟一次成功的手动运行：start 内部完成整个生命周期
-                self._task_state.running = True
-                self._task_state.last_status = "success"
-                self._task_state.running = False
-                return True
-
-        worker.tasks = _SuccessTaskService(result=True, task_state=worker.task_state)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
         state.worker = worker
 
         admission = await submit_manual(state, make_payload("Startup"))

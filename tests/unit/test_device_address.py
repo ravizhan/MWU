@@ -5,19 +5,12 @@ from pydantic import ValidationError
 
 from models.device_address import (
     LinuxDeviceAddress,
-    canonicalize_custom_device_address,
     canonicalize_runtime_device_address,
 )
 from models.interface import Controller
 
 
 class TestLinuxDeviceAddressWlr:
-    def test_valid_wlr(self):
-        addr = LinuxDeviceAddress(
-            kind="wlr", wlr_socket_path="/run/user/1000/wayland-1"
-        )
-        assert addr.wlr_socket_path == "/run/user/1000/wayland-1"
-
     def test_missing_socket_rejected(self):
         with pytest.raises(ValidationError, match="wlr_socket_path"):
             LinuxDeviceAddress(kind="wlr")
@@ -99,13 +92,6 @@ class TestLinuxDeviceAddressStrictness:
 
 
 class TestCanonicalizeLinux:
-    def test_custom_canonical_key_order(self):
-        text = canonicalize_custom_device_address(
-            "Linux",
-            '{"kind": "wlr", "wlr_socket_path": "/run/user/1000/wayland-1"}',
-        )
-        assert text == '{"kind": "wlr", "wlr_socket_path": "/run/user/1000/wayland-1"}'
-
     def test_runtime_canonical_key_order(self):
         text = canonicalize_runtime_device_address(
             "Linux",

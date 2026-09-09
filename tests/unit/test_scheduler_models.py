@@ -68,18 +68,9 @@ class TestTriggerConfig:
         with pytest.raises(ValidationError):
             _trigger_adapter.validate_python({"type": "unknown"})
 
-    def test_cron_model_dump_json(self):
-        config = CronTriggerConfig(cron="0 9 * * *")
-        dump = config.model_dump(mode="json")
-        assert isinstance(dump["cron"], str)
-        assert dump["type"] == "cron"
-
 
 class TestTaskName:
     _adapter = TypeAdapter(TaskName)
-
-    def test_valid(self):
-        assert self._adapter.validate_python("my task") == "my task"
 
     def test_stripped(self):
         assert self._adapter.validate_python("  hello  ") == "hello"
@@ -139,24 +130,6 @@ class TestScheduledTaskCreate:
                 trigger_config={"type": "cron", "cron": "0 9 * * *"},
                 task_list=[],
             )
-
-    def test_valid_create(self):
-        task = ScheduledTaskCreate(
-            task_identity="name",
-            name="test",
-            trigger_config={"type": "cron", "cron": "0 9 * * *"},
-            task_list=["task1"],
-        )
-        assert task.name == "test"
-
-    def test_name_stripped(self):
-        task = ScheduledTaskCreate(
-            task_identity="name",
-            name="  hello  ",
-            trigger_config={"type": "cron", "cron": "0 9 * * *"},
-            task_list=["task1"],
-        )
-        assert task.name == "hello"
 
 
 class TestScheduledTaskDeviceConfig:

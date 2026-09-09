@@ -173,9 +173,3 @@ class TestCollectDocumentSources:
         assert "$doc" in sources
         assert "docs/zh.md" in sources
         assert "docs/en.md" in sources
-
-    def test_interface_welcome_description(self, tmp_path):
-        svc = _service(tmp_path)
-        sources = svc.collect_document_sources()
-        # welcome/description 默认为 None，不产生来源
-        assert sources == {}

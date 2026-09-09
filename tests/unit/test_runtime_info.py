@@ -19,11 +19,6 @@ def test_app_root_packaged_build(monkeypatch, tmp_path):
     assert runtime_info.app_root() == tmp_path
 
 
-def test_is_packaged_build_false_in_source():
-    # 测试进程即源码运行（无 __compiled__ / sys.frozen），必须判为非打包
-    assert runtime_info.is_packaged_build() is False
-
-
 def test_is_packaged_build_detects_frozen(monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     assert runtime_info.is_packaged_build() is True

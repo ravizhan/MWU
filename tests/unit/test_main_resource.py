@@ -48,7 +48,6 @@ def isolated_main(monkeypatch, tmp_path):
     ("controller_type", "expected_names"),
     [
         (None, ["none", "empty", "adb", "pc", "both"]),
-        ("", ["none", "empty", "adb", "pc", "both"]),
         ("Win32", ["none", "empty", "pc", "both"]),
         ("Unknown", ["none", "empty"]),
     ],

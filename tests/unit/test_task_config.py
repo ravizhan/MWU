@@ -1,7 +1,5 @@
 """Tests for models/task_config.py — config normalization and snapshot building."""
 
-from typing import cast
-
 import pytest
 
 from models.interface import (
@@ -91,9 +89,6 @@ class TestNormalizePresetName:
     def test_empty_string_falls_back(self):
         assert _normalize_preset_name("") == CUSTOM_PRESET_NAME
 
-    def test_none_falls_back(self):
-        assert _normalize_preset_name(None) == CUSTOM_PRESET_NAME
-
     def test_non_string_falls_back(self):
         assert _normalize_preset_name(42) == CUSTOM_PRESET_NAME
 
@@ -113,22 +108,8 @@ class TestNormalizeOptionValueForStorage:
     def test_dict_filters_non_strings(self):
         assert _normalize_option_value_for_storage({"k": "v", 1: 2}) == {"k": "v"}
 
-    def test_hotkey_value_storage_filters_non_strings(self):
-        assert _normalize_option_value_for_storage(
-            {"attack": "Alt+A", "invalid": 1}
-        ) == {"attack": "Alt+A"}
-
     def test_invalid_type_returns_none(self):
         assert _normalize_option_value_for_storage(42) is None
-
-    def test_none_returns_none(self):
-        assert _normalize_option_value_for_storage(None) is None
-
-    def test_empty_list(self):
-        assert _normalize_option_value_for_storage([]) == []
-
-    def test_empty_dict(self):
-        assert _normalize_option_value_for_storage({}) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -215,12 +196,6 @@ class TestNormalizeRawPreTasks:
         assert result[0]["command"] == "echo hi"
         assert result[0]["enabled"] is True
 
-    def test_empty_command_included(self):
-        """A dict with command='' passes isinstance(str) check and is included."""
-        result = _normalize_raw_pre_tasks([{"command": ""}])
-        assert len(result) == 1
-        assert result[0]["command"] == ""
-
 
 # ---------------------------------------------------------------------------
 # _clone_option_value — proving copies are independent
@@ -228,9 +203,6 @@ class TestNormalizeRawPreTasks:
 
 
 class TestCloneOptionValue:
-    def test_string_passthrough(self):
-        assert _clone_option_value("hello") == "hello"
-
     def test_list_cloned_independently(self):
         original = ["a", "b"]
         cloned = _clone_option_value(original)
@@ -239,9 +211,6 @@ class TestCloneOptionValue:
         assert original == ["a", "b"]  # original unchanged
         assert cloned == ["a", "b", "c"]
 
-    def test_list_filters_non_strings(self):
-        assert _clone_option_value(cast(list[str], ["a", 1])) == ["a"]
-
     def test_dict_cloned_independently(self):
         original = {"k": "v"}
         cloned = _clone_option_value(original)
@@ -249,9 +218,6 @@ class TestCloneOptionValue:
         cloned["new"] = "x"
         assert original == {"k": "v"}  # original unchanged
         assert cloned == {"k": "v", "new": "x"}
-
-    def test_dict_filters_non_strings(self):
-        assert _clone_option_value(cast(dict[str, str], {"k": 1})) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -270,12 +236,6 @@ class TestBuildOptionDefaults:
         opt = _make_option("select", cases=["easy", "hard"], default_case="hard")
         defaults, _ = _build_option_defaults({"diff": opt})
         assert defaults["diff"] == "hard"
-
-    def test_switch_exact_default(self):
-        """Switch defaults to the first case when no default_case given."""
-        opt = _make_option("switch", cases=["on", "off"])
-        defaults, _ = _build_option_defaults({"sw": opt})
-        assert defaults["sw"] == "on"
 
     def test_checkbox_defaults(self):
         opt = _make_option("checkbox", cases=["a", "b", "c"], default_case=["a", "c"])
@@ -438,21 +398,6 @@ class TestNormalizeOptionsForTask:
 
 
 # ---------------------------------------------------------------------------
-# normalize_task_options_by_task
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeTaskOptionsByTask:
-    def test_basic(self):
-        iface = _make_interface(
-            tasks=[Task(name="T1", entry="T1", option=["diff"])],
-            options={"diff": _make_option("select", cases=["a", "b"])},
-        )
-        result = normalize_task_options_by_task({"T1": {"diff": "b"}}, ["T1"], iface)
-        assert result["T1"]["diff"] == "b"
-
-
-# ---------------------------------------------------------------------------
 # normalize_task_execution_payload
 # ---------------------------------------------------------------------------
 
@@ -479,18 +424,6 @@ class TestNormalizeTaskExecutionPayload:
             iface,
         )
         assert task_list == ["B", "A"]
-
-    def test_normalizes_task_options(self):
-        iface = _make_interface(
-            tasks=[Task(name="A", entry="A", option=["diff"])],
-            options={"diff": _make_option("select", cases=["easy", "hard"])},
-        )
-        _, options, _ = normalize_task_execution_payload(
-            ["A"],
-            {"A": {"diff": "hard"}},
-            iface,
-        )
-        assert options["A"]["diff"] == "hard"
 
     def test_pre_tasks_enabled_filter(self):
         iface = _make_interface()

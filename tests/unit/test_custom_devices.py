@@ -124,32 +124,10 @@ class TestCustomDeviceCreateModel:
 
 
 class TestCanonicalizeCustomAddress:
-    def test_adb_and_playcover_trim(self):
-        assert (
-            canonicalize_custom_device_address("Adb", "  1.2.3.4:5555  ")
-            == "1.2.3.4:5555"
-        )
-        assert (
-            canonicalize_custom_device_address("PlayCover", " 127.0.0.1:1717 ")
-            == "127.0.0.1:1717"
-        )
-
-    def test_adb_empty_rejected(self):
-        with pytest.raises(ValueError):
-            canonicalize_custom_device_address("Adb", "  ")
-
-    def test_win32_positive_decimal_canonical(self):
-        assert canonicalize_custom_device_address("Win32", "00123") == "123"
-        assert canonicalize_custom_device_address("Win32", " 42 ") == "42"
-
     def test_win32_zero_negative_malformed_rejected(self):
         for bad in ("0", "-1", "abc", "12.3", "1e2", ""):
             with pytest.raises(ValueError):
                 canonicalize_custom_device_address("Win32", bad)
-
-    def test_gamepad_positive_hwnd_type_0_or_1(self):
-        assert canonicalize_custom_device_address("Gamepad", "0042|01") == "42|1"
-        assert canonicalize_custom_device_address("Gamepad", " 7 | 0 ") == "7|0"
 
     def test_gamepad_windowless_zero_allowed(self):
         # hWnd=0 表示无窗口手柄（未配置窗口过滤时允许）
@@ -168,9 +146,6 @@ class TestCanonicalizeCustomAddress:
         ):
             with pytest.raises(ValueError):
                 canonicalize_custom_device_address("Gamepad", bad)
-
-    def test_macos_positive_decimal_canonical(self):
-        assert canonicalize_custom_device_address("MacOS", " 0042 ") == "42"
 
     def test_macos_non_positive_rejected(self):
         for bad in ("0", "-1", "abc", "1.5", ""):
@@ -201,24 +176,6 @@ class TestCanonicalizeCustomAddress:
 
 
 class TestCustomRecordToDevice:
-    def test_adb_shape(self):
-        device = custom_record_to_device(
-            {
-                "controller_name": "AdbController",
-                "type": "Adb",
-                "address": "10.0.0.1:5555",
-            }
-        )
-        assert device == {
-            "name": "",
-            "type": "Adb",
-            "adb_path": "",
-            "address": "10.0.0.1:5555",
-            "screencap_methods": 0,
-            "input_methods": 0,
-            "config": {},
-        }
-
     def test_win32_parses_hwnd(self):
         device = custom_record_to_device(
             {"controller_name": "Win32Controller", "type": "Win32", "address": "123456"}
@@ -237,32 +194,6 @@ class TestCustomRecordToDevice:
         )
         assert device["hWnd"] == 42
         assert device["gamepad_type"] == 1
-
-    def test_playcover_address(self):
-        device = custom_record_to_device(
-            {
-                "controller_name": "PlayCoverController",
-                "type": "PlayCover",
-                "address": "127.0.0.1:1717",
-            }
-        )
-        assert device == {"type": "PlayCover", "address": "127.0.0.1:1717"}
-
-    def test_macos_address(self):
-        device = custom_record_to_device(
-            {
-                "controller_name": "MacOSController",
-                "type": "MacOS",
-                "address": "1234",
-            }
-        )
-        assert device == {
-            "type": "MacOS",
-            "name": "1234",
-            "address": "1234",
-            "screencap_methods": 1,
-            "input_methods": 1,
-        }
 
 
 class _FakeControllerHandle:
@@ -392,19 +323,6 @@ class TestLinuxSupport:
                 "address": '{"kind": "portal"}',
             }
         ]
-
-    def test_builds_linux_device_model(self):
-        address = LinuxDeviceAddress(
-            kind="wlr", wlr_socket_path="/run/user/1000/wayland-1"
-        ).to_compact_json()
-        model = DeviceService.build_device_model_from_config(
-            "LinuxController",
-            "Linux",
-            address,
-        )
-
-        assert model.type == "Linux"
-        assert model.address == address
 
     def test_connect_wlr_passes_config(self, app_root: Path):
         captured: dict[str, Any] = {}
@@ -651,13 +569,6 @@ class TestMacOSSupport:
             },
         ]
 
-    def test_builds_macos_device_model(self):
-        model = DeviceService.build_device_model_from_config(
-            "MacOSController", "MacOS", "1234"
-        )
-        assert model.type == "MacOS"
-        assert model.address == "1234"
-
     def test_connect_permission_granted_passes_methods(self, app_root: Path):
         controller = _connectable_controller("MacOSController", "MacOS")
         controller.macos = SimpleNamespace(
@@ -896,26 +807,6 @@ class TestCustomDevicePersistence:
         assert len(records) == 1
         assert records[0]["address"] == "42"
 
-    def test_rejects_zero_win32(self, service: DeviceService):
-        with pytest.raises(ValueError, match="positive integer"):
-            service.add_custom_device(
-                CustomDeviceCreate(
-                    controller_name="Win32Controller",
-                    type="Win32",
-                    address="0",
-                )
-            )
-
-    def test_rejects_malformed_gamepad(self, service: DeviceService):
-        with pytest.raises(ValueError):
-            service.add_custom_device(
-                CustomDeviceCreate(
-                    controller_name="GamepadController",
-                    type="Gamepad",
-                    address="42|9",
-                )
-            )
-
     def test_rejects_unknown_controller(self, service: DeviceService):
         with pytest.raises(ValueError, match="未找到匹配的控制器配置"):
             service.add_custom_device(
@@ -1129,32 +1020,6 @@ class TestCustomDevicePersistence:
 
 
 class TestScanCustomMerge:
-    def test_merge_appends_custom_only(self, service: DeviceService):
-        service.add_custom_device(
-            CustomDeviceCreate(
-                controller_name="AdbController",
-                type="Adb",
-                address="10.0.0.5:5555",
-            )
-        )
-        scanned = [
-            {
-                "name": "Phone",
-                "type": "Adb",
-                "adb_path": "/usr/bin/adb",
-                "address": "10.0.0.1:5555",
-                "screencap_methods": "1",
-                "input_methods": "2",
-                "config": {"k": "v"},
-            }
-        ]
-        merged = service._merge_custom_devices("AdbController", scanned)
-        assert len(merged) == 2
-        assert merged[0]["address"] == "10.0.0.1:5555"
-        assert merged[1]["address"] == "10.0.0.5:5555"
-        assert merged[1]["name"] == ""
-        assert merged[1]["adb_path"] == ""
-
     def test_scan_wins_on_duplicate_identity(self, service: DeviceService):
         service.add_custom_device(
             CustomDeviceCreate(

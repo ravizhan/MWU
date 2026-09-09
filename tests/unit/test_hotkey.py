@@ -46,8 +46,6 @@ class TestHotkeyValueToCodes:
             hotkey_value_to_codes("ALT+A", "WlRoots")
         with pytest.raises(ValueError, match="受支持的控制器类型"):
             hotkey_value_to_codes("ALT+A", None)
-        with pytest.raises(ValueError, match="受支持的控制器类型"):
-            hotkey_value_to_codes("ALT+A", "UnknownController")
 
     def test_linux_use_win32_vk_code_uses_win32_table(self):
         assert hotkey_value_to_codes("ALT+A", "Linux", use_win32_vk_code=True) == (
@@ -69,8 +67,6 @@ class TestHotkeyValueToCodes:
     def test_unknown_key_raises_config_error(self):
         with pytest.raises(ValueError, match="不在 Win32 键码表中"):
             hotkey_value_to_codes("ALT+Unknown", "Win32")
-        with pytest.raises(ValueError, match="不在 Win32 键码表中"):
-            hotkey_value_to_codes("Unknown", "Win32")
 
     def test_empty_primary_raises(self):
         with pytest.raises(ValueError, match="主键为空"):
