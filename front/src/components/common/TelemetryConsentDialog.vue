@@ -17,8 +17,12 @@
       >
         <div class="font-medium">{{ t("telemetry.consent.recipient") }}</div>
         <div class="text-xs opacity-70 mt-1">
-          {{ status.recipient.project }} · {{ status.recipient.host }}/{{
-            status.recipient.project_id
+          {{
+            t("telemetry.recipientDetails", {
+              project: status.recipient.project,
+              host: status.recipient.host,
+              projectId: status.recipient.project_id,
+            })
           }}
         </div>
       </div>
@@ -106,16 +110,6 @@ async function submit(consent: "granted" | "denied"): Promise<void> {
     status.value = result.status
     telemetryConsentVisible.value = false
     showGlobalMessage("success", result.message)
-    return
-  }
-  if (result.staleTarget) {
-    // 目标已变化：刷新状态后重新弹窗确认新目标
-    const refreshed = await getTelemetryStatus().catch(() => null)
-    if (refreshed !== null) {
-      status.value = refreshed
-      failureAttachments.value = false
-    }
-    showGlobalMessage("error", result.message)
     return
   }
   showGlobalMessage("error", result.message)

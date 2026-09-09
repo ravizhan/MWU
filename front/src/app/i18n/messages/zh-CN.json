@@ -393,6 +393,7 @@
       "grant": "允许",
       "deny": "拒绝"
     },
+    "recipientDetails": "{project} · {host}/{projectId}",
     "settings": {
       "title": "遥测",
       "consent": "匿名遥测",
@@ -401,6 +402,7 @@
       "attachments": "失败附件",
       "attachmentsNote": "截图可能包含账号或聊天信息，与主开关分别授权",
       "recipient": "接收方",
+      "recipientLabel": "接收方:",
       "notConfigured": "当前项目未配置遥测（无 DSN），不发送任何数据。",
       "notBuildAllowed": "源码运行或调试构建下遥测已强制禁用。",
       "loading": "加载中…"

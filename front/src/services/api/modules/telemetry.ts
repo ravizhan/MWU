@@ -20,7 +20,6 @@ export interface TelemetryStatus {
 
 export interface TelemetryConsentResult {
   success: boolean
-  staleTarget: boolean
   message: string
   status: TelemetryStatus | null
 }
@@ -65,7 +64,7 @@ export async function getTelemetryStatus(): Promise<TelemetryStatus> {
   return status
 }
 
-/** 提交遥测授权。409（目标变化）返回 staleTarget=true。 */
+/** 提交遥测授权，失败时保留后端错误信息。 */
 export async function postTelemetryConsent(payload: {
   configId: string
   consent: "granted" | "denied"
@@ -84,11 +83,10 @@ export async function postTelemetryConsent(payload: {
   const envelope = telemetryEnvelopeSchema.safeParse(raw)
   const status = parseStatus(raw)
   if (envelope.success && envelope.data.status === "success" && status) {
-    return { success: true, staleTarget: false, message: "授权已保存", status }
+    return { success: true, message: "授权已保存", status }
   }
   return {
     success: false,
-    staleTarget: response.status === 409,
     message: (envelope.success && envelope.data.message) || "授权保存失败",
     status: null,
   }

@@ -393,6 +393,7 @@
       "grant": "Allow",
       "deny": "Deny"
     },
+    "recipientDetails": "{project} · {host}/{projectId}",
     "settings": {
       "title": "Telemetry",
       "consent": "Anonymous telemetry",
@@ -401,6 +402,7 @@
       "attachments": "Failure attachments",
       "attachmentsNote": "Screenshots may contain account or chat info; authorized separately from the main switch",
       "recipient": "Recipient",
+      "recipientLabel": "Recipient:",
       "notConfigured": "This project has no telemetry configured (no DSN). Nothing is sent.",
       "notBuildAllowed": "Telemetry is force-disabled for source runs and debug builds.",
       "loading": "Loading…"

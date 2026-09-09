@@ -1,8 +1,8 @@
-"""Opt-in, isolated Sentry telemetry for MWU.
+"""Opt-in Sentry telemetry for MWU.
 
-The service deliberately does not use :mod:`sentry_sdk`'s global hub.  MWU can
-run an embedded Agent which owns its own Sentry client, so every event, span,
-and log created here is scoped to this service's client only.
+When telemetry is authorized, MWU publishes its client through Sentry's normal
+global scope.  Embedded Agents therefore use the same SDK client through the
+public :mod:`sentry_sdk` API instead of a private telemetry facade.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import re
 import sys
 import threading
 import time
-import traceback as traceback_module
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,10 +26,10 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
-from PIL import Image
 import sentry_sdk
-from sentry_sdk import Scope
-from sentry_sdk.tracing import Span, Transaction
+from PIL import Image
+from sentry_sdk import logger as sentry_logger
+from sentry_sdk.tracing import Span
 from sentry_sdk.transport import HttpTransport
 from sentry_sdk.utils import BadDsn, Dsn
 
@@ -158,13 +157,6 @@ def _safe_timestamp(value: Any) -> float | None:
     return None
 
 
-def _client_option(client: Any, key: str) -> Any:
-    options = getattr(client, "options", None)
-    if isinstance(options, dict):
-        return options.get(key)
-    return None
-
-
 def _safe_attribute(name: str, value: Any) -> Any:
     """Whitelist one known attribute and coerce it to a bounded scalar."""
 
@@ -241,22 +233,38 @@ def scrub_error_event(event: dict[str, Any], hint: dict[str, Any] | None = None)
     """Whitelist-only ``before_send`` callback.
 
     In particular, exception values are replaced with a controlled error code;
-    only exception type and function/line stack-frame fields survive.
+    only exception type and function/line stack-frame fields survive.  Ordinary
+    SDK message events remain message events, with a bounded scalar message;
+    request, locals, user, and arbitrary extra payloads are still omitted.
     """
 
     hint = hint or {}
     source = event if isinstance(event, dict) else {}
     result = _common_event_fields(source)
-    code = _safe_code(hint.get("telemetry_error_code"))
-    contexts = result.setdefault("contexts", {}).setdefault("mwu", {})
-    contexts["error_code"] = code
+
+    source_contexts = source.get("contexts")
+    source_mwu = (
+        source_contexts.get("mwu") if isinstance(source_contexts, dict) else None
+    )
+    source_code = source_mwu.get("error_code") if isinstance(source_mwu, dict) else None
+    code = _safe_code(hint.get("telemetry_error_code"), default=_safe_code(source_code))
+    if isinstance(source_mwu, dict) or hint.get("telemetry_error_code") is not None:
+        contexts = result.setdefault("contexts", {}).setdefault("mwu", {})
+        contexts["error_code"] = code
 
     values = None
     exception = source.get("exception")
     if isinstance(exception, dict) and isinstance(exception.get("values"), list):
         values = exception["values"]
+
     if not values:
-        values = [{}]
+        # ``capture_message`` and ordinary ``capture_event`` calls do not carry
+        # an exception.  Keep their normal event shape while applying the same
+        # bounded-scalar policy to the message.
+        message = _safe_string(source.get("message"), max_length=256)
+        if message is not None:
+            result["message"] = message
+        return result
 
     safe_values: list[dict[str, Any]] = []
     for value in values[:8]:
@@ -306,15 +314,10 @@ def scrub_error_event(event: dict[str, Any], hint: dict[str, Any] | None = None)
 
 def _transaction_name(value: Any) -> str:
     value = _safe_string(value, max_length=64)
-    if value == "mwu.run":
-        return value
-    if value == "maa.task":
-        return value
-    if value == "maa.node":
-        return value
-    # Do not echo arbitrary transaction names.  The service only creates the
-    # three names above.
-    return "mwu.run"
+    # Keep normal SDK transaction naming semantics for embedded Agents while
+    # retaining a bounded scalar and the historical fallback for malformed
+    # service-generated events.
+    return value or "mwu.run"
 
 
 def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None = None):
@@ -372,9 +375,7 @@ def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None =
                 span.get("op") or span.get("description") or span.get("name"),
                 max_length=64,
             )
-            span_name = (
-                span_name if span_name in {"maa.task", "maa.node"} else "maa.node"
-            )
+            span_name = span_name or "maa.node"
             safe_span: dict[str, Any] = {"op": span_name, "description": span_name}
             for key in ("start_timestamp", "timestamp"):
                 value = _safe_timestamp(span.get(key))
@@ -404,7 +405,13 @@ def _raw_log_attribute(value: Any) -> Any:
 
 
 def scrub_log(log: dict[str, Any], hint: dict[str, Any] | None = None):
-    """Whitelist-only ``before_send_log`` callback."""
+    """Scrub Sentry Logs without requiring an MWU event name.
+
+    MWU logs retain their structured event name and whitelisted attributes.
+    Ordinary Agent logs retain a bounded scalar body and the same safe
+    attribute whitelist; arbitrary structured payloads are intentionally not
+    forwarded.
+    """
 
     if not isinstance(log, dict):
         return None
@@ -412,12 +419,17 @@ def scrub_log(log: dict[str, Any], hint: dict[str, Any] | None = None):
     if not isinstance(attributes, dict):
         attributes = {}
     event_name = _raw_log_attribute(attributes.get("event_name"))
-    if event_name is None:
-        event_name = log.get("body")
-    if not isinstance(event_name, str) or event_name not in _ALLOWED_LOG_EVENTS:
-        return None
+    is_mwu_log = isinstance(event_name, str) and event_name in _ALLOWED_LOG_EVENTS
+    if is_mwu_log:
+        body = event_name
+    else:
+        body = _safe_string(log.get("body"), max_length=256)
+        if body is None:
+            return None
 
-    safe_attributes: dict[str, Any] = {"event_name": event_name}
+    safe_attributes: dict[str, Any] = {}
+    if is_mwu_log:
+        safe_attributes["event_name"] = event_name
     for key in _ALLOWED_ATTRIBUTES:
         if key not in attributes:
             continue
@@ -426,6 +438,8 @@ def scrub_log(log: dict[str, Any], hint: dict[str, Any] | None = None):
             safe_attributes[key] = value
 
     severity_text = _safe_string(log.get("severity_text"), max_length=16) or "info"
+    if severity_text == "warn":
+        severity_text = "warning"
     if severity_text not in {"debug", "info", "warning", "error", "fatal"}:
         severity_text = "info"
     severity_number = log.get("severity_number")
@@ -437,7 +451,7 @@ def scrub_log(log: dict[str, Any], hint: dict[str, Any] | None = None):
     result: dict[str, Any] = {
         "severity_text": severity_text,
         "severity_number": max(1, min(severity_number, 24)),
-        "body": event_name,
+        "body": body,
         "attributes": safe_attributes,
         "time_unix_nano": int(timestamp),
         "trace_id": None,
@@ -527,7 +541,6 @@ class _TaskHandle:
     pi_entry: str
     epoch: int
     span: Span | None = None
-    scope: Scope | None = None
     started_at: float = field(default_factory=time.monotonic)
     finished: bool = False
 
@@ -538,7 +551,6 @@ class _NodeHandle:
     task_name: str | None
     epoch: int
     span: Span | None = None
-    scope: Scope | None = None
     started_at: float = field(default_factory=time.monotonic)
     message_type: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -551,8 +563,7 @@ class _RunHandle:
     origin: str
     task_names: list[str]
     epoch: int
-    scope: Scope | None = None
-    transaction: Transaction | None = None
+    transaction: Span | None = None
     started_at: float = field(default_factory=time.monotonic)
     tasks: dict[str, _TaskHandle] = field(default_factory=dict)
     diagnostics: deque[dict[str, Any]] = field(
@@ -568,7 +579,7 @@ class TelemetryConsentStaleError(ValueError):
 
 
 class TelemetryService:
-    """Opt-in telemetry backend with an isolated Sentry client."""
+    """Opt-in telemetry backend sharing Sentry's process-global client."""
 
     def __init__(
         self,
@@ -704,10 +715,12 @@ class TelemetryService:
 
     def is_active(self) -> bool:
         with self._lock:
+            client = self._client
             return bool(
                 self._authorized()
-                and self._client is not None
+                and client is not None
                 and self._client_epoch == self._epoch
+                and self._owns_global_client(client)
             )
 
     def status_payload(self) -> dict[str, Any]:
@@ -851,6 +864,8 @@ class TelemetryService:
             self._client_epoch = None
             self._epoch += 1
             epoch = self._epoch
+            if old_client is not None:
+                self._unbind_global_client_locked(old_client)
         if old_client is not None:
             self._close_client(old_client, timeout=0)
 
@@ -881,10 +896,26 @@ class TelemetryService:
             if not self._authorized() or epoch != self._epoch:
                 self._close_client(client, timeout=0)
                 return
-            self._client = client
-            self._transport = getattr(client, "transport", None)
-            self._client_epoch = epoch
-            self._logs_enabled = logs_enabled
+            try:
+                self._client = client
+                self._transport = getattr(client, "transport", None)
+                self._client_epoch = epoch
+                self._logs_enabled = logs_enabled
+                # Publish through the SDK's normal global scope.  This is the
+                # client used by sentry_sdk.capture_* and start_* in embedded
+                # Agents as well as by MWU's own wrappers.
+                global_scope = sentry_sdk.get_global_scope()
+                global_scope.set_client(client)
+                global_scope.set_tags(self._common_tags)
+            except Exception:
+                self._client = None
+                self._transport = None
+                self._client_epoch = None
+                self._logs_enabled = False
+                self._unbind_global_client_locked(client)
+                self._close_client(client, timeout=0)
+                logger.warning("Sentry client 发布失败，遥测保持关闭", exc_info=True)
+                return
         self._install_exception_handlers()
 
     @staticmethod
@@ -899,6 +930,27 @@ class TelemetryService:
         except Exception:
             logger.debug("telemetry client close failed", exc_info=True)
 
+    @staticmethod
+    def _owns_global_client(client: Any) -> bool:
+        return sentry_sdk.get_global_scope().client is client
+
+    def _unbind_global_client_locked(self, client: Any) -> None:
+        """Remove only a client this service previously published.
+
+        An embedded Agent may intentionally replace the global client.  Never
+        close or overwrite that replacement as part of MWU lifecycle cleanup.
+        """
+
+        try:
+            global_scope = sentry_sdk.get_global_scope()
+            if global_scope.client is not client:
+                return
+            for key in self._common_tags:
+                global_scope.remove_tag(key)
+            global_scope.set_client(None)
+        except Exception:
+            logger.debug("telemetry global client unbind failed", exc_info=True)
+
     def revoke(self) -> None:
         """Invalidate the current epoch before closing; never flush old data."""
 
@@ -909,6 +961,8 @@ class TelemetryService:
             self._client_epoch = None
             self._logs_enabled = False
             self._clear_run_buffers_locked()
+            if old_client is not None:
+                self._unbind_global_client_locked(old_client)
         self._restore_exception_handlers()
         if old_client is not None:
             # Client.close() flushes internally in SDK 2.68.1, but the epoch
@@ -935,16 +989,20 @@ class TelemetryService:
                 self._client = None
                 self._transport = None
                 self._client_epoch = None
+                if client is not None:
+                    self._unbind_global_client_locked(client)
 
     shutdown = flush_and_close_limited
 
     def _can_send_epoch(self, epoch: int) -> bool:
         with self._lock:
+            client = self._client
             return bool(
                 epoch == self._epoch
-                and self._client is not None
+                and client is not None
                 and self._client_epoch == epoch
                 and self._authorized()
+                and self._owns_global_client(client)
             )
 
     def _install_exception_handlers(self) -> None:
@@ -1075,56 +1133,11 @@ class TelemetryService:
                     safe_attrs[key] = safe
         if not self._can_send_epoch(epoch):
             return
-        log = {
-            "severity_text": severity
-            if severity in {"debug", "info", "warning", "error", "fatal"}
-            else "info",
-            "severity_number": {
-                "debug": 5,
-                "info": 9,
-                "warning": 13,
-                "error": 17,
-                "fatal": 21,
-            }.get(severity, 9),
-            "body": event_name,
-            "attributes": safe_attrs,
-            "time_unix_nano": time.time_ns(),
-            "trace_id": None,
-            "span_id": None,
-        }
         try:
-            scope = Scope(client=client)
-            capture = getattr(client, "_capture_log", None)
-            if capture is not None:
-                capture(log, scope=scope)
+            capture = getattr(sentry_logger, severity, sentry_logger.info)
+            capture(event_name, attributes=safe_attrs)
         except Exception:
             self._record_local_warning("log_capture_failed")
-
-    def _new_scope(self, client: Any) -> Scope:
-        scope = Scope(client=client)
-        for key, value in self._common_tags.items():
-            scope.set_tag(key, value)
-        return scope
-
-    @staticmethod
-    def _start_child(parent: Transaction | Span, *, op: str, name: str) -> Span:
-        """Start a child without consulting sentry_sdk's global client/hub."""
-
-        child = Span(
-            trace_id=parent.trace_id,
-            parent_span_id=parent.span_id,
-            sampled=parent.sampled,
-            containing_transaction=parent.containing_transaction or parent,
-            op=op,
-            name=name,
-            origin="manual",
-        )
-        recorder = getattr(
-            parent.containing_transaction or parent, "_span_recorder", None
-        )
-        if recorder is not None:
-            recorder.add(child)
-        return child
 
     def start_run(
         self,
@@ -1143,9 +1156,8 @@ class TelemetryService:
             if existing is not None:
                 return existing
             epoch = self._epoch
-            client = self._client
-        scope = self._new_scope(client)
-        transaction: Transaction | None = None
+
+        transaction: Span | None = None
         sentry_config = getattr(
             getattr(self.interface, "telemetry", None), "sentry", None
         )
@@ -1153,25 +1165,19 @@ class TelemetryService:
         if tracing is None:
             tracing = True
         rate = getattr(sentry_config, "traces_sample_rate", 1.0)
-        if bool(tracing) and (rate is None or float(rate) > 0):
+        try:
+            has_trace_rate = rate is None or float(rate) > 0
+        except (TypeError, ValueError):
+            has_trace_rate = False
+        if bool(tracing) and has_trace_rate:
             try:
-                # Build the transaction directly instead of calling
-                # Scope.start_transaction: SDK sampling helpers eventually
-                # consult the process-global client, which may belong to the
-                # embedded Agent.  The explicit Bernoulli decision has the
-                # same traces_sample_rate contract and remains isolated.
-                rate = max(0.0, min(float(rate), 1.0))
-                sampled = rate >= 1.0 or random.random() < rate
-                transaction = Transaction(
+                transaction = sentry_sdk.start_transaction(
                     name="mwu.run",
                     op="mwu.run",
-                    sampled=sampled,
-                    scope=scope,
                     origin="manual",
                 )
-                transaction.sample_rate = rate
-                if sampled:
-                    transaction.init_span_recorder(maxlen=1000)
+                for key, value in self._common_tags.items():
+                    transaction.set_tag(key, value)
                 transaction.set_data("run_id", str(run_id)[:128])
                 transaction.set_data("origin", origin)
             except Exception:
@@ -1182,7 +1188,6 @@ class TelemetryService:
             origin=origin,
             task_names=task_names,
             epoch=epoch,
-            scope=scope,
             transaction=transaction,
         )
         with self._lock:
@@ -1203,7 +1208,6 @@ class TelemetryService:
     def finish_run(self, run_id: str, result: str) -> None:
         with self._lock:
             handle = self._runs.pop(run_id, None)
-            client = self._client
         if handle is None:
             return
         result = result if result in _ALLOWED_RESULTS else "failed"
@@ -1225,7 +1229,7 @@ class TelemetryService:
                 handle.transaction.set_data("duration_ms", duration_ms)
                 handle.transaction.set_status(sentry_result)
                 if self._can_send_epoch(handle.epoch):
-                    self._finish_transaction(handle, client=client)
+                    handle.transaction.finish()
             except Exception:
                 logger.debug("telemetry run transaction finish failed", exc_info=True)
         if bool(tracing):
@@ -1242,48 +1246,6 @@ class TelemetryService:
                 },
             )
         handle.diagnostics.clear()
-
-    def _finish_transaction(self, handle: _RunHandle, *, client: Any | None) -> None:
-        """Serialize and capture a transaction without touching the global hub.
-
-        ``Transaction.finish()`` in sentry-sdk 2.68.1 resolves the global
-        ``sentry_sdk.get_client()``.  That is unsafe for MWU's embedded Agent,
-        so the small equivalent below sends through this service's client.
-        """
-
-        transaction = handle.transaction
-        scope = handle.scope
-        if transaction is None or client is None or scope is None:
-            return
-        if transaction.timestamp is not None:
-            return
-        if transaction.sampled is False:
-            return
-        transaction.timestamp = datetime.now().astimezone()
-        event = transaction.to_json()
-        event["type"] = "transaction"
-        event["transaction"] = transaction.name
-        event["start_timestamp"] = transaction.start_timestamp
-        event["timestamp"] = transaction.timestamp
-        event["release"] = _client_option(client, "release")
-        event["environment"] = _client_option(client, "environment")
-        event["tags"] = dict(self._common_tags)
-        event["contexts"] = {
-            "trace": {
-                "trace_id": transaction.trace_id,
-                "span_id": transaction.span_id,
-            }
-        }
-        recorder = getattr(transaction, "_span_recorder", None)
-        if recorder is not None:
-            spans: list[dict[str, Any]] = []
-            for span in recorder.spans:
-                if span is transaction or span.timestamp is None:
-                    continue
-                spans.append(span.to_json())
-            if spans:
-                event["spans"] = spans
-        client.capture_event(event, hint={}, scope=scope)
 
     def set_run_context(
         self,
@@ -1317,12 +1279,11 @@ class TelemetryService:
                 task_name=str(task_name)[:256],
                 pi_entry=str(pi_entry)[:256],
                 epoch=run.epoch,
-                scope=run.scope,
             )
             if run.transaction is not None:
                 try:
-                    task.span = self._start_child(
-                        run.transaction, op="maa.task", name="maa.task"
+                    task.span = run.transaction.start_child(
+                        op="maa.task", name="maa.task", origin="manual"
                     )
                     task.span.set_data("task_name", task.task_name)
                     task.span.set_data("pi_entry", task.pi_entry)
@@ -1353,7 +1314,8 @@ class TelemetryService:
                         "stopped": "cancelled",
                     }.get(status, status)
                 )
-                handle.span.finish(scope=handle.scope)
+                if self._can_send_epoch(handle.epoch):
+                    handle.span.finish()
             except Exception:
                 logger.debug("telemetry task span finish failed", exc_info=True)
         sentry_config = getattr(
@@ -1416,7 +1378,9 @@ class TelemetryService:
             span = None
             if parent is not None:
                 try:
-                    span = self._start_child(parent, op="maa.node", name="maa.node")
+                    span = parent.start_child(
+                        op="maa.node", name="maa.node", origin="manual"
+                    )
                 except Exception:
                     logger.debug("telemetry node span failed", exc_info=True)
             attrs: dict[str, Any] = {
@@ -1433,7 +1397,6 @@ class TelemetryService:
                 task_name=task_name,
                 epoch=run.epoch,
                 span=span,
-                scope=run.scope,
                 message_type=message_type,
                 attributes=attrs,
             )
@@ -1459,7 +1422,8 @@ class TelemetryService:
                 handle.span.set_data("result", result)
                 handle.span.set_data("duration_ms", duration_ms)
                 handle.span.set_status("internal_error" if result == "failed" else "ok")
-                handle.span.finish(scope=handle.scope)
+                if self._can_send_epoch(handle.epoch):
+                    handle.span.finish()
             except Exception:
                 logger.debug("telemetry node span finish failed", exc_info=True)
         sentry_config = getattr(
@@ -1680,67 +1644,44 @@ class TelemetryService:
                     return
                 if run is not None:
                     run.errors.add(error_code)
-            client = self._client
             epoch = self._client_epoch
-        if client is None or epoch is None or not self._can_send_epoch(epoch):
+        if epoch is None or not self._can_send_epoch(epoch):
             return
         if exception is None:
             exception = RuntimeError(error_code)
-        event: dict[str, Any] = {
-            "exception": {
-                "values": [
-                    {
-                        "type": type(exception).__name__,
-                        # Never place the exception text in the event object;
-                        # before_send is a second defense, not the first.
-                        "value": _safe_code(error_code),
-                        "stacktrace": {
-                            "frames": [
-                                {
-                                    "function": frame.name,
-                                    "lineno": frame.lineno,
-                                }
-                                for frame in traceback_module.extract_tb(
-                                    traceback or exception.__traceback__
-                                )
-                            ]
-                        },
-                    }
-                ]
-            },
-            "tags": self._common_tags,
-            "release": _client_option(client, "release"),
-            "environment": _client_option(client, "environment"),
-            "contexts": {
-                "mwu": {
-                    "run_id": run_id,
-                    "task_name": task_name,
-                    "error_code": error_code,
-                }
-            },
-        }
         attachments = (
             self._failure_attachments(run, controller=controller)
             if attach and run is not None
             else []
         )
-        scope = self._new_scope(client)
-        for filename, payload, content_type in attachments:
-            scope.add_attachment(
-                bytes=payload,
-                filename=filename,
-                content_type=content_type,
-                add_to_transactions=False,
+
+        def apply_scope(scope: Any) -> None:
+            scope.set_tags(self._common_tags)
+            scope.set_context(
+                "mwu",
+                {
+                    "run_id": run_id,
+                    "task_name": task_name,
+                    "error_code": error_code,
+                },
             )
-        hint = {"telemetry_error_code": error_code}
-        if exception is not None:
-            hint["exc_info"] = (
+            for filename, payload, content_type in attachments:
+                scope.add_attachment(
+                    bytes=payload,
+                    filename=filename,
+                    content_type=content_type,
+                    add_to_transactions=False,
+                )
+
+        captured_exception: Any = exception
+        if traceback is not None or exception.__traceback__ is not None:
+            captured_exception = (
                 type(exception),
                 exception,
                 traceback or exception.__traceback__,
             )
         try:
-            client.capture_event(event, hint=hint, scope=scope)
+            sentry_sdk.capture_exception(captured_exception, scope=apply_scope)
             self._capture_log(
                 "mwu.error",
                 {

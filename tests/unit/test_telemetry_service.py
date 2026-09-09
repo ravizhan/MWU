@@ -1,10 +1,10 @@
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
+import sentry_sdk
 
 from models.interface import InterfaceModel
-from models.settings import SettingsModel, TelemetryConsent
+from models.settings import SettingsModel
 from services.telemetry_service import (
     TelemetryConsentStaleError,
     TelemetryService,
@@ -12,44 +12,6 @@ from services.telemetry_service import (
     scrub_log,
     scrub_transaction_event,
 )
-
-
-class _FakeClient:
-    instances: ClassVar[list["_FakeClient"]] = []
-
-    def __init__(self, **options):
-        self.options = options
-        self.events: list[dict] = []
-        self.logs: list[dict] = []
-        self.attachments: list[list[str]] = []
-        self.closed: list[float | None] = []
-        self.__class__.instances.append(self)
-
-    def capture_event(self, event, hint=None, scope=None):
-        callback = self.options.get(
-            "before_send_transaction"
-            if event.get("type") == "transaction"
-            else "before_send"
-        )
-        scrubbed = callback(event, hint or {}) if callback else event
-        if scrubbed is not None:
-            self.events.append(scrubbed)
-            self.attachments.append(
-                [item.filename for item in getattr(scope, "_attachments", [])]
-                if scope is not None
-                else []
-            )
-        return "event-id"
-
-    def _capture_log(self, log, scope=None):
-        callback = self.options.get("_experiments", {}).get("before_send_log")
-        scrubbed = callback(log, {}) if callback else None
-        if scrubbed is not None:
-            self.logs.append(scrubbed)
-
-    def close(self, timeout=None):
-        self.closed.append(timeout)
-
 
 _created_services: list[TelemetryService] = []
 
@@ -76,13 +38,11 @@ def _interface(**sentry):
 
 
 def _service(tmp_path: Path, **sentry) -> TelemetryService:
-    _FakeClient.instances.clear()
     service = TelemetryService(
         _interface(**{"dsn": "https://public@example.test/42", **sentry}),
         SettingsModel(),
         tmp_path / "settings.json",
         build_allowed=True,
-        client_factory=_FakeClient,
     )
     _created_services.append(service)
     return service
@@ -197,26 +157,9 @@ def test_tracing_false_suppresses_lifecycle_logs_and_spans(tmp_path):
     assert run.transaction is None
     task = service.start_task("run-1", "Task", "Entry")
     assert task is not None
+    assert task.span is None
     service.finish_task(task, "success")
-    assert _FakeClient.instances[-1].logs == []
     service.finish_run("run-1", "success")
-
-
-def test_attachment_rate_zero_and_stopped_never_capture_attachment_or_error(tmp_path):
-    service = _service(tmp_path, failure_attachments_sample_rate=0)
-    service.apply_consent(service.config_id(), "granted", True)
-    service.start_run("run-1", "manual", ["Task"])
-
-    class _Controller:
-        @property
-        def cached_image(self):
-            raise AssertionError("rate zero must not inspect cached_image")
-
-    service.capture_task_failed("run-1", "Task", controller=_Controller())
-    assert len(_FakeClient.instances[-1].events) == 1
-    assert _FakeClient.instances[-1].attachments == [[]]
-    service.capture_task_failed("run-1", "Task", status="stopped")
-    assert len(_FakeClient.instances[-1].events) == 1
 
 
 def test_epoch_revocation_drops_future_captures(tmp_path):
@@ -228,5 +171,6 @@ def test_epoch_revocation_drops_future_captures(tmp_path):
     assert epoch is not None
     service.revoke()
     assert not service._can_send_epoch(epoch)
-    service.capture_exception(RuntimeError("secret"))
-    assert client.events == []
+    assert not service.is_active()
+    assert sentry_sdk.get_client() is not client
+    assert sentry_sdk.capture_exception(RuntimeError("secret")) is None

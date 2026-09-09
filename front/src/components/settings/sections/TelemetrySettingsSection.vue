@@ -54,8 +54,14 @@
       </div>
 
       <div v-if="status.recipient" class="text-xs opacity-60">
-        {{ t("telemetry.settings.recipient") }}: {{ status.recipient.project }} ·
-        {{ status.recipient.host }}/{{ status.recipient.project_id }}
+        {{ t("telemetry.settings.recipientLabel") }}
+        {{
+          t("telemetry.recipientDetails", {
+            project: status.recipient.project,
+            host: status.recipient.host,
+            projectId: status.recipient.project_id,
+          })
+        }}
       </div>
     </template>
 
@@ -79,11 +85,9 @@ const { t } = useI18n()
 const status = ref<TelemetryStatus | null>(null)
 const submitting = ref(false)
 
-onMounted(refresh)
-
-async function refresh(): Promise<void> {
+onMounted(async () => {
   status.value = await getTelemetryStatus().catch(() => null)
-}
+})
 
 async function submitConsent(consent: "granted" | "denied", attachments: boolean): Promise<void> {
   if (status.value === null) {
@@ -101,9 +105,6 @@ async function submitConsent(consent: "granted" | "denied", attachments: boolean
     return
   }
   showGlobalMessage("error", result.message)
-  if (result.staleTarget) {
-    await refresh()
-  }
 }
 
 function handleConsentSwitch(value: boolean): void {
