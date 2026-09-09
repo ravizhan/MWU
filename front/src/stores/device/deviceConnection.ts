@@ -705,10 +705,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       }
       if (result.error) {
         showGlobalMessage("error", result.error)
-        // 管理员权限不足：展示“以管理员权限重启”确认入口
-        if (result.error.includes("permission_required")) {
-          this.showElevationPrompt = true
-        }
       }
       // 非冲突失败同样清掉过期冲突：否则 stopActiveAndRestart 的重试条件
       // 会拿着旧的 busy_manual 继续空转，对话框也停留在已失效的冲突状态。

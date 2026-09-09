@@ -1,10 +1,16 @@
 import type { InterfaceModel } from "@/types/interfaceModel"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
+import { z } from "zod"
 
 const textFilePattern = /^(?:\.\/)?(?:[^/]+[/])*[^/]+\.(?:md|markdown|txt|html?)$/i
 const invalidPathNotified = new Set<string>()
 const windowsDrivePattern = /^[A-Za-z]:/
+
+const documentResponseSchema = z.object({
+  status: z.string(),
+  content: z.string(),
+})
 
 export function isExternalUrl(value: string): boolean {
   return /^(?:https?:)?\/\//i.test(value) || /^(?:data|blob):/i.test(value)
@@ -88,7 +94,7 @@ export function resolveInterfaceText(
 
 /**
  * 翻译键解析 — 与后端 InterfaceContentService.resolve_i18n 的 locale 链一致：
- * raw → zh_cn/zh-CN 互通 → `-`→`_` 小写；嵌套路径与扁平键两种存储形式。
+ * 原 locale → `-`→`_` 小写 → 仅 zh 用户 zh_cn/zh-CN 互通；嵌套路径与扁平键。
  */
 function lookupTranslation(
   model: Partial<InterfaceModel> | null | undefined,
@@ -99,35 +105,42 @@ function lookupTranslation(
   if (!translations) {
     return undefined
   }
+  // 与后端 _language_candidates 对齐：原 locale → `-`→`_` 小写；仅 zh locale
+  // 追加 zh 互通。非 zh 用户不回退中文表，否则 en-US 会命中 zh-CN/zh_cn。
   const chain: string[] = []
-  for (const candidate of [
-    locale,
-    "zh-CN",
-    "zh_cn",
-    locale.toLowerCase(),
-    locale.toLowerCase().replaceAll("-", "_"),
-  ]) {
+  const normalized = locale.toLowerCase().replaceAll("-", "_")
+  for (const candidate of [locale, normalized]) {
     if (candidate && !chain.includes(candidate)) {
       chain.push(candidate)
     }
   }
+  if (normalized === "zh_cn") {
+    for (const candidate of ["zh_cn", "zh-CN"]) {
+      if (!chain.includes(candidate)) {
+        chain.push(candidate)
+      }
+    }
+  }
   for (const candidate of chain) {
     const table = translations[candidate]
-    if (!table || typeof table !== "object") {
+    if (typeof table !== "object" || table === null) {
       continue
     }
     // 1) 嵌套路径：a.b.c
-    const nested = key.split(".").reduce<unknown>((node, part) => {
-      if (node && typeof node === "object" && part in node) {
-        return (node as Record<string, unknown>)[part]
+    let node: unknown = table
+    for (const part of key.split(".")) {
+      if (typeof node !== "object" || node === null || !(part in node)) {
+        node = undefined
+        break
       }
-      return undefined
-    }, table)
+      node = Object.getOwnPropertyDescriptor(node, part)?.value
+    }
+    const nested = node
     if (typeof nested === "string") {
       return nested
     }
     // 2) 扁平键：整个 key 作为单键
-    const flat = (table as Record<string, unknown>)[key]
+    const flat = Object.getOwnPropertyDescriptor(table, key)?.value
     if (typeof flat === "string") {
       return flat
     }
@@ -173,11 +186,10 @@ export async function resolveInterfaceDocumentContent(
   if (fetchErr || !response?.ok) {
     return resolvedValue
   }
-  const [payload, payloadErr] = await tryCatch(
-    () => response.json() as Promise<{ status: string; content?: string }>,
-  )
-  if (payloadErr || payload?.status !== "success" || typeof payload.content !== "string") {
+  const [payload, payloadErr] = await tryCatch(() => response.json())
+  const parsed = documentResponseSchema.safeParse(payload)
+  if (payloadErr || !parsed.success || parsed.data.status !== "success") {
     return resolvedValue
   }
-  return payload.content
+  return parsed.data.content
 }

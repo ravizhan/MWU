@@ -4,6 +4,7 @@ import {
   fetchFocusInteractions,
   acknowledgeFocusInteraction,
   cancelFocusInteraction,
+  FocusInteractionError,
 } from "@/services/api/modules/focus"
 import type { FocusInteractionPayload } from "@/services/api/modules/focus"
 
@@ -105,20 +106,33 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
   }
 
   async function acknowledge(id: string): Promise<void> {
-    removeById(id)
+    const item = pending.value.find((entry) => entry.id === id)
     try {
       await acknowledgeFocusInteraction(id)
-    } catch {
-      // 409/404 均意味着后端已结束；本地移除即可
+      removeById(id)
+    } catch (error) {
+      // 仅 404/409 证明后端交互已结束（本地移除）；网络错误/5xx 时后端仍
+      // 阻塞在 wait_modal()，必须恢复 pending 项保留用户唯一的解除入口。
+      if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
+        removeById(id)
+      } else if (item) {
+        upsert(item)
+      }
     }
   }
 
   async function cancel(id: string): Promise<void> {
-    removeById(id)
+    const item = pending.value.find((entry) => entry.id === id)
     try {
       await cancelFocusInteraction(id)
-    } catch {
-      // 同上
+      removeById(id)
+    } catch (error) {
+      // 同上：仅 404/409 视为后端已结束；其余失败恢复 pending。
+      if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
+        removeById(id)
+      } else if (item) {
+        upsert(item)
+      }
     }
   }
 

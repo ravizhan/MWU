@@ -4,9 +4,15 @@ import type { useSettingsStore } from "@/stores/settings/settings"
 import type { FocusInteractionStoreContract } from "@/stores/focus/focusInteraction"
 import { formatRealtimeLog, showBrowserRealtimeNotification, showToastMessage } from "./events"
 
+/** dispatcher 所需的 device store 最小契约（提权弹窗开关）。 */
+export interface DeviceElevationContract {
+  showElevationPrompt: boolean
+}
+
 export interface RealtimeStoreRefs {
   indexStore: ReturnType<typeof useIndexStore>
   settingsStore: ReturnType<typeof useSettingsStore>
+  deviceStore?: DeviceElevationContract
   focusInteractionStore?: FocusInteractionStoreContract
 }
 
@@ -47,6 +53,12 @@ function handleTaskCompleted(event: RealtimeEvent, stores: RealtimeStoreRefs): v
 function handleTaskFailed(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
   handleCommon(event, stores)
   stores.indexStore.setTaskRunning(false)
+  // 权限检查在准入后的 _complete_run → prepare_connection 异步失败，只能经
+  // task.failed 到达（/api/start 成功仅代表准入，永远不含 permission_required）。
+  // 此处补出"以管理员权限重启"入口，否则用户看不到提权动作。
+  if (event.message.includes("permission_required") && stores.deviceStore) {
+    stores.deviceStore.showElevationPrompt = true
+  }
 }
 
 /** 焦点交互（dialog/modal）：details.phase=created → pending 入列；finished → 移除。 */

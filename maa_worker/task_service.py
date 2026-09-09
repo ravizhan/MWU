@@ -72,21 +72,21 @@ class TaskService:
         current_resource_name = self.worker.device_state.current_resource_name
 
         filtered_task_list: list[str] = []
-        for task_name in task_list:
-            task_definition = self._get_task_definition(task_name)
+        for candidate_name in task_list:
+            task_definition = self._get_task_definition(candidate_name)
             compatible, reason = self._is_task_compatible(
                 task_definition,
                 controller_names,
                 current_resource_name,
             )
             if compatible:
-                filtered_task_list.append(task_name)
+                filtered_task_list.append(candidate_name)
                 continue
 
             task_display_name = (
                 task_definition.label or task_definition.name
                 if task_definition is not None
-                else task_name
+                else candidate_name
             )
             self.worker.events.send_log(f"跳过任务 {task_display_name}: {reason}")
 

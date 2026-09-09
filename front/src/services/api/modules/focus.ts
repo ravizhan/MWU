@@ -1,4 +1,4 @@
-import type { ApiResponse } from "@/services/api/core/types"
+import { z } from "zod"
 
 /** 后端 focus 交互（dialog / modal）公开状态。 */
 export interface FocusInteractionPayload {
@@ -10,52 +10,68 @@ export interface FocusInteractionPayload {
   created_at: number
 }
 
-interface FocusInteractionListResponse extends ApiResponse {
-  status: "success"
-  data: FocusInteractionPayload[]
+/** 携带 HTTP 状态码的错误，供调用方区分 404/409（后端已结束）与网络/5xx。 */
+export class FocusInteractionError extends Error {
+  readonly httpStatus: number | null
+
+  constructor(message: string, httpStatus: number | null) {
+    super(message)
+    this.name = "FocusInteractionError"
+    this.httpStatus = httpStatus
+  }
 }
 
-interface FocusInteractionResponse extends ApiResponse {
-  status: "success"
-  data: FocusInteractionPayload
+const focusInteractionSchema = z.object({
+  id: z.string(),
+  run_id: z.string(),
+  mode: z.union([z.literal("dialog"), z.literal("modal")]),
+  state: z.union([z.literal("pending"), z.literal("acknowledged"), z.literal("cancelled")]),
+  content: z.string(),
+  created_at: z.number(),
+})
+
+const focusResponseSchema = z.object({
+  status: z.string().optional(),
+  message: z.string().optional(),
+  data: z.unknown().optional(),
+})
+
+type FocusResponse = z.infer<typeof focusResponseSchema>
+
+async function readEnvelope(response: Response): Promise<FocusResponse | null> {
+  const parsed = focusResponseSchema.safeParse(await response.json().catch(() => null))
+  return parsed.success ? parsed.data : null
 }
 
 /** 拉取当前 pending 的焦点交互。失败抛错（调用方自行决定静默）。 */
 export async function fetchFocusInteractions(): Promise<FocusInteractionPayload[]> {
   const response = await fetch("/api/focus/interactions")
-  const payload = (await response.json()) as
-    | FocusInteractionListResponse
-    | (ApiResponse & { status: "failed" })
-  if (payload.status !== "success" || !Array.isArray(payload.data)) {
-    throw new Error(
-      payload.status === "failed" && payload.message ? payload.message : "获取焦点交互失败",
-    )
+  const envelope = await readEnvelope(response)
+  const parsed = z.array(focusInteractionSchema).safeParse(envelope?.data)
+  if (envelope?.status !== "success" || !parsed.success) {
+    throw new FocusInteractionError(envelope?.message || "获取焦点交互失败", response.status)
   }
-  return payload.data
+  return parsed.data
 }
 
-/** 确认一个交互。后端 409/404 视为已结束（抛错由调用方吞掉）。 */
+/** 确认一个交互。404/409 表示后端已结束（由调用方区分）。 */
 export async function acknowledgeFocusInteraction(id: string): Promise<void> {
   const response = await fetch(`/api/focus/interactions/${id}/ack`, {
     method: "POST",
   })
-  const payload = (await response.json()) as
-    | FocusInteractionResponse
-    | (ApiResponse & { status: "failed" })
-  if (payload.status !== "success") {
-    throw new Error(payload.status === "failed" && payload.message ? payload.message : "确认失败")
+  const envelope = await readEnvelope(response)
+  if (envelope?.status !== "success") {
+    throw new FocusInteractionError(envelope?.message || "确认失败", response.status)
   }
 }
 
-/** 取消一个交互。后端 409/404 视为已结束。 */
+/** 取消一个交互。404/409 表示后端已结束（由调用方区分）。 */
 export async function cancelFocusInteraction(id: string): Promise<void> {
   const response = await fetch(`/api/focus/interactions/${id}/cancel`, {
     method: "POST",
   })
-  const payload = (await response.json()) as
-    | FocusInteractionResponse
-    | (ApiResponse & { status: "failed" })
-  if (payload.status !== "success") {
-    throw new Error(payload.status === "failed" && payload.message ? payload.message : "取消失败")
+  const envelope = await readEnvelope(response)
+  if (envelope?.status !== "success") {
+    throw new FocusInteractionError(envelope?.message || "取消失败", response.status)
   }
 }
