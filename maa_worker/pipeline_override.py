@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, cast
 
 import json_utils as json
 from maa_worker.hotkey import hotkey_value_to_codes
-from models.interface import PipelineOverride
+from models.interface import PipelineOverride, is_option_applicable_any
 from models.scheduler import TaskOptionValue
 
 if TYPE_CHECKING:
@@ -36,21 +36,17 @@ class PipelineOverrideService:
             (
                 task
                 for task in self.worker.interface.task or []
-                if task.entry == task_name
+                if task.name == task_name
             ),
             None,
         )
 
     def _is_option_active_for_context(self, option, controller_names: set[str]) -> bool:
-        if option.controller and not controller_names.intersection(option.controller):
-            return False
-        current_resource_name = self.worker.device_state.current_resource_name
-        if option.resource and (
-            current_resource_name is None
-            or current_resource_name not in option.resource
-        ):
-            return False
-        return True
+        return is_option_applicable_any(
+            option,
+            controller_names,
+            self.worker.device_state.current_resource_name,
+        )
 
     def _normalize_choice_value(
         self, option_name: str, option, options: dict[str, TaskOptionValue]
@@ -228,6 +224,8 @@ class PipelineOverrideService:
         option,
         options: dict[str, TaskOptionValue],
         controller_type: str | None,
+        *,
+        use_win32_vk_code: bool = False,
     ) -> PipelineOverride:
         if not option.pipeline_override or not option.hotkeys:
             return {}
@@ -241,10 +239,16 @@ class PipelineOverrideService:
                 if isinstance(field_value, str):
                     raw_text = field_value
 
-            primary_code, modifier1_code, modifier2_code = hotkey_value_to_codes(
-                raw_text,
-                controller_type,
-            )
+            try:
+                primary_code, modifier1_code, modifier2_code = hotkey_value_to_codes(
+                    raw_text,
+                    controller_type,
+                    use_win32_vk_code=use_win32_vk_code,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"选项 {option_name} 的快捷键字段 {field.name} 配置错误: {exc}"
+                ) from exc
             typed_replacements[f"{{{field.name}}}"] = primary_code
             typed_replacements[f"{{{field.name}.primary}}"] = primary_code
             typed_replacements[f"{{{field.name}.modifier1}}"] = modifier1_code
@@ -310,11 +314,20 @@ class PipelineOverrideService:
             )
             if (
                 controller_definitions
-                and controller_type == "WlRoots"
-                and controller_definitions[0].wlroots
-                and controller_definitions[0].wlroots.use_win32_vk_code
+                and controller_type == "Linux"
+                and controller_definitions[0].linux
+                and controller_definitions[0].linux.use_win32_vk_code
             ):
-                controller_type = "Win32"
+                return self._deep_merge(
+                    merged,
+                    self._build_hotkey_override(
+                        option_name,
+                        option,
+                        options,
+                        "Linux",
+                        use_win32_vk_code=True,
+                    ),
+                )
             return self._deep_merge(
                 merged,
                 self._build_hotkey_override(

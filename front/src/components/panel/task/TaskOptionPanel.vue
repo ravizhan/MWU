@@ -68,7 +68,7 @@ watch(
 
 const currentTaskName = computed(() => {
   if (!currentTaskId) return ""
-  const task = interfaceStore.getTaskByEntry(currentTaskId)
+  const task = interfaceStore.getTaskByName(currentTaskId)
   return resolveInterfaceText(interfaceStore.interface, locale.value, task?.label, task?.name || "")
 })
 
@@ -91,7 +91,7 @@ watch(
 
 const taskOptions = computed(() => {
   if (!currentTaskId) return []
-  const task = interfaceStore.getTaskByEntry(currentTaskId)
+  const task = interfaceStore.getTaskByName(currentTaskId)
   return task?.option || []
 })
 </script>

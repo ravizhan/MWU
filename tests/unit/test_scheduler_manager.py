@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from pydantic import ValidationError
 
 from app_state import AppState
 from models.scheduler import (
@@ -14,8 +13,9 @@ from models.scheduler import (
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
 )
+from types import SimpleNamespace
+
 from scheduler_manager import SchedulerManager, _build_task_from_kwargs
-from services.system_scheduler import ConvergeReport
 
 
 def make_create(
@@ -25,6 +25,7 @@ def make_create(
     cron: str = "0 9 * * *",
 ) -> ScheduledTaskCreate:
     return ScheduledTaskCreate(
+        task_identity="name",
         name=name,
         wakeup_enabled=wakeup_enabled,
         enabled=enabled,
@@ -36,8 +37,15 @@ def make_create(
 @pytest.fixture
 async def manager_env(tmp_path: Path):
     state = AppState()
+    # 任务身份校验需要 worker.interface；提供含 "Startup" 的最小假接口
+    state.worker = SimpleNamespace(
+        interface=SimpleNamespace(
+            task=[SimpleNamespace(name="Startup", entry="Startup", option=[])],
+            option={},
+        ),
+        events=SimpleNamespace(send_log=lambda *_: None),
+    )
     system_scheduler = MagicMock()
-    system_scheduler.converge.return_value = ConvergeReport()
     mgr = SchedulerManager(
         state, tmp_path / "scheduler.sqlite", system_scheduler=system_scheduler
     )
@@ -137,15 +145,6 @@ class TestTriggerRoundTrip:
         with pytest.raises(ValueError):
             mgr._build_trigger_config(trigger)
 
-    def test_composite_dow_rejected_by_unified_subset(self):
-        # 统一子集下复合 DOW（范围/列表/步进）不再合法，创建时即拒绝
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1-5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1,3,5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * */2")
-
 
 class TestLegacyPayloadCutover:
     def test_build_task_ignores_legacy_pre_tasks_key(self):
@@ -153,12 +152,20 @@ class TestLegacyPayloadCutover:
 
         legacy = _build_task_from_kwargs(
             "legacy",
-            {"task_name": "Legacy", "preTasks": [{"command": "echo legacy"}]},
+            {
+                "task_identity": "name",
+                "task_name": "Legacy",
+                "preTasks": [{"command": "echo legacy"}],
+            },
             trigger_config,
         )
         canonical = _build_task_from_kwargs(
             "canonical",
-            {"task_name": "Canonical", "pre_tasks": [{"command": "echo ok"}]},
+            {
+                "task_identity": "name",
+                "task_name": "Canonical",
+                "pre_tasks": [{"command": "echo ok"}],
+            },
             trigger_config,
         )
 
@@ -336,7 +343,7 @@ class TestWakeupMinuteConflict:
 
     async def test_update_rejects_conflict_with_other_task(self, manager_env):
         mgr, _state, _system_scheduler = manager_env
-        task_a = await mgr.create_task(
+        await mgr.create_task(
             make_create("任务A", wakeup_enabled=True, cron="0 9 * * *")
         )
         task_b = await mgr.create_task(

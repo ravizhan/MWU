@@ -52,8 +52,11 @@ export interface PlayCoverController {
   uuid?: string
 }
 
-export interface WlRootsController {
+export interface LinuxControllerConfig {
+  screencap?: "Wlr" | "PipeWire"
+  input?: "Wlr" | "UInput" | "Libei"
   use_win32_vk_code?: boolean
+  pipewire_source?: "Gamescope" | "Portal"
 }
 
 export type GamepadType = "Xbox360" | "DualShock4" | "DS4"
@@ -65,7 +68,7 @@ export interface GamepadController {
   screencap?: GamepadScreencap
 }
 
-export type ControllerType = "Adb" | "Win32" | "MacOS" | "PlayCover" | "WlRoots" | "Gamepad"
+export type ControllerType = "Adb" | "Win32" | "MacOS" | "PlayCover" | "Gamepad" | "Linux"
 
 export interface Controller {
   name: string
@@ -77,8 +80,8 @@ export interface Controller {
   win32?: Win32Controller
   macos?: MacOSController
   playcover?: PlayCoverController
-  wlroots?: WlRootsController
   gamepad?: GamepadController
+  linux?: LinuxControllerConfig
   display_short_side?: number
   display_long_side?: number
   display_raw?: boolean
@@ -246,6 +249,21 @@ export interface Preset {
   task?: PresetTask[]
 }
 
+export interface SentryTelemetryConfig {
+  dsn: string
+  /** 默认 true */
+  tracing?: boolean
+  /** 有限数值 [0,1]，默认 1.0 */
+  traces_sample_rate?: number
+  /** 有限数值 [0,1]，默认 1.0 */
+  failure_attachments_sample_rate?: number
+  environment?: string
+}
+
+export interface TelemetryConfig {
+  sentry?: SentryTelemetryConfig
+}
+
 export interface InterfaceModel {
   interface_version: 2
   languages?: Record<string, string>
@@ -273,4 +291,5 @@ export interface InterfaceModel {
   setting?: SettingSection[]
   import?: string[]
   preset?: Preset[]
+  telemetry?: TelemetryConfig
 }

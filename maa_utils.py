@@ -9,6 +9,7 @@ from maa.toolkit import Toolkit
 from PIL import Image
 
 from app_state import WorkerContext
+from maa_worker.focus_interaction import FocusInteractionService
 from maa_worker.agent_service import AgentService
 from maa_worker.device_service import DeviceService
 from maa_worker.event_service import EventService
@@ -17,6 +18,7 @@ from maa_worker.pretask_service import PretaskService
 from maa_worker.sink_service import SinkHandler, SinkService
 from maa_worker.task_service import TaskService
 from models.interface import InterfaceModel
+from services.runtime_info import app_root
 
 if TYPE_CHECKING:
     from app_state import AppState
@@ -38,32 +40,55 @@ class MaaWorker:
         self.tasker = Tasker()
         self.http_client = httpx.Client(timeout=30)
 
-        self.context = WorkerContext(interface_base_dir=self._resolve_app_root())
+        self.context = WorkerContext(interface_base_dir=app_root())
         self.device_state = state.device
         self.task_state = state.task
         self.agent_state = state.agent
+        self.telemetry = state.telemetry_service
 
         Toolkit.init_option(str(self.context.interface_base_dir))
 
         self.events = EventService(self)
+
+        def _broadcast_interaction(phase: str):
+            def _hook(payload: dict):
+                self.events.emit(
+                    "focus.interaction",
+                    payload.get("content", ""),
+                    display=False,
+                    title="任务交互",
+                    details={
+                        "phase": phase,
+                        "id": payload.get("id"),
+                        "mode": payload.get("mode"),
+                        "state": payload.get("state"),
+                        "run_id": payload.get("run_id"),
+                    },
+                )
+
+            return _hook
+
+        self.interactions = FocusInteractionService(
+            on_created=_broadcast_interaction("created"),
+            on_finished=_broadcast_interaction("finished"),
+        )
+        state.focus_interactions = self.interactions
         self.device = DeviceService(self)
         self.pipeline = PipelineOverrideService(self)
         self.agents = AgentService(self)
         self.pretasks = PretaskService(self)
         self.tasks = TaskService(self)
 
-        self.sinks = SinkService(SinkHandler(self.events))
+        self.sinks = SinkService(
+            SinkHandler(
+                self.events,
+                interactions=self.interactions,
+                telemetry=self.telemetry,
+            )
+        )
         self.sinks.register_all(self.resource, self.tasker)
 
         self.events.send_log("MAA初始化成功")
-
-    @staticmethod
-    def _resolve_app_root() -> Path:
-        import sys
-
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent
 
     def get_screencap_bytes(self):
         controller = self.device_state.controller
@@ -90,6 +115,9 @@ class MaaWorker:
             # 避免关闭/更新时用户前置命令一直阻塞到超时。
             self.task_state.stop_flag = True
             self.pretasks.stop_current()
+        # 先释放 controller 与 portal helper（reset_connection_state 清空 device_state），
+        # 再注销 sink，保证 PortalHelper 生命周期不越过控制器。
+        self.device.reset_connection_state()
         self.sinks.unregister_all(
             self.resource,
             self.tasker,

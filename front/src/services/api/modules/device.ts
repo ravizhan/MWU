@@ -5,7 +5,7 @@ export interface PostDeviceResult {
   message: string
 }
 
-export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "WlRoots"
+export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "MacOS" | "Linux"
 
 export interface AdbDevice {
   type: "Adb"
@@ -42,8 +42,14 @@ export interface PlayCoverDevice {
   uuid?: string
 }
 
-export interface WlRootsDevice {
-  type: "WlRoots"
+export interface MacOSDevice {
+  type: "MacOS"
+  window_id: number
+  window_name: string
+}
+
+export interface LinuxDevice {
+  type: "Linux"
   name?: string
   address: string
 }
@@ -53,11 +59,13 @@ export type ConnectableDevice =
   | Win32Device
   | GamepadDevice
   | PlayCoverDevice
-  | WlRootsDevice
+  | MacOSDevice
+  | LinuxDevice
 
 export interface ConnectDevicePayload {
   controller_name: string
   device: ConnectableDevice
+  resource_name: string
 }
 
 export interface SaveCustomDevicePayload {
@@ -121,8 +129,8 @@ export function postDevices(payload: ConnectDevicePayload): Promise<PostDeviceRe
   return fetch("/api/device", {
     method: "POST",
     body: JSON.stringify({
-      ...payload.device,
-      controller_name: payload.controller_name,
+      device: { ...payload.device, controller_name: payload.controller_name },
+      resource_name: payload.resource_name,
     }),
     headers: {
       "Content-Type": "application/json",

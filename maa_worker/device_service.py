@@ -1,4 +1,3 @@
-import os
 import re
 import sys
 import time
@@ -8,18 +7,26 @@ from typing import TYPE_CHECKING, Any
 from maa.controller import (
     AdbController,
     GamepadController,
+    LinuxController,
     PlayCoverController,
     Win32Controller,
-    WlRootsController,
 )
+from maa.controller import (
+    MacOSController as SdkMacOSController,
+)
+from maa.define import MaaMacOSPermissionEnum
 from maa.toolkit import Toolkit
 
 from models.api import CustomDeviceCreate, DeviceModel
 from models.device_address import (
+    LinuxDeviceAddress,
     canonicalize_custom_device_address,
     try_canonicalize_runtime_device_address,
 )
+from models.interface_loader import resolve_interface_relative_path
+from models.scheduler import PreTaskCommand, TaskOptionValue
 from settings_io import SETTINGS_LOCK, atomic_write_settings, read_settings_raw
+from services.privilege_service import check_permission
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
@@ -35,11 +42,17 @@ def is_controller_supported(controller) -> tuple[bool, str]:
             if not controller.win32:
                 return False, "controller_config_missing"
             return True, ""
+        case "MacOS":
+            if sys.platform != "darwin":
+                return False, "platform_not_supported"
+            if not controller.macos:
+                return False, "controller_config_missing"
+            return True, ""
         case "PlayCover":
             if sys.platform != "darwin":
                 return False, "platform_not_supported"
             return True, ""
-        case "WlRoots":
+        case "Linux":
             if not sys.platform.startswith("linux"):
                 return False, "platform_not_supported"
             return True, ""
@@ -59,9 +72,25 @@ def _record_identity(
     return (controller_name, device_type, address)
 
 
+def _applicable_pi_pretasks(
+    interface, controller_name: str, resource_name: str
+) -> list:
+    """返回对当前 controller/resource 适用的 PI pretask 列表。"""
+    raw = interface.pretask
+    if raw is None:
+        return []
+    pretasks = raw if isinstance(raw, list) else [raw]
+    return [
+        p
+        for p in pretasks
+        if (not p.controller or controller_name in p.controller)
+        and (not p.resource or resource_name in p.resource)
+    ]
+
+
 def _scan_device_address(device: dict[str, Any]) -> str | None:
     device_type = device.get("type")
-    if device_type in ("Adb", "PlayCover", "WlRoots"):
+    if device_type in ("Adb", "PlayCover", "MacOS", "Linux"):
         return try_canonicalize_runtime_device_address(
             device_type, str(device.get("address", ""))
         )
@@ -111,6 +140,14 @@ def custom_record_to_device(record: dict[str, Any]) -> dict[str, Any]:
             "screencap_methods": 0,
             "gamepad_type": int(type_s),
         }
+    if device_type == "MacOS":
+        return {
+            "type": "MacOS",
+            "name": address,
+            "address": address,
+            "screencap_methods": 1,
+            "input_methods": 1,
+        }
     if device_type == "PlayCover":
         return {"type": "PlayCover", "address": address}
     return {"type": device_type, "address": address}
@@ -143,9 +180,10 @@ class DeviceService:
                 if not controller_name or device_type not in (
                     "Adb",
                     "Win32",
+                    "MacOS",
                     "Gamepad",
                     "PlayCover",
-                    "WlRoots",
+                    "Linux",
                 ):
                     continue
                 address = try_canonicalize_runtime_device_address(
@@ -236,10 +274,28 @@ class DeviceService:
             seen.add(identity)
         return merged
 
+    def _resource_path(self, path: str) -> Path:
+        """解析资源路径：{PROJECT_DIR} 替换为 interface 根目录并做 containment 校验。"""
+        base_dir = Path(self.worker.context.interface_base_dir).resolve()
+        # resource bundle 既可能是目录（resource/）也可能是单文件，两种都合法。
+        if "{PROJECT_DIR}" in path:
+            prefix, remainder = path.split("{PROJECT_DIR}", 1)
+            if prefix.strip().replace("\\", "/").strip("/"):
+                raise ValueError(f"path 中的 {{PROJECT_DIR}} 只能出现在开头: {path}")
+            relative = remainder.strip().replace("\\", "/").lstrip("/")
+            if not relative:
+                raise ValueError("path 不能为空")
+            return resolve_interface_relative_path(
+                base_dir, relative, allow_files_and_directories=True
+            )
+        return resolve_interface_relative_path(
+            base_dir, path, allow_files_and_directories=True
+        )
+
     def _load_resource_bundle(self, path: str) -> str:
-        resolved_path = os.path.realpath(path.replace("{PROJECT_DIR}", os.getcwd()))
+        resolved_path = self._resource_path(path)
         self.worker.resource.post_bundle(resolved_path).wait()
-        return resolved_path
+        return str(resolved_path)
 
     def _append_controller_resource_paths(self, controller) -> list[str]:
         loaded_paths: list[str] = []
@@ -326,7 +382,14 @@ class DeviceService:
                 }
             )
 
-        controller_order = ["Adb", "Win32", "Gamepad", "PlayCover", "WlRoots"]
+        controller_order = [
+            "Adb",
+            "Win32",
+            "Gamepad",
+            "PlayCover",
+            "MacOS",
+            "Linux",
+        ]
         return sorted(
             capabilities,
             key=lambda item: (
@@ -337,11 +400,30 @@ class DeviceService:
             ),
         )
 
+    def _scan_wlr_devices(self) -> list[dict[str, Any]]:
+        """Wlr 模式：从既有桌面窗口 socket 发现结果枚举候选。"""
+        devices: list[dict[str, Any]] = []
+        socket_seen: set[str] = set()
+        for device in Toolkit.find_desktop_windows():
+            socket_path = device.class_name.strip()
+            if not socket_path or socket_path in socket_seen:
+                continue
+            socket_seen.add(socket_path)
+            address = LinuxDeviceAddress(
+                kind="wlr", wlr_socket_path=socket_path
+            ).to_compact_json()
+            devices.append(
+                {
+                    "type": "Linux",
+                    "name": device.window_name,
+                    "address": address,
+                }
+            )
+        return devices
+
     def _find_devices_for_controller(self, controller) -> list[dict[str, Any]]:
         devices: list[dict[str, Any]] = []
         win32_seen: set[int] = set()
-        gamepad_seen: set[int] = set()
-        wlroots_seen: set[str] = set()
 
         supported, _ = is_controller_supported(controller)
         if not supported:
@@ -353,7 +435,7 @@ class DeviceService:
                     data = {
                         "name": device.name,
                         "type": "Adb",
-                        "adb_path": device.adb_path,
+                        "adb_path": str(device.adb_path),
                         "address": device.address,
                         "screencap_methods": str(device.screencap_methods),
                         "input_methods": str(device.input_methods),
@@ -392,50 +474,118 @@ class DeviceService:
                             or 1,
                         }
                     )
+            case "MacOS":
+                assert controller.macos is not None
+                window_id_seen: set[str] = set()
+                for device in Toolkit.find_desktop_windows():
+                    window_name = device.window_name
+                    if controller.macos.title_regex and not re.search(
+                        controller.macos.title_regex, window_name
+                    ):
+                        continue
+                    window_id = str(int(device.hwnd))
+                    if window_id in window_id_seen:
+                        continue
+                    window_id_seen.add(window_id)
+                    devices.append(
+                        {
+                            "type": "MacOS",
+                            "name": window_name,
+                            "address": window_id,
+                            "screencap_methods": 1,
+                            "input_methods": 1,
+                        }
+                    )
+            case "Linux":
+                devices = self._find_linux_devices(controller)
             case "PlayCover":
                 return devices
-            case "WlRoots":
-                for device in Toolkit.find_desktop_windows():
-                    socket_path = device.class_name.strip()
-                    if not socket_path or socket_path in wlroots_seen:
-                        continue
-                    wlroots_seen.add(socket_path)
-                    devices.append(
-                        {
-                            "type": "WlRoots",
-                            "name": device.window_name,
-                            "address": socket_path,
-                        }
-                    )
             case "Gamepad":
-                assert controller.gamepad is not None
-                for device in Toolkit.find_desktop_windows():
-                    class_name = device.class_name
-                    window_name = device.window_name
-                    class_match = not controller.gamepad.class_regex or re.search(
-                        controller.gamepad.class_regex, class_name
-                    )
-                    window_match = not controller.gamepad.window_regex or re.search(
-                        controller.gamepad.window_regex, window_name
-                    )
-                    if not (class_match and window_match):
-                        continue
+                devices = self._find_gamepad_devices(controller)
+        return devices
 
-                    hwnd = int(device.hwnd)
-                    if hwnd in gamepad_seen:
-                        continue
-                    gamepad_seen.add(hwnd)
+    def _find_linux_devices(self, controller) -> list[dict[str, Any]]:
+        devices: list[dict[str, Any]] = []
+        cfg = controller.linux
+        if cfg is None:
+            return devices
 
+        screencap = cfg.screencap or "Wlr"
+
+        if screencap == "Wlr":
+            devices.extend(self._scan_wlr_devices())
+        elif screencap == "PipeWire":
+            if cfg.pipewire_source == "Gamescope" or cfg.pipewire_source is None:
+                for instance in Toolkit.find_gamescope_instances():
+                    address = LinuxDeviceAddress(
+                        kind="gamescope", display_no=instance.display_no
+                    ).to_compact_json()
                     devices.append(
                         {
-                            "type": "Gamepad",
-                            "hWnd": hwnd,
-                            "class_name": class_name,
-                            "window_name": window_name,
-                            "screencap_methods": controller.gamepad.screencap or 1,
-                            "gamepad_type": controller.gamepad.gamepad_type or 0,
+                            "type": "Linux",
+                            "name": f"gamescope-{instance.display_no}",
+                            "address": address,
                         }
                     )
+            else:
+                address = LinuxDeviceAddress(kind="portal").to_compact_json()
+                devices.append(
+                    {
+                        "type": "Linux",
+                        "name": "通过系统选择屏幕",
+                        "address": address,
+                    }
+                )
+        return devices
+
+    def _find_gamepad_devices(self, controller) -> list[dict[str, Any]]:
+        devices: list[dict[str, Any]] = []
+        assert controller.gamepad is not None
+        has_window_filter = bool(
+            controller.gamepad.class_regex or controller.gamepad.window_regex
+        )
+        if not has_window_filter:
+            # 无窗口过滤：允许创建无窗口手柄控制器（hWnd=None）
+            devices.append(
+                {
+                    "type": "Gamepad",
+                    "hWnd": 0,
+                    "class_name": "",
+                    "window_name": "",
+                    "screencap_methods": controller.gamepad.screencap or 2,
+                    "gamepad_type": controller.gamepad.gamepad_type or 0,
+                }
+            )
+            return devices
+
+        gamepad_seen: set[int] = set()
+        for device in Toolkit.find_desktop_windows():
+            class_name = device.class_name
+            window_name = device.window_name
+            class_match = not controller.gamepad.class_regex or re.search(
+                controller.gamepad.class_regex, class_name
+            )
+            window_match = not controller.gamepad.window_regex or re.search(
+                controller.gamepad.window_regex, window_name
+            )
+            if not (class_match and window_match):
+                continue
+
+            hwnd = int(device.hwnd)
+            if hwnd in gamepad_seen:
+                continue
+            gamepad_seen.add(hwnd)
+
+            devices.append(
+                {
+                    "type": "Gamepad",
+                    "hWnd": hwnd,
+                    "class_name": class_name,
+                    "window_name": window_name,
+                    "screencap_methods": controller.gamepad.screencap or 2,
+                    "gamepad_type": controller.gamepad.gamepad_type or 0,
+                }
+            )
         return devices
 
     def get_device(self, controller_name: str | None = None) -> dict[str, Any]:
@@ -489,13 +639,16 @@ class DeviceService:
             or state.controller_type is not None
         )
 
-        # 销毁 controller sink
+        # 先释放 controller sink，再释放 controller，最后清 portal helper，
+        # 保证 PortalHelper 的生命周期不越过控制器（沿用 SDK 析构释放）。
         if state.controller is not None and hasattr(self.worker, "sinks"):
             self.worker.sinks.unregister_controller_sink(state.controller)
+        state.controller = None
+        if state.portal_helper is not None:
+            state.portal_helper = None
 
         state.connected = False
         state.configuration_locked = False
-        state.controller = None
         state.controller_name = None
         state.controller_type = None
         state.current_resource_name = None
@@ -516,13 +669,15 @@ class DeviceService:
 
         Args:
             controller_name: 控制器名称（来自 interface.json 的 controller name）
-            device_type: 设备类型 ("Adb", "Win32", "Gamepad", "PlayCover", "WlRoots")
+            device_type: 设备类型 ("Adb", "Win32", "MacOS", "Gamepad", "PlayCover",
+                "Linux")
             device_address: 设备地址（格式因类型而异）
                 - Adb: IP:PORT 地址，如 "127.0.0.1:5555"
                 - Win32: hWnd 的字符串形式，如 "123456"
-                - Gamepad: "hWnd|gamepad_type" 格式，如 "123456|1"
+                - MacOS: CGWindowID 的十进制字符串形式
+                - Gamepad: "hWnd|gamepad_type" 格式，如 "123456|1"；hWnd 为 0 表示无窗口
                 - PlayCover: IP:PORT 地址，如 "127.0.0.1:1717"
-                - WlRoots: Wayland socket 路径
+                - Linux: LinuxDeviceAddress 的键排序紧凑 JSON
 
         Returns:
             构造好的 DeviceModel 实例
@@ -554,6 +709,19 @@ class DeviceService:
                 screencap_methods=0,
                 input_methods=0,
             )
+        elif device_type == "MacOS":
+            try:
+                window_id = int(device_address)
+            except (ValueError, TypeError):
+                window_id = 0
+            return DeviceModel(
+                type="MacOS",
+                controller_name=controller_name,
+                name=device_address,
+                address=str(window_id),
+                screencap_methods=1,
+                input_methods=1,
+            )
         elif device_type == "Gamepad":
             parts = device_address.split("|", 1)
             try:
@@ -582,15 +750,109 @@ class DeviceService:
                 address=device_address,
                 uuid="",
             )
-        elif device_type == "WlRoots":
+        elif device_type == "Linux":
+            address = LinuxDeviceAddress.from_compact_json(
+                device_address
+            ).to_compact_json()
             return DeviceModel(
-                type="WlRoots",
+                type="Linux",
                 controller_name=controller_name,
-                name=device_address,
-                address=device_address,
+                name=address,
+                address=address,
             )
         else:
             raise ValueError(f"不支持的设备类型: {device_type}")
+
+    # -- Linux 连接辅助 -----------------------------------------------------
+
+    def _ensure_macos_permissions(self) -> tuple[bool, str]:
+        """检查 macOS TCC 权限；缺失时请求，拒绝时打开权限设置并失败。"""
+        for permission in (
+            MaaMacOSPermissionEnum.ScreenCapture,
+            MaaMacOSPermissionEnum.Accessibility,
+        ):
+            if Toolkit.macos_check_permission(permission):
+                continue
+            Toolkit.macos_request_permission(permission)
+            if not Toolkit.macos_check_permission(permission):
+                Toolkit.macos_reveal_permission_settings(permission)
+                return False, "macos_permission_required"
+        return True, ""
+
+    def _build_linux_config(
+        self,
+        address: LinuxDeviceAddress,
+        screencap: str,
+        input_method: str,
+        use_win32_vk_code: bool,
+    ) -> dict[str, Any] | None:
+        """构建 LinuxController JSON 配置；不可用返回 None 并记录错误。"""
+        state = self.worker.device_state
+        screencap_int = 1 if screencap == "Wlr" else 4
+        input_int = {"Wlr": 1, "UInput": 2, "Libei": 4}[input_method]
+
+        if address.kind == "wlr":
+            config: dict[str, Any] = {
+                "screencap_method": screencap_int,
+                "input_method": input_int,
+                "wlr_socket_path": address.wlr_socket_path,
+                "use_win32_vk_code": use_win32_vk_code,
+            }
+            if address.uinput_path:
+                config["uinput_path"] = address.uinput_path
+            if address.uinput_screen_width is not None:
+                config["uinput_screen_width"] = address.uinput_screen_width
+            if address.uinput_screen_height is not None:
+                config["uinput_screen_height"] = address.uinput_screen_height
+            return config
+
+        if address.kind == "gamescope":
+            instances = [
+                item
+                for item in Toolkit.find_gamescope_instances()
+                if item.display_no == address.display_no
+            ]
+            if not instances:
+                state.last_device_error = "linux_device_unavailable"
+                return None
+            instance = instances[0]
+            if instance.pipewire_node_id == 0:
+                state.last_device_error = "linux_device_unavailable"
+                return None
+            config = {
+                "screencap_method": 4,
+                "input_method": input_int,
+                "pw_node_id": instance.pipewire_node_id,
+                "use_win32_vk_code": use_win32_vk_code,
+            }
+            if input_method == "Libei":
+                eis_socket_path = address.eis_socket_path or instance.eis_socket_path
+                config["eis_socket_path"] = eis_socket_path
+            return config
+
+        # portal
+        helper = state.portal_helper
+        if helper is None:
+            try:
+                helper = Toolkit.portal_helper_create()
+            except Exception:
+                state.last_device_error = "linux_device_unavailable"
+                return None
+            if not helper.open_stream():
+                state.portal_helper = None
+                state.last_device_error = "linux_portal_cancelled"
+                return None
+            state.portal_helper = helper
+        config = {
+            "screencap_method": 4,
+            "input_method": input_int,
+            "pw_socket_fd": helper.get_pipewire_fd(),
+            "pw_node_id": helper.get_pipewire_node_id(),
+            "use_win32_vk_code": use_win32_vk_code,
+        }
+        if input_method == "Libei":
+            config["eis_socket_path"] = address.eis_socket_path
+        return config
 
     def connect(self, device_config: DeviceModel) -> bool:
         state = self.worker.device_state
@@ -618,8 +880,9 @@ class DeviceService:
 
         status = False
         controller = None
-        match device_type:
-            case "Adb":
+        conn_fail_msg = "设备连接失败，请检查终端日志"
+        try:
+            if device_type == "Adb":
                 controller = AdbController(
                     adb_path=device_config.adb_path,
                     address=device_config.address,
@@ -628,39 +891,90 @@ class DeviceService:
                     config=device_config.config or {},
                 )
                 status = controller.post_connection().wait().succeeded
-            case "Win32":
+            elif device_type == "Win32":
+                win32_cfg = selected_controller.win32
+                mouse_method = 1
+                keyboard_method = 1
+                screencap_method = 18
+                if win32_cfg is not None:
+                    if win32_cfg.screencap is not None:
+                        screencap_method = int(win32_cfg.screencap)
+                    if win32_cfg.mouse is not None:
+                        mouse_method = int(win32_cfg.mouse)
+                    if win32_cfg.keyboard is not None:
+                        keyboard_method = int(win32_cfg.keyboard)
                 controller = Win32Controller(
                     hWnd=device_config.hWnd,
-                    screencap_method=int(device_config.screencap_methods or 0),
-                    mouse_method=int(device_config.input_methods or 0),
-                    keyboard_method=int(device_config.input_methods or 0),
+                    screencap_method=screencap_method,
+                    mouse_method=mouse_method,
+                    keyboard_method=keyboard_method,
                 )
                 status = controller.post_connection().wait().succeeded
-            case "Gamepad":
+            elif device_type == "MacOS":
+                macos_cfg = selected_controller.macos
+                if macos_cfg is None:
+                    state.last_device_error = "未找到匹配的控制器配置"
+                    self.worker.events.send_log(state.last_device_error)
+                    return False
+                permission_ok, permission_error = self._ensure_macos_permissions()
+                if not permission_ok:
+                    state.last_device_error = permission_error
+                    self.worker.events.send_log(state.last_device_error)
+                    return False
+                input_method_int = 2 if macos_cfg.input == "PostToPid" else 1
+                controller = SdkMacOSController(
+                    window_id=int(device_config.address),
+                    screencap_method=1,
+                    input_method=input_method_int,
+                )
+                status = controller.post_connection().wait().succeeded
+            elif device_type == "Linux":
+                linux_cfg = selected_controller.linux
+                if linux_cfg is None:
+                    state.last_device_error = "未找到匹配的控制器配置"
+                    self.worker.events.send_log(state.last_device_error)
+                    return False
+                address = LinuxDeviceAddress.from_compact_json(device_config.address)
+                linux_config = self._build_linux_config(
+                    address,
+                    screencap=linux_cfg.screencap or "Wlr",
+                    input_method=linux_cfg.input or "Wlr",
+                    use_win32_vk_code=bool(linux_cfg.use_win32_vk_code),
+                )
+                if linux_config is None:
+                    self.worker.events.send_log(
+                        state.last_device_error or "设备连接失败，请检查终端日志"
+                    )
+                    return False
+                controller = LinuxController(config=linux_config)
+                status = controller.post_connection().wait().succeeded
+            elif device_type == "Gamepad":
+                hwnd = device_config.hWnd or None
+                gamepad_cfg = selected_controller.gamepad
+                screencap_method = 2
+                if gamepad_cfg is not None and gamepad_cfg.screencap is not None:
+                    screencap_method = int(gamepad_cfg.screencap)
                 controller = GamepadController(
-                    hWnd=device_config.hWnd,
+                    hWnd=hwnd,
                     gamepad_type=int(device_config.gamepad_type or 0),
-                    screencap_method=int(device_config.screencap_methods or 0),
+                    screencap_method=screencap_method,
                 )
                 status = controller.post_connection().wait().succeeded
-            case "PlayCover":
+            elif device_type == "PlayCover":
                 controller = PlayCoverController(
                     address=device_config.address or "127.0.0.1:1717",
-                    uuid=device_config.uuid,
+                    uuid=device_config.uuid or "maa.playcover",
                 )
                 status = controller.post_connection().wait().succeeded
-            case "WlRoots":
-                use_win32_vk_code = bool(
-                    selected_controller.wlroots
-                    and selected_controller.wlroots.use_win32_vk_code
-                )
-                controller = WlRootsController(
-                    wlr_socket_path=device_config.address,
-                    use_win32_vk_code=use_win32_vk_code,
-                )
-                status = controller.post_connection().wait().succeeded
+            else:
+                state.last_device_error = "未找到匹配的控制器配置"
+                self.worker.events.send_log(state.last_device_error)
+                return False
+        except Exception as exc:
+            state.last_device_error = f"设备连接失败: {exc}"
+            self.worker.events.send_log(state.last_device_error)
+            return False
 
-        conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
             self.worker.events.show_system_notification(
                 self.worker.interface.title or self.worker.interface.label or "MWU",
@@ -668,6 +982,9 @@ class DeviceService:
             )
             state.last_device_error = conn_fail_msg
             self.worker.events.send_log(state.last_device_error)
+            return False
+
+        if not self._apply_display_targets(selected_controller, controller):
             return False
 
         time.sleep(1)
@@ -693,6 +1010,56 @@ class DeviceService:
         self.worker.events.send_log(state.last_device_error)
         return False
 
+    def _apply_display_targets(self, controller_def, controller) -> bool:
+        """在 bind 前按 PI 控制器模型设置截图目标。
+
+        互斥判定按显式输入字段进行：显式给出的 short_side=720 也视为提供；
+        仅当三个字段都未显式给出时使用短边 720 默认。
+        """
+        state = self.worker.device_state
+        explicitly_set = controller_def.model_fields_set
+        configured = [
+            name
+            for name in ("display_short_side", "display_long_side", "display_raw")
+            if name in explicitly_set
+        ]
+
+        try:
+            if not configured:
+                if not controller.set_screenshot_target_short_side(720):
+                    raise RuntimeError("设置截图目标（short_side=720）失败")
+            elif configured == ["display_short_side"]:
+                if controller_def.display_short_side is None:
+                    if not controller.set_screenshot_target_short_side(720):
+                        raise RuntimeError("设置截图目标（short_side=720）失败")
+                elif not controller.set_screenshot_target_short_side(
+                    int(controller_def.display_short_side)
+                ):
+                    raise RuntimeError("设置截图目标（short_side）失败")
+            elif configured == ["display_long_side"]:
+                long_value = controller_def.display_long_side
+                if long_value is None:
+                    # 显式 null 等价于未配置截图目标 → 回退短边 720
+                    if not controller.set_screenshot_target_short_side(720):
+                        raise RuntimeError("设置截图目标（short_side=720）失败")
+                elif not controller.set_screenshot_target_long_side(int(long_value)):
+                    raise RuntimeError("设置截图目标（long_side）失败")
+            elif configured == ["display_raw"]:
+                raw_value = bool(controller_def.display_raw)
+                if not controller.set_screenshot_use_raw_size(raw_value):
+                    raise RuntimeError("设置截图目标（raw）失败")
+            else:
+                state.last_device_error = (
+                    "display_short_side, display_long_side 和 display_raw 必须互斥"
+                )
+                self.worker.events.send_log(state.last_device_error)
+                return False
+        except Exception as exc:
+            state.last_device_error = f"设备连接失败: {exc}"
+            self.worker.events.send_log(state.last_device_error)
+            return False
+        return True
+
     def set_resource(self, resource_name: str) -> bool:
         state = self.worker.device_state
         if state.configuration_locked:
@@ -712,10 +1079,21 @@ class DeviceService:
             if resource_config.name != resource_name:
                 continue
 
+            # 切换资源：先清理上一套已加载路径的内容，再加载本次 path。
+            # SDK Resource 是模块级单例，无卸载 API；clear() 可能因正在加载
+            # 失败，清空失败不阻断新资源加载（旧内容可能残留）。
+            if self.worker.resource.loaded:
+                try:
+                    self.worker.resource.clear()
+                except Exception:
+                    pass
+
             loaded_paths = [
                 self._load_resource_bundle(path) for path in resource_config.path
             ]
 
+            # hash 校验严格保留在所有 path 加载成功之后、附加路径之前：
+            # 不匹配仅告警并继续。
             if (
                 resource_config.hash
                 and resource_config.hash != self.worker.resource.hash
@@ -736,7 +1114,8 @@ class DeviceService:
                     (controller.label or controller.name) if controller else ""
                 )
                 self.worker.events.send_log(
-                    f"已为控制器 {controller_label} 加载附加资源: {', '.join(attached_paths)}"
+                    f"已为控制器 {controller_label} 加载附加资源: "
+                    f"{', '.join(attached_paths)}"
                 )
             self.worker.events.send_log(f"资源已设置为: {resource_config.name}")
             if state.connected:
@@ -746,3 +1125,80 @@ class DeviceService:
         state.last_resource_error = f"未找到资源: {resource_name}"
         self.worker.events.send_log(state.last_resource_error)
         return False
+
+    def has_preparation_programs(
+        self,
+        controller_name: str,
+        resource_name: str,
+        user_pre_tasks: list[PreTaskCommand] | None,
+    ) -> bool:
+        """是否存在需要 Controller 创建前执行的准备程序（PI pretask / 用户命令）。"""
+        pi_pretasks = _applicable_pi_pretasks(
+            self.worker.interface, controller_name, resource_name
+        )
+        enabled_user = [
+            t for t in (user_pre_tasks or []) if getattr(t, "enabled", True)
+        ]
+        return bool(pi_pretasks or enabled_user)
+
+    def prepare_connection(
+        self,
+        device_config: DeviceModel,
+        resource_name: str,
+        global_options: dict[str, TaskOptionValue],
+        user_pre_tasks: list[PreTaskCommand],
+    ) -> bool:
+        """准备临界区内的连接前准备：权限 → 释放旧连接 → 适用 PI pretask →
+        用户命令 → 低层 connect。不加载 resource；调用者随后在同一临界区
+        调用 set_resource。
+
+        只要本次有适用 PI pretask 或启用用户命令，就重新创建 Controller
+        （释放旧连接）；没有准备程序且 controller/resource 匹配时允许复用。
+        低层 connect 不自行运行 pretask，避免重试重复启动准备程序。
+        """
+        state = self.worker.device_state
+
+        # 1. 管理员权限检查（在任何准备程序之前）
+        controller_def = self.get_controller_definition(device_config.controller_name)
+        if controller_def is not None:
+            permission_error = check_permission(controller_def)
+            if permission_error is not None:
+                state.last_device_error = "控制器需要管理员权限（permission_required）"
+                self.worker.events.send_log(state.last_device_error)
+                return False
+
+        effective_controller = device_config.controller_name
+
+        # 2. 适用 PI pretask → 用户 shell 命令（run_all 内部按适用性过滤，
+        # 无适用项时为空操作；复用既有连接时同样执行）
+        self.worker.pretasks.run_all(
+            effective_controller,
+            resource_name,
+            user_pre_tasks,
+            global_options=global_options,
+        )
+
+        # 3. 复用判定：无准备程序且 controller/resource 匹配 → 复用既有连接
+        has_programs = self.has_preparation_programs(
+            effective_controller, resource_name, user_pre_tasks
+        )
+        reusable = (
+            not has_programs
+            and state.connected
+            and state.configuration_locked
+            and state.controller_name == effective_controller
+            and state.current_resource_name == resource_name
+        )
+        if reusable:
+            state.prepared_resource_name = resource_name
+            return True
+
+        # 4. 释放旧连接（准备程序必须在 Controller 创建前运行）
+        if state.connected or state.configuration_locked:
+            self.reset_connection_state("准备新的连接上下文，已释放旧连接")
+
+        # 5. 低层 connect（不加载 resource）
+        if not self.connect(device_config):
+            return False
+        state.prepared_resource_name = resource_name
+        return True

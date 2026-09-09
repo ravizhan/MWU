@@ -13,6 +13,15 @@ from models.scheduler import (
 CUSTOM_PRESET_NAME = "__mwu_reserved_custom_preset__"
 
 
+class TaskConfigFormatError(ValueError):
+    """旧格式任务配置（entry 身份或缺失 taskIdentity 标记）。
+
+    严格新格式切换：不迁移、不过滤旧 entry 后写回，原文件逐字节不变。
+    """
+
+    code = "task_config_format_unsupported"
+
+
 class TaskPresetSnapshotModel(BaseModel):
     taskOrder: list[str] = Field(
         default_factory=list, description="任务ID列表（有序，表示执行顺序）"
@@ -33,6 +42,9 @@ class TaskPresetSnapshotModel(BaseModel):
 class TaskConfigModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    taskIdentity: str = Field(
+        default="name", description="任务身份标记；仅支持 name（PI v2.9 语义）"
+    )
     selectedPreset: str = Field(
         default=CUSTOM_PRESET_NAME, description="当前选中的预设名称"
     )
@@ -46,6 +58,13 @@ class TaskConfigModel(BaseModel):
         if not isinstance(value, dict):
             return value
 
+        raw_identity = value.get("taskIdentity", "name")
+        if raw_identity != "name":
+            raise TaskConfigFormatError(
+                f"任务配置使用了不支持的身份格式（taskIdentity={raw_identity!r}）。"
+                "请备份后重置任务配置。"
+            )
+
         selected_preset = _normalize_preset_name(value.get("selectedPreset"))
         raw_presets = value.get("presets")
         normalized_presets: dict[str, dict[str, Any]] = {}
@@ -56,9 +75,68 @@ class TaskConfigModel(BaseModel):
                 normalized_presets[preset_name] = _normalize_raw_snapshot(snapshot)
 
         return {
+            "taskIdentity": "name",
             "selectedPreset": selected_preset,
             "presets": normalized_presets,
         }
+
+
+def validate_task_config_identity(
+    config_data: dict[str, Any], interface_model: InterfaceModel
+) -> None:
+    """校验既存配置的身份标记与所有 task key 均为当前 PI task name。
+
+    任一 task key 不属于当前 task name 时抛出 TaskConfigFormatError。
+    """
+    if not isinstance(config_data, dict) or config_data.get("taskIdentity") != "name":
+        raise TaskConfigFormatError(
+            '任务配置使用了不支持的身份格式（缺少 taskIdentity="name" 标记）。'
+            "请备份后重置任务配置。"
+        )
+
+    valid_task_names = {task.name for task in (interface_model.task or [])}
+    raw_presets = config_data.get("presets")
+    if not isinstance(raw_presets, dict):
+        return
+    invalid_keys: set[str] = set()
+    for snapshot in raw_presets.values():
+        if not isinstance(snapshot, dict):
+            continue
+        for section in ("taskOrder", "taskChecked", "taskOptions"):
+            section_value = snapshot.get(section)
+            if not isinstance(section_value, dict):
+                continue
+            for task_key in section_value:
+                if isinstance(task_key, str) and task_key not in valid_task_names:
+                    invalid_keys.add(task_key)
+        # taskOrder 是列表，单独检查
+        order_value = snapshot.get("taskOrder")
+        if isinstance(order_value, list):
+            for task_key in order_value:
+                if isinstance(task_key, str) and task_key not in valid_task_names:
+                    invalid_keys.add(task_key)
+
+    if invalid_keys:
+        raise TaskConfigFormatError(
+            "任务配置包含不属于当前 interface 的任务键: "
+            + ", ".join(sorted(invalid_keys))
+            + "。请备份后重置任务配置。"
+        )
+
+
+def find_unknown_task_names(
+    interface_model: InterfaceModel, task_names: list[str]
+) -> list[str]:
+    """返回不属于当前 PI 的 task name 列表（保序去重）。"""
+    valid_task_names = {task.name for task in (interface_model.task or [])}
+    seen: set[str] = set()
+    unknown: list[str] = []
+    for task_name in task_names:
+        if isinstance(task_name, str) and task_name not in valid_task_names:
+            if task_name not in seen:
+                unknown.append(task_name)
+                seen.add(task_name)
+    return unknown
 
 
 def normalize_task_config(
@@ -83,6 +161,7 @@ def normalize_task_config(
         selected_preset = CUSTOM_PRESET_NAME
 
     return TaskConfigModel(
+        taskIdentity="name",
         selectedPreset=selected_preset,
         presets=preset_snapshots,
     )
@@ -179,10 +258,17 @@ def normalize_global_option_values(
     raw_global_options: dict[str, Any] | None,
     interface_model: InterfaceModel,
 ) -> dict[str, TaskOptionValue]:
+    """规范化全局选项值。
+
+    收集范围为可达 option 联集：global_option、各 resource.option、
+    controller.option、setting.option、pretask.option。保存完整合法值，
+    执行时再按上下文和实际选中 case 过滤。
+    """
     all_options = interface_model.option or {}
+    reachable_names = _collect_global_scope_option_names(interface_model)
     option_map = {
         option_name: all_options[option_name]
-        for option_name in (interface_model.global_option or [])
+        for option_name in reachable_names
         if option_name in all_options
     }
     defaults, value_types = _build_option_defaults(option_map)
@@ -196,13 +282,49 @@ def normalize_global_option_values(
     )
 
 
+def _collect_global_scope_option_names(
+    interface_model: InterfaceModel,
+) -> list[str]:
+    """global_option + resource/controller/setting/pretask option 可达联集（保序）。"""
+    all_options = interface_model.option or {}
+    ordered: list[str] = []
+
+    def collect(option_names: list[str] | None) -> None:
+        for option_name in option_names or []:
+            if option_name in ordered or option_name not in all_options:
+                continue
+            ordered.append(option_name)
+            for case in all_options[option_name].cases or []:
+                collect(case.option)
+
+    collect(interface_model.global_option)
+    for resource in interface_model.resource:
+        collect(resource.option)
+    for controller in interface_model.controller:
+        collect(controller.option)
+    for section in interface_model.setting or []:
+        collect(section.option)
+    for pretask in _pretask_iter(interface_model):
+        collect(pretask.option)
+    return ordered
+
+
+def _pretask_iter(interface_model: InterfaceModel):
+    pretask = interface_model.pretask
+    if pretask is None:
+        return []
+    if isinstance(pretask, list):
+        return pretask
+    return [pretask]
+
+
 def normalize_task_execution_payload(
     raw_task_list: Any,
     raw_task_options: Any,
     interface_model: InterfaceModel,
     raw_pre_tasks: Any = None,
 ) -> tuple[list[str], TaskOptionsByTask, list[PreTaskCommand]]:
-    valid_task_ids = {task.entry for task in (interface_model.task or [])}
+    valid_task_ids = {task.name for task in (interface_model.task or [])}
     normalized_task_list: list[str] = []
     seen_task_ids: set[str] = set()
 
@@ -256,9 +378,6 @@ def build_interface_preset_snapshot(
 ) -> TaskPresetSnapshotModel:
     task_order = _build_default_task_order(interface_model)
     task_checked = {task_id: False for task_id in task_order}
-    task_name_to_entry = {
-        task.name: task.entry for task in (interface_model.task or [])
-    }
     task_option_maps = _build_task_option_maps(interface_model)
 
     task_options_by_task: TaskOptionsByTask = {}
@@ -270,18 +389,18 @@ def build_interface_preset_snapshot(
     seen_task_ids: set[str] = set()
 
     for preset_task in preset.task or []:
-        task_entry = task_name_to_entry.get(preset_task.name)
-        if not task_entry or task_entry in seen_task_ids:
+        task_name = preset_task.name
+        if task_name not in task_checked or task_name in seen_task_ids:
             continue
 
-        ordered_preset_tasks.append(task_entry)
-        seen_task_ids.add(task_entry)
-        task_checked[task_entry] = bool(
+        ordered_preset_tasks.append(task_name)
+        seen_task_ids.add(task_name)
+        task_checked[task_name] = bool(
             True if preset_task.enabled is None else preset_task.enabled
         )
 
-        option_map = task_option_maps.get(task_entry, {})
-        target_options = task_options_by_task.setdefault(task_entry, {})
+        option_map = task_option_maps.get(task_name, {})
+        target_options = task_options_by_task.setdefault(task_name, {})
         for option_name, option_value in (preset_task.option or {}).items():
             if option_name not in option_map:
                 continue
@@ -433,7 +552,7 @@ def _normalize_preset_name(value: Any) -> str:
 
 
 def _build_default_task_order(interface_model: InterfaceModel) -> list[str]:
-    return [task.entry for task in (interface_model.task or [])]
+    return [task.name for task in (interface_model.task or [])]
 
 
 def _build_task_option_maps(
@@ -445,7 +564,7 @@ def _build_task_option_maps(
     for task in interface_model.task or []:
         collected: dict[str, Option] = {}
         _collect_task_options(task.option or [], option_map, collected)
-        task_option_maps[task.entry] = collected
+        task_option_maps[task.name] = collected
 
     return task_option_maps
 

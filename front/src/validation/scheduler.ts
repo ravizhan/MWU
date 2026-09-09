@@ -74,7 +74,7 @@ const preTaskCommandSchema = z.object({
 const deviceConfigSchema = z
   .object({
     controller_name: z.string().trim().min(1),
-    device_type: z.enum(["Adb", "Win32", "Gamepad", "PlayCover"]),
+    device_type: z.enum(["Adb", "Win32", "Gamepad", "PlayCover", "MacOS", "Linux"]),
     device_address: z.string().trim().min(1),
   })
   .superRefine((val, ctx) => {
@@ -96,6 +96,7 @@ export const schedulerTaskFormSchema = z.object({
   enabled: z.boolean().default(true),
   wakeup_enabled: z.boolean().default(false),
   trigger_config: triggerConfigSchema,
+  task_identity: z.literal("name"),
   task_list: z.array(z.string()).min(1, "task list must not be empty"),
   task_options: z
     .record(

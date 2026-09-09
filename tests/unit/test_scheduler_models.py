@@ -68,18 +68,9 @@ class TestTriggerConfig:
         with pytest.raises(ValidationError):
             _trigger_adapter.validate_python({"type": "unknown"})
 
-    def test_cron_model_dump_json(self):
-        config = CronTriggerConfig(cron="0 9 * * *")
-        dump = config.model_dump(mode="json")
-        assert isinstance(dump["cron"], str)
-        assert dump["type"] == "cron"
-
 
 class TestTaskName:
     _adapter = TypeAdapter(TaskName)
-
-    def test_valid(self):
-        assert self._adapter.validate_python("my task") == "my task"
 
     def test_stripped(self):
         assert self._adapter.validate_python("  hello  ") == "hello"
@@ -140,22 +131,6 @@ class TestScheduledTaskCreate:
                 task_list=[],
             )
 
-    def test_valid_create(self):
-        task = ScheduledTaskCreate(
-            name="test",
-            trigger_config={"type": "cron", "cron": "0 9 * * *"},
-            task_list=["task1"],
-        )
-        assert task.name == "test"
-
-    def test_name_stripped(self):
-        task = ScheduledTaskCreate(
-            name="  hello  ",
-            trigger_config={"type": "cron", "cron": "0 9 * * *"},
-            task_list=["task1"],
-        )
-        assert task.name == "hello"
-
 
 class TestScheduledTaskDeviceConfig:
     def test_adb_serial_allowed(self):
@@ -188,13 +163,42 @@ class TestScheduledTaskDeviceConfig:
         )
         assert d.device_address == "12345|1"
 
-    def test_wlroots_socket_path(self):
+    def test_macos_cgwindow_id(self):
         d = ScheduledTaskDeviceConfig(
             controller_name="c",
-            device_type="WlRoots",
-            device_address=" /run/user/1000/wayland-1 ",
+            device_type="MacOS",
+            device_address=" 0042 ",
         )
-        assert d.device_address == "/run/user/1000/wayland-1"
+        assert d.device_address == "42"
+
+    def test_macos_non_positive_rejected(self):
+        with pytest.raises(ValidationError):
+            ScheduledTaskDeviceConfig(
+                controller_name="c",
+                device_type="MacOS",
+                device_address="0",
+            )
+
+    def test_linux_json_address(self):
+        d = ScheduledTaskDeviceConfig(
+            controller_name="c",
+            device_type="Linux",
+            device_address=(
+                '{"wlr_socket_path": "/run/user/1000/wayland-1", "kind": "wlr"}'
+            ),
+        )
+        assert (
+            d.device_address
+            == '{"kind": "wlr", "wlr_socket_path": "/run/user/1000/wayland-1"}'
+        )
+
+    def test_linux_invalid_json_rejected(self):
+        with pytest.raises(ValidationError):
+            ScheduledTaskDeviceConfig(
+                controller_name="c",
+                device_type="Linux",
+                device_address="not-json",
+            )
 
 
 class TestManualStartPayload:

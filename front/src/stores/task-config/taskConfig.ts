@@ -20,6 +20,11 @@ import {
   normalizeOptionValueForBoundary,
 } from "@/utils/task-config/options"
 
+export interface TaskConfigLoadError {
+  code: string
+  message: string
+}
+
 function cloneOptionValue(value: TaskOptionValue): TaskOptionValue
 function cloneOptionValue(value: NullableTaskOptionValue): NullableTaskOptionValue {
   if (value === null) {
@@ -182,6 +187,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
     selectedPresetName: string
     presetSnapshots: Record<string, TaskPresetSnapshot>
     configLoaded: boolean
+    configLoadError: TaskConfigLoadError | null
     saveTimer: ReturnType<typeof setTimeout> | null
     preTasks: PreTaskCommand[]
   } => ({
@@ -190,6 +196,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
     selectedPresetName: CUSTOM_PRESET_NAME,
     presetSnapshots: {},
     configLoaded: false,
+    configLoadError: null,
     saveTimer: null,
     preTasks: [],
   }),
@@ -252,6 +259,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
     ): TaskExecutionPayload {
       const task_list = this.normalizeTaskIds(taskIds)
       return {
+        task_identity: "name",
         task_list,
         task_options: this.buildOptionsForTasks(task_list, overridesByTask),
         preTasks: this.preTasks ? [...this.preTasks] : [],
@@ -381,7 +389,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
           continue
         }
 
-        const taskItem = taskMap.get(interfaceTask.entry)
+        const taskItem = taskMap.get(interfaceTask.name)
         if (!taskItem || usedTaskIds.has(taskItem.id)) {
           continue
         }
@@ -481,6 +489,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       )
 
       return {
+        taskIdentity: "name",
         selectedPreset: this.selectedPresetName,
         presets: normalizedSnapshots,
       }
@@ -488,17 +497,36 @@ export const useTaskConfigStore = defineStore("taskConfig", {
 
     async loadConfig() {
       const taskConfig = await getTaskConfig()
-      this.presetSnapshots = this.seedPresetSnapshots(taskConfig.presets)
+      if (!taskConfig.ok) {
+        if (this.saveTimer) {
+          clearTimeout(this.saveTimer)
+          this.saveTimer = null
+        }
+        this.configLoaded = false
+        this.configLoadError = {
+          code: taskConfig.code,
+          message: taskConfig.message,
+        }
+        return
+      }
+
+      const persistedConfig = taskConfig.config
+      this.presetSnapshots = this.seedPresetSnapshots(persistedConfig.presets)
 
       this.selectedPresetName =
-        taskConfig.selectedPreset && this.presetSnapshots[taskConfig.selectedPreset]
-          ? taskConfig.selectedPreset
+        persistedConfig.selectedPreset && this.presetSnapshots[persistedConfig.selectedPreset]
+          ? persistedConfig.selectedPreset
           : CUSTOM_PRESET_NAME
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
       this.configLoaded = true
+      this.configLoadError = null
     },
 
     debouncedSave() {
+      if (!this.configLoaded) {
+        return
+      }
+
       if (this.saveTimer) {
         clearTimeout(this.saveTimer)
       }
@@ -508,15 +536,28 @@ export const useTaskConfigStore = defineStore("taskConfig", {
     },
 
     async saveConfig() {
+      if (!this.configLoaded) {
+        return
+      }
       await saveTaskConfig(this.buildPersistedConfig())
     },
 
     async resetConfig() {
-      await resetTaskConfig()
+      const resetSucceeded = await resetTaskConfig()
+      if (!resetSucceeded) {
+        return
+      }
+
+      if (this.saveTimer) {
+        clearTimeout(this.saveTimer)
+        this.saveTimer = null
+      }
       this.presetSnapshots = this.seedPresetSnapshots()
       this.selectedPresetName = CUSTOM_PRESET_NAME
       this.preTasks = []
       this.hydrateSnapshot(this.presetSnapshots[CUSTOM_PRESET_NAME])
+      this.configLoaded = true
+      this.configLoadError = null
     },
   },
 })

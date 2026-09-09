@@ -27,6 +27,7 @@ const defaultSettings: SettingsModel = {
   },
   ui: {
     darkMode: "auto",
+    language: "zh-CN",
   },
   runtime: {
     timeout: 300,
@@ -92,7 +93,7 @@ export const useSettingsStore = defineStore("settings", {
   state: () => {
     const settings: SettingsModel = {
       ...deepClone(defaultSettings),
-      ui: { darkMode: getCachedDarkMode() },
+      ui: { darkMode: getCachedDarkMode(), language: "zh-CN" },
     }
     return {
       settings,

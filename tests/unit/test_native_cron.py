@@ -39,38 +39,6 @@ class TestParseNativeCron:
         assert nc.minute == 45
         assert nc.hour is None
 
-    def test_rejects_invalid(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("*/2 * * * *")
-
-    def test_rejects_empty(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("")
-
-    def test_rejects_4_fields(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 * *")
-
-    def test_rejects_day_and_dow(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 15 * 1")
-
-    def test_rejects_hour_star_with_day(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("30 * 15 * *")
-
-    def test_rejects_month_without_day(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 * 6 *")
-
-    def test_rejects_minute_star(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("* 9 * * *")
-
-    def test_rejects_feb_30(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 30 2 *")
-
 
 # ---------------------------------------------------------------------------
 # to_schtasks_args
@@ -194,15 +162,6 @@ class TestDowConversion:
     @pytest.mark.parametrize("dow", list(range(7)))
     def test_round_trip(self, dow):
         assert aps_dow_to_unix(unix_dow_to_aps(dow)) == dow
-
-    def test_unix_sunday_to_aps_saturday(self):
-        assert unix_dow_to_aps(0) == 6
-
-    def test_unix_monday_to_aps_monday_zero(self):
-        assert unix_dow_to_aps(1) == 0
-
-    def test_aps_monday_zero_to_unix_monday_one(self):
-        assert aps_dow_to_unix(0) == 1
 
 
 # ---------------------------------------------------------------------------

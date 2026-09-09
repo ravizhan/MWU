@@ -5,7 +5,8 @@ import { createPinia } from "pinia"
 import App from "@/app/App.vue"
 import router from "@/app/router"
 import i18n from "@/app/i18n"
-import { useIndexStore, useSettingsStore } from "@/stores"
+import { useIndexStore, useSettingsStore, useDeviceConnectionStore } from "@/stores"
+import { useFocusInteractionStore } from "@/stores/focus/focusInteraction"
 import { sse } from "@/services/realtime/sse"
 import { dispatchRealtimeEvent } from "@/services/realtime/dispatcher"
 import type { RealtimeEventName } from "@/types/realtimeModel"
@@ -23,8 +24,13 @@ document.head.appendChild(meta)
 
 const indexStore = useIndexStore(pinia)
 const settingsStore = useSettingsStore(pinia)
+const deviceStore = useDeviceConnectionStore(pinia)
+const focusInteractionStore = useFocusInteractionStore(pinia)
 
-const stores = { indexStore, settingsStore }
+const stores = { indexStore, settingsStore, deviceStore, focusInteractionStore }
+
+// 打开页面时拉取可能已存在的 pending 交互（SSE 之前的漏网）
+void focusInteractionStore.hydrate()
 
 /**
  * All SSE event types. The dispatcher routes each event by type,
@@ -35,6 +41,7 @@ const stores = { indexStore, settingsStore }
   [
     "log",
     "focus.display",
+    "focus.interaction",
     "task.started",
     "task.completed",
     "task.failed",

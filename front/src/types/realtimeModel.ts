@@ -1,6 +1,7 @@
 export type RealtimeEventName =
   | "log"
   | "focus.display"
+  | "focus.interaction"
   | "task.started"
   | "task.completed"
   | "task.failed"

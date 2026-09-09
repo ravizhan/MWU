@@ -41,6 +41,7 @@ export type NullableTaskOptionValue = TaskOptionValue | null
 export type TaskOptionsByTask = Record<string, Record<string, TaskOptionValue>>
 
 export interface TaskExecutionPayload {
+  task_identity: "name"
   task_list: string[]
   task_options: TaskOptionsByTask
   preTasks: PreTaskCommand[]
@@ -48,7 +49,7 @@ export interface TaskExecutionPayload {
 
 export interface ScheduledTaskDeviceConfig {
   controller_name: string
-  device_type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "WlRoots"
+  device_type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "MacOS" | "Linux"
   device_address: string
 }
 
@@ -97,6 +98,7 @@ export interface ScheduledTaskCreate extends TaskExecutionPayload {
 }
 
 export interface ScheduledTaskUpdate {
+  task_identity: "name"
   name?: string
   description?: string
   enabled?: boolean

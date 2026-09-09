@@ -27,6 +27,7 @@ export interface NotificationSettings {
 // 界面设置
 export interface UISettings {
   darkMode: boolean | "auto"
+  language: "zh-CN" | "en-US"
 }
 
 // 运行设置
@@ -51,7 +52,7 @@ export interface AboutInfo {
 
 // 面板持久化设备信息
 export interface PanelLastConnectedDevice {
-  type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "WlRoots"
+  type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "MacOS" | "Linux"
   controller_name: string
   fingerprint: string
   adb_path: string

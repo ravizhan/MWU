@@ -10,6 +10,7 @@ IMPORTABLE_KEYS = {
     "task",
     "option",
     "preset",
+    "group",
     "pretask",
     "import",
     "global_option",
@@ -28,9 +29,7 @@ class InterfaceLoadError(ValueError):
 
 class _MergeState:
     def __init__(self):
-        self.task_entries: dict[str, Path] = {}
         self.task_names: dict[str, Path] = {}
-        self.option_keys: dict[str, Path] = {}
         self.preset_names: dict[str, Path] = {}
 
 
@@ -97,18 +96,14 @@ def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
                 f"task[{index}].entry 必须是非空字符串: {source_path}"
             )
 
-        existing_entry = state.task_entries.get(task_entry)
-        if existing_entry is not None:
-            _raise_conflict("task.entry", task_entry, source_path, existing_entry)
         existing_name = state.task_names.get(task_name)
         if existing_name is not None:
             _raise_conflict("task.name", task_name, source_path, existing_name)
 
-        state.task_entries[task_entry] = source_path
         state.task_names[task_name] = source_path
 
 
-def _register_options(options: Any, source_path: Path, state: _MergeState) -> None:
+def _validate_options(options: Any, source_path: Path) -> None:
     if options is None:
         return
     if not isinstance(options, dict):
@@ -118,10 +113,20 @@ def _register_options(options: Any, source_path: Path, state: _MergeState) -> No
         if not isinstance(option_key, str) or not option_key:
             raise InterfaceLoadError(f"option 键必须是非空字符串: {source_path}")
 
-        existing_path = state.option_keys.get(option_key)
-        if existing_path is not None:
-            _raise_conflict("option", option_key, source_path, existing_path)
-        state.option_keys[option_key] = source_path
+
+def _validate_groups(groups: Any, source_path: Path) -> None:
+    if groups is None:
+        return
+    if not isinstance(groups, list):
+        raise InterfaceLoadError(f"group 字段必须是数组: {source_path}")
+    for index, group in enumerate(groups):
+        if not isinstance(group, dict):
+            raise InterfaceLoadError(f"group[{index}] 必须是对象: {source_path}")
+        group_name = group.get("name")
+        if not isinstance(group_name, str) or not group_name:
+            raise InterfaceLoadError(
+                f"group[{index}].name 必须是非空字符串: {source_path}"
+            )
 
 
 def _register_presets(presets: Any, source_path: Path, state: _MergeState) -> None:
@@ -149,7 +154,8 @@ def _seed_root_sections(
     root_data: dict[str, Any], source_path: Path, state: _MergeState
 ) -> None:
     _register_tasks(root_data.get("task"), source_path, state)
-    _register_options(root_data.get("option"), source_path, state)
+    _validate_options(root_data.get("option"), source_path)
+    _validate_groups(root_data.get("group"), source_path)
     _register_presets(root_data.get("preset"), source_path, state)
     pretasks = root_data.get("pretask")
     if pretasks is not None and not isinstance(pretasks, list):
@@ -175,20 +181,36 @@ def _merge_fragment_sections(
     tasks = fragment.get("task")
     options = fragment.get("option")
     presets = fragment.get("preset")
+    groups = fragment.get("group")
 
     _register_tasks(tasks, source_path, state)
-    _register_options(options, source_path, state)
+    _validate_options(options, source_path)
+    _validate_groups(groups, source_path)
     _register_presets(presets, source_path, state)
 
     if tasks:
         target.setdefault("task", [])
         target["task"].extend(copy.deepcopy(tasks))
     if options:
+        # 同名 option 键整体替换为后导入定义（不做字段级深合并）
         target.setdefault("option", {})
         target["option"].update(copy.deepcopy(options))
     if presets:
         target.setdefault("preset", [])
         target["preset"].extend(copy.deepcopy(presets))
+    if groups:
+        # group 按名称保留第一次出现的完整定义
+        target_group_names = {
+            group.get("name")
+            for group in target.get("group") or []
+            if isinstance(group, dict)
+        }
+        target.setdefault("group", [])
+        for group in groups:
+            group_name = group.get("name") if isinstance(group, dict) else None
+            if group_name not in target_group_names:
+                target["group"].append(copy.deepcopy(group))
+                target_group_names.add(group_name)
 
     global_options = fragment.get("global_option")
     if global_options:
@@ -272,6 +294,7 @@ def resolve_interface_relative_path(
     *,
     field_name: str = "path",
     allow_directories: bool = False,
+    allow_files_and_directories: bool = False,
 ) -> Path:
     normalized_path = _normalize_root_relative_path(raw_path, field_name=field_name)
 
@@ -280,6 +303,10 @@ def resolve_interface_relative_path(
         raise ValueError(f"{field_name} 越界，禁止访问软件根目录之外的路径: {raw_path}")
     if not resolved_path.exists():
         raise ValueError(f"{field_name} 不存在: {raw_path}")
+    if allow_files_and_directories:
+        if not (resolved_path.is_file() or resolved_path.is_dir()):
+            raise ValueError(f"{field_name} 不是文件或目录: {raw_path}")
+        return resolved_path
     if allow_directories:
         if not resolved_path.is_dir():
             raise ValueError(f"{field_name} 不是目录: {raw_path}")
@@ -516,13 +543,19 @@ def _validate_setting_sections(interface_model: InterfaceModel) -> None:
                 )
 
 
-def _validate_task_context_constraints(interface_model: InterfaceModel) -> None:
+def _validate_task_context_constraints(
+    interface_model: InterfaceModel, state: _MergeState
+) -> None:
     tasks = interface_model.task or []
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
+    group_names = {group.name for group in interface_model.group or []}
 
     for task in tasks:
         task_ref = f"{task.name}({task.entry})"
+        source = state.task_names.get(task.name)
+        if source is not None:
+            task_ref = f"{task_ref} 定义于 {source}"
 
         if task.resource:
             invalid_resources = sorted(
@@ -550,6 +583,19 @@ def _validate_task_context_constraints(interface_model: InterfaceModel) -> None:
                     f"任务 {task_ref} 引用了不存在的 controller: {', '.join(invalid_controllers)}"
                 )
 
+        if task.group:
+            invalid_groups = sorted(
+                {
+                    group_name
+                    for group_name in task.group
+                    if group_name not in group_names
+                }
+            )
+            if invalid_groups:
+                raise InterfaceLoadError(
+                    f"任务 {task_ref} 的 group 字段引用了不存在的分组: {', '.join(invalid_groups)}"
+                )
+
 
 def _validate_pretasks(interface_model: InterfaceModel) -> None:
     raw_pretasks = interface_model.pretask
@@ -563,8 +609,6 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
     option_map = interface_model.option or {}
-    tasks = interface_model.task or []
-    reachable_options_by_resource: dict[str, set[str]] = {}
 
     for index, pretask in enumerate(pretasks):
         pretask_ref = f"pretask[{index}]"
@@ -601,23 +645,6 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
                     f"{pretask_ref}.option 引用了不存在的选项: {option_name}"
                 )
 
-            for resource_name in pretask.resource or []:
-                reachable_options = reachable_options_by_resource.get(resource_name)
-                if reachable_options is None:
-                    reachable_options = set()
-                    for task in tasks:
-                        if task.resource and resource_name not in task.resource:
-                            continue
-                        _collect_reachable_option_names(
-                            task.option or [], option_map, reachable_options
-                        )
-                    reachable_options_by_resource[resource_name] = reachable_options
-
-                if option_name not in reachable_options:
-                    raise InterfaceLoadError(
-                        f"{pretask_ref}.option[{option_name}] 无法从资源包 {resource_name} 的任何任务到达"
-                    )
-
     interface_model.pretask = pretasks
 
 
@@ -638,6 +665,9 @@ def _merge_imports_into_target(
         _validate_importable_fragment(fragment, resolved_path)
 
         child_imports = _normalize_import_list(fragment.get("import"), resolved_path)
+        # 前序遍历：先合并该文件自身内容，再递归其 imports。
+        # 顺序为主文件 → 第一个 import 自身 → 该文件的递归 imports → 下一个 import。
+        _merge_fragment_sections(target, fragment, resolved_path, state)
         _merge_imports_into_target(
             target,
             child_imports,
@@ -645,7 +675,6 @@ def _merge_imports_into_target(
             state,
             [*stack, resolved_path],
         )
-        _merge_fragment_sections(target, fragment, resolved_path, state)
 
 
 def load_interface_model(base_dir: str | Path) -> InterfaceModel:
@@ -671,7 +700,7 @@ def load_interface_model(base_dir: str | Path) -> InterfaceModel:
 
     try:
         interface_model = InterfaceModel.model_validate(merged_data)
-        _validate_task_context_constraints(interface_model)
+        _validate_task_context_constraints(interface_model, merge_state)
         _validate_pretasks(interface_model)
         _validate_presets(interface_model)
         _validate_setting_sections(interface_model)

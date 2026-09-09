@@ -12,9 +12,11 @@ from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.focus_protocol import UnifiedFocusResolver
+from maa_worker.focus_protocol import DISPLAY_DIALOG, DISPLAY_MODAL
 
 if TYPE_CHECKING:
     from maa_worker.event_service import EventService
+    from services.telemetry_service import TelemetryService
 
 
 # ---------------------------------------------------------------------------
@@ -57,9 +59,15 @@ class MWUContextSink(_SinkBase):
 class SinkHandler:
     """将 MAA 底层回调通过 UnifiedFocusResolver → FocusEventProcessor 统一处理。"""
 
-    def __init__(self, events: "EventService"):
+    def __init__(
+        self,
+        events: "EventService",
+        interactions=None,
+        telemetry: "TelemetryService | None" = None,
+    ):
         self._resolver = UnifiedFocusResolver()
-        self._processor = FocusEventProcessor(events)
+        self._processor = FocusEventProcessor(events, interactions)
+        self._telemetry = telemetry
 
     def on_event(self, msg: str, details: dict) -> None:
         """统一的 sink 事件入口。
@@ -69,7 +77,54 @@ class SinkHandler:
         2. FocusEventProcessor 按 display_channels 分发到 SSE / 系统通知
         """
         event = self._resolver.resolve(msg, details)
-        self._processor.dispatch(event)
+
+        # Telemetry is strictly observational.  A broken client, scrubber, or
+        # transport must never keep a focus modal from being acknowledged or
+        # alter the local display/cancellation path.
+        node_handle = None
+        telemetry = self._telemetry
+        try:
+            state = getattr(getattr(self._processor, "_events", None), "worker", None)
+            state = getattr(state, "state", None)
+            active_run = getattr(state, "active_run", None)
+            task_name = getattr(
+                getattr(state, "task", None), "current_pi_task_name", None
+            )
+            if telemetry is not None and active_run is not None and event.trace_allowed:
+                node_handle = telemetry.node_span(
+                    active_run.run_id,
+                    task_name=task_name,
+                    message_type=msg,
+                    details=details,
+                    trace_allowed=event.trace_allowed,
+                )
+        except Exception:
+            node_handle = None
+
+        try:
+            if event.has_modal:
+                # modal：阻塞确认。cancelled → 置 stop_flag 终止流水线
+                result = self._processor.handle_modal(event)
+                if result == "cancelled":
+                    # run_process 轮询分支不再提交 post_stop()；必须走统一 stop
+                    # 路径才能真正终止原生任务。TaskService.stop() 已排除
+                    # current_thread 自 join，回调线程内调用安全。
+                    try:
+                        self._processor._events.worker.tasks.stop()
+                    except Exception:
+                        pass
+                return
+            if event.has_dialog:
+                self._processor.handle_dialog(event)
+                return
+            self._processor.dispatch(event)
+        finally:
+            if node_handle is not None and telemetry is not None:
+                try:
+                    node_result = "failed" if msg.endswith(".Failed") else "success"
+                    telemetry.finish_node_span(node_handle, node_result)
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------------------

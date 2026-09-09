@@ -5,8 +5,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from models.interface import Option, Pretask
-from models.scheduler import PreTaskCommand, TaskOptionsByTask, TaskOptionValue
+from models.interface import Option, Pretask, is_option_applicable
+from models.scheduler import PreTaskCommand, TaskOptionValue
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
@@ -33,7 +33,6 @@ class PretaskService:
         self,
         controller_name: str,
         resource_name: str,
-        task_options: TaskOptionsByTask,
         user_pre_tasks: list[PreTaskCommand],
         global_options: dict[str, TaskOptionValue] | None = None,
     ) -> None:
@@ -54,12 +53,15 @@ class PretaskService:
 
             display_name = pretask.label or pretask.name or pretask.exec
             argv = [pretask.exec, *(pretask.args or [])]
+            option_values: dict[str, TaskOptionValue] | None = None
             if pretask.option:
                 option_values = self._resolve_option_values(
                     pretask,
-                    task_options,
                     global_options or {},
+                    controller_name,
+                    resource_name,
                 )
+            if option_values is not None:
                 argv.append(
                     json.dumps(
                         option_values,
@@ -87,55 +89,95 @@ class PretaskService:
     def _resolve_option_values(
         self,
         pretask: Pretask,
-        task_options: TaskOptionsByTask,
         global_options: dict[str, TaskOptionValue],
-    ) -> dict[str, TaskOptionValue]:
+        controller_name: str,
+        resource_name: str,
+    ) -> dict[str, TaskOptionValue] | None:
+        """从规范化后的 globalOptionValues 唯一取值。
+
+        - 递归只收集选中 case 的子 option；
+        - checkbox 按 cases 声明顺序；
+        - 过滤不适用父子项（controller/resource 上下文）；
+        - input/hotkey 仍为字段名→字符串；
+        - option 非空而过滤后为空时返回 {}；option 缺失或空数组时返回 None（不追加 JSON）。
+        """
+        if not pretask.option:
+            return None
         option_map = self.worker.interface.option or {}
-        values: dict[str, TaskOptionValue] = {}
-        for option_name in pretask.option or []:
-            resolved_value = self._find_option_value(task_options, option_name)
-            if resolved_value is not None:
-                values[option_name] = resolved_value
-                continue
-            global_value = global_options.get(option_name)
-            if global_value is not None:
-                values[option_name] = global_value
-                continue
-            option = option_map.get(option_name)
-            values[option_name] = (
-                self._default_option_value(option) if option is not None else ""
-            )
-        return values
+        collected: dict[str, TaskOptionValue] = {}
+
+        def collect(option_names: list[str]) -> None:
+            for option_name in option_names:
+                option = option_map.get(option_name)
+                if option is None:
+                    continue
+                if not is_option_applicable(option, controller_name, resource_name):
+                    continue
+                if option_name in collected:
+                    continue
+                collected[option_name] = self._option_value(
+                    option, global_options.get(option_name)
+                )
+                # 选中 case 的子选项递归收集
+                if option.type in {"select", "switch", "scan_select"}:
+                    selected = collected[option_name]
+                    if isinstance(selected, str):
+                        for case in option.cases or []:
+                            if case.name == selected and case.option:
+                                collect(case.option)
+                elif option.type == "checkbox":
+                    selected = collected[option_name]
+                    if isinstance(selected, list):
+                        selected_set = set(selected)
+                        for case in option.cases or []:
+                            if case.name in selected_set and case.option:
+                                collect(case.option)
+
+        collect(list(pretask.option or []))
+        return collected
 
     @staticmethod
-    def _find_option_value(
-        task_options: TaskOptionsByTask, option_name: str
-    ) -> TaskOptionValue | None:
-        """task_options 按任务条目 ID 分组；pretask.option 所列 option 为全局声明，
-        从所有选中任务的已提交选项中查找该 option 的用户配置值。"""
-        for per_task in task_options.values():
-            if isinstance(per_task, dict) and option_name in per_task:
-                return per_task[option_name]
-        return None
-
-    @staticmethod
-    def _default_option_value(option: Option) -> TaskOptionValue:
-        if option.type in {"select", "switch"}:
+    def _option_value(
+        option: Option, raw_value: TaskOptionValue | None
+    ) -> TaskOptionValue:
+        if option.type in {"select", "switch", "scan_select"}:
             case_names = [case.name for case in option.cases or []]
-            if (
-                isinstance(option.default_case, str)
-                and option.default_case in case_names
-            ):
-                return option.default_case
+            if isinstance(raw_value, str) and raw_value in case_names:
+                return raw_value
+            default = option.default_case
+            if isinstance(default, str) and default in case_names:
+                return default
             return case_names[0] if case_names else ""
         if option.type == "checkbox":
-            if isinstance(option.default_case, list):
-                return [
-                    value for value in option.default_case if isinstance(value, str)
-                ]
-            return []
+            case_order = [case.name for case in option.cases or []]
+            selected: set[str] = set()
+            if isinstance(raw_value, list):
+                selected = {v for v in raw_value if isinstance(v, str)}
+            elif isinstance(option.default_case, list):
+                selected = {v for v in option.default_case if isinstance(v, str)}
+            return [name for name in case_order if name in selected]
         if option.type == "input":
-            return {field.name: field.default or "" for field in option.inputs or []}
+            fields = {f.name: f.default or "" for f in option.inputs or []}
+            if isinstance(raw_value, dict):
+                for key, value in raw_value.items():
+                    if (
+                        isinstance(key, str)
+                        and isinstance(value, str)
+                        and key in fields
+                    ):
+                        fields[key] = value
+            return fields
+        if option.type == "hotkey":
+            fields = {h.name: h.default or "" for h in option.hotkeys or []}
+            if isinstance(raw_value, dict):
+                for key, value in raw_value.items():
+                    if (
+                        isinstance(key, str)
+                        and isinstance(value, str)
+                        and key in fields
+                    ):
+                        fields[key] = value
+            return fields
         return ""
 
     def _run_one(

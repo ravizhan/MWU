@@ -21,7 +21,7 @@ export const useInterfaceStore = defineStore("interface", {
     getTaskList: (state): TaskListItem[] => {
       if (!state.interface?.task) return []
       return state.interface.task.map((item, index) => ({
-        id: item.entry,
+        id: item.name,
         name: item.name,
         order: index,
       }))
@@ -50,10 +50,6 @@ export const useInterfaceStore = defineStore("interface", {
       return true
     },
 
-    getTaskByEntry(entry: string): Task | null {
-      return this.interface?.task?.find((task) => task.entry === entry) || null
-    },
-
     isTaskCompatible(
       task: Task | null,
       controllerName?: string | null,
@@ -70,12 +66,12 @@ export const useInterfaceStore = defineStore("interface", {
       return !(resourceName && task.resource?.length && !task.resource.includes(resourceName))
     },
 
-    isTaskCompatibleByEntry(
-      entry: string,
+    isTaskCompatibleByName(
+      name: string,
       controllerName?: string | null,
       resourceName?: string | null,
     ): boolean {
-      return this.isTaskCompatible(this.getTaskByEntry(entry), controllerName, resourceName)
+      return this.isTaskCompatible(this.getTaskByName(name), controllerName, resourceName)
     },
 
     isPretaskCompatible(
@@ -102,7 +98,7 @@ export const useInterfaceStore = defineStore("interface", {
       return this.interface?.preset?.find((preset) => preset.name === name) || null
     },
 
-    getOptionList(entry: string): Record<string, Option> {
+    getOptionList(taskName: string): Record<string, Option> {
       const result: Record<string, Option> = {}
       if (!this.interface?.option) return result
 
@@ -124,7 +120,7 @@ export const useInterfaceStore = defineStore("interface", {
         }
       }
 
-      const task = this.getTaskByEntry(entry)
+      const task = this.getTaskByName(taskName)
       if (task?.option) {
         collectOptions(task.option)
       }

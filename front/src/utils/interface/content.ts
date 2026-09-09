@@ -1,10 +1,16 @@
 import type { InterfaceModel } from "@/types/interfaceModel"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
+import { z } from "zod"
 
 const textFilePattern = /^(?:\.\/)?(?:[^/]+[/])*[^/]+\.(?:md|markdown|txt|html?)$/i
 const invalidPathNotified = new Set<string>()
 const windowsDrivePattern = /^[A-Za-z]:/
+
+const documentResponseSchema = z.object({
+  status: z.string(),
+  content: z.string(),
+})
 
 export function isExternalUrl(value: string): boolean {
   return /^(?:https?:)?\/\//i.test(value) || /^(?:data|blob):/i.test(value)
@@ -69,8 +75,8 @@ export function buildResourceUrl(path: string): string | undefined {
 }
 
 export function resolveInterfaceText(
-  _model: Partial<InterfaceModel> | null | undefined,
-  _locale: string,
+  model: Partial<InterfaceModel> | null | undefined,
+  locale: string,
   value?: string | null,
   fallback = "",
 ): string {
@@ -79,10 +85,67 @@ export function resolveInterfaceText(
   }
 
   if (value.startsWith("$")) {
-    return fallback
+    const resolved = lookupTranslation(model, locale, value.slice(1))
+    return resolved === undefined ? fallback : resolved
   }
 
   return value
+}
+
+/**
+ * 翻译键解析 — 与后端 InterfaceContentService.resolve_i18n 的 locale 链一致：
+ * 原 locale → `-`→`_` 小写 → 仅 zh 用户 zh_cn/zh-CN 互通；嵌套路径与扁平键。
+ */
+function lookupTranslation(
+  model: Partial<InterfaceModel> | null | undefined,
+  locale: string,
+  key: string,
+): string | undefined {
+  const translations = model?.translations
+  if (!translations) {
+    return undefined
+  }
+  // 与后端 _language_candidates 对齐：原 locale → `-`→`_` 小写；仅 zh locale
+  // 追加 zh 互通。非 zh 用户不回退中文表，否则 en-US 会命中 zh-CN/zh_cn。
+  const chain: string[] = []
+  const normalized = locale.toLowerCase().replaceAll("-", "_")
+  for (const candidate of [locale, normalized]) {
+    if (candidate && !chain.includes(candidate)) {
+      chain.push(candidate)
+    }
+  }
+  if (normalized === "zh_cn") {
+    for (const candidate of ["zh_cn", "zh-CN"]) {
+      if (!chain.includes(candidate)) {
+        chain.push(candidate)
+      }
+    }
+  }
+  for (const candidate of chain) {
+    const table = translations[candidate]
+    if (typeof table !== "object" || table === null) {
+      continue
+    }
+    // 1) 嵌套路径：a.b.c
+    let node: unknown = table
+    for (const part of key.split(".")) {
+      if (typeof node !== "object" || node === null || !(part in node)) {
+        node = undefined
+        break
+      }
+      node = Object.getOwnPropertyDescriptor(node, part)?.value
+    }
+    const nested = node
+    if (typeof nested === "string") {
+      return nested
+    }
+    // 2) 扁平键：整个 key 作为单键
+    const flat = Object.getOwnPropertyDescriptor(table, key)?.value
+    if (typeof flat === "string") {
+      return flat
+    }
+  }
+  return undefined
 }
 
 export function resolveInterfaceAssetUrl(
@@ -111,27 +174,22 @@ export async function resolveInterfaceDocumentContent(
     return ""
   }
 
-  if (isExternalUrl(trimmedValue)) {
-    return resolvedValue
-  }
-
-  if (!textFilePattern.test(trimmedValue)) {
-    return resolvedValue
-  }
-
-  const url = buildResourceUrl(trimmedValue)
-  if (!url) {
-    return resolvedValue
-  }
-
-  const [response, fetchErr] = await tryCatch(() => fetch(url))
+  // 后端白名单统一处理：翻译展开、HTTP(S) 拉取、根内文件读取。
+  // 白名单含原始值与 zh-CN/en-US 解析值；非白名单来源 404 → 显示原值。
+  const [response, fetchErr] = await tryCatch(() =>
+    fetch("/api/interface/document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: trimmedValue, locale }),
+    }),
+  )
   if (fetchErr || !response?.ok) {
     return resolvedValue
   }
-
-  const [text, textErr] = await tryCatch(() => response.text())
-  if (textErr) {
+  const [payload, payloadErr] = await tryCatch(() => response.json())
+  const parsed = documentResponseSchema.safeParse(payload)
+  if (payloadErr || !parsed.success || parsed.data.status !== "success") {
     return resolvedValue
   }
-  return text
+  return parsed.data.content
 }

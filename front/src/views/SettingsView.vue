@@ -85,6 +85,19 @@
       </NCard>
 
       <!-- About -->
+      <!-- Telemetry -->
+      <NCard v-if="activeSection === 'telemetry'">
+        <template #header>
+          <h2 class="flex items-center gap-2 text-lg font-semibold">
+            <NIcon size="20" style="color: var(--primary-color)">
+              <StatsChartOutline />
+            </NIcon>
+            {{ t("telemetry.settings.title") }}
+          </h2>
+        </template>
+        <TelemetrySettingsSection />
+      </NCard>
+
       <NCard v-if="activeSection === 'about'">
         <template #header>
           <h2 class="flex items-center gap-2 text-lg font-semibold">
@@ -114,6 +127,7 @@ import {
   InformationCircleOutline,
   NotificationsOutline,
   SettingsOutline,
+  StatsChartOutline,
 } from "@vicons/ionicons5"
 import UpdateDialog from "@/components/settings/dialogs/UpdateDialog.vue"
 import AboutSettingsSection from "@/components/settings/sections/AboutSettingsSection.vue"
@@ -122,10 +136,18 @@ import RuntimeSettingsSection from "@/components/settings/sections/RuntimeSettin
 import TaskSettingsSection from "@/components/settings/sections/TaskSettingsSection.vue"
 import UISettingsSection from "@/components/settings/sections/UISettingsSection.vue"
 import UpdateSettingsSection from "@/components/settings/sections/UpdateSettingsSection.vue"
+import TelemetrySettingsSection from "@/components/settings/sections/TelemetrySettingsSection.vue"
 import type { UpdateInfo } from "@/services/api"
 import { useInterfaceStore } from "@/stores"
 
-type SettingsSectionKey = "update" | "taskSettings" | "runtime" | "ui" | "notification" | "about"
+type SettingsSectionKey =
+  | "update"
+  | "taskSettings"
+  | "runtime"
+  | "ui"
+  | "notification"
+  | "telemetry"
+  | "about"
 
 interface SettingsSection {
   id: SettingsSectionKey
@@ -158,6 +180,7 @@ const sections = computed<SettingsSection[]>(() => {
       label: t("settings.anchor.notification"),
       icon: NotificationsOutline,
     },
+    { id: "telemetry", label: t("telemetry.settings.title"), icon: StatsChartOutline },
     { id: "about", label: t("settings.anchor.about"), icon: InformationCircleOutline },
   )
   return values

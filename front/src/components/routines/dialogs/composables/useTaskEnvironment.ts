@@ -31,7 +31,8 @@ function isDeviceControllerType(type: string): type is DeviceControllerType {
     type === "Win32" ||
     type === "Gamepad" ||
     type === "PlayCover" ||
-    type === "WlRoots"
+    type === "MacOS" ||
+    type === "Linux"
   )
 }
 
@@ -42,6 +43,10 @@ function buildStoredDeviceLabel(device: PanelLastConnectedDevice): string {
   if (device.type === "Win32" || device.type === "Gamepad") {
     const name = device.window_name || device.class_name
     return name ? `${name} (${device.hWnd})` : String(device.hWnd)
+  }
+  if (device.type === "MacOS" || device.type === "Linux") {
+    const name = device.window_name.trim()
+    return name ? `${name} (${device.address})` : device.address
   }
   return device.address
 }
