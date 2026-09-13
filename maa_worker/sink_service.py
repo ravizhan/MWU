@@ -12,6 +12,7 @@ from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.focus_protocol import UnifiedFocusResolver
+from services.telemetry_service import node_span
 
 if TYPE_CHECKING:
     from maa_worker.event_service import EventService
@@ -80,27 +81,19 @@ class SinkHandler:
         # Telemetry is strictly observational.  A broken client, scrubber, or
         # transport must never keep a focus modal from being acknowledged or
         # alter the local display/cancellation path.
-        node_handle = None
-        telemetry = self._telemetry
-        try:
-            state = getattr(getattr(self._processor, "_events", None), "worker", None)
-            state = getattr(state, "state", None)
-            active_run = getattr(state, "active_run", None)
-            task_name = getattr(
-                getattr(state, "task", None), "current_pi_task_name", None
-            )
-            if telemetry is not None and active_run is not None and event.trace_allowed:
-                node_handle = telemetry.node_span(
-                    active_run.run_id,
-                    task_name=task_name,
-                    message_type=msg,
-                    details=details,
-                    trace_allowed=event.trace_allowed,
-                )
-        except Exception:
-            node_handle = None
+        state = getattr(getattr(self._processor, "_events", None), "worker", None)
+        state = getattr(state, "state", None)
+        active_run = getattr(state, "active_run", None)
+        task_name = getattr(getattr(state, "task", None), "current_pi_task_name", None)
 
-        try:
+        with node_span(
+            self._telemetry,
+            getattr(active_run, "run_id", None),
+            task_name=task_name,
+            message_type=msg,
+            details=details,
+            trace_allowed=event.trace_allowed,
+        ):
             # Ordinary channels are independent from interactive channels.
             # Dispatch them first so a mixed declaration cannot be swallowed
             # by the blocking modal path below.  Dialogs are emitted before a
@@ -120,13 +113,6 @@ class SinkHandler:
                         self._processor._events.worker.tasks.stop()
                     except Exception:
                         pass
-        finally:
-            if node_handle is not None and telemetry is not None:
-                try:
-                    node_result = "failed" if msg.endswith(".Failed") else "success"
-                    telemetry.finish_node_span(node_handle, node_result)
-                except Exception:
-                    pass
 
 
 # ---------------------------------------------------------------------------

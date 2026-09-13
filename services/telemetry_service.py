@@ -1,13 +1,20 @@
 """Opt-in Sentry telemetry for MWU.
 
-When telemetry is authorized, MWU publishes its client through Sentry's normal
-global scope.  Embedded Agents therefore use the same SDK client through the
-public :mod:`sentry_sdk` API instead of a private telemetry facade.
+MWU installs its client as Sentry's global client, exactly as
+``sentry_sdk.init`` does.  Revocation detaches it again by setting the global
+scope's client to the SDK's ``NonRecordingClient``, so captures stop instead of
+being routed anywhere.
+
+Outbound payloads are bounded at the source instead of being rebuilt: the
+client options disable the SDK's own integrations, PII, breadcrumbs, and local
+variables, and this module only ever attaches the fields it reads from MWU
+state.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import io
 import json
@@ -20,8 +27,9 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -30,7 +38,6 @@ import sentry_sdk
 from PIL import Image
 from sentry_sdk import logger as sentry_logger
 from sentry_sdk.tracing import Span
-from sentry_sdk.transport import HttpTransport
 from sentry_sdk.utils import BadDsn, Dsn
 
 import settings_io
@@ -38,7 +45,6 @@ from models.settings import SettingsModel, TelemetryConsent
 from services import runtime_info
 
 logger = logging.getLogger("mwu.telemetry")
-
 
 # These are the only structured log names emitted by this service.
 _ALLOWED_LOG_EVENTS = frozenset(
@@ -52,574 +58,34 @@ _ALLOWED_LOG_EVENTS = frozenset(
     }
 )
 
-# Attributes accepted in structured logs, transactions, and diagnostics.
-_ALLOWED_ATTRIBUTES = frozenset(
-    {
-        "run_id",
-        "origin",
-        "task_name",
-        "pi_entry",
-        "controller_type",
-        "resource_name",
-        "result",
-        "duration_ms",
-        "error_code",
-        "message_type",
-        "name",
-        "task_id",
-        "node_id",
-        "reco_id",
-        "action_id",
-    }
-)
-_ALLOWED_TAGS = frozenset({"project", "client", "maafw", "pi", "os"})
-_ALLOWED_ERROR_CODES = frozenset(
-    {
-        "mwu.execution.prepare_failed",
-        "mwu.task.failed",
-        "mwu.error",
-        "mwu.execution.rejected",
-        "telemetry_invalid_dsn",
-        "runtime_error",
-        "config_error",
-        "permission_required",
-        "resource_unavailable",
-        "device_unavailable",
-        "task_start_failed",
-        "unhandled_exception",
-        "busy_manual",
-        "busy_scheduled",
-        "skipped_busy_manual",
-        "skipped_busy_scheduled",
-        "skipped_update_in_progress",
-        "update_in_progress",
-    }
-)
 _ALLOWED_ORIGINS = frozenset({"manual", "in_app", "native"})
 _ALLOWED_RESULTS = frozenset(
     {"success", "failed", "stopped", "ok", "internal_error", "cancelled"}
 )
-_ALLOWED_TRACE_STATUSES = frozenset(
-    {
-        "aborted",
-        "already_exists",
-        "cancelled",
-        "data_loss",
-        "deadline_exceeded",
-        "error",
-        "failed_precondition",
-        "internal_error",
-        "invalid_argument",
-        "not_found",
-        "ok",
-        "out_of_range",
-        "permission_denied",
-        "resource_exhausted",
-        "unauthenticated",
-        "unavailable",
-        "unimplemented",
-        "unknown_error",
-    }
-)
-_ALLOWED_TRANSACTION_SOURCES = frozenset(
-    {"component", "custom", "route", "task", "url", "view"}
-)
+# MWU run/task results map onto the narrower set of Sentry span statuses.
+_SENTRY_STATUS = {"success": "ok", "failed": "internal_error", "stopped": "cancelled"}
+# Sentry environment tags are tokens (``production``, ``beta``), never prose.
+_ENVIRONMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 
 
-def _safe_string(value: Any, *, max_length: int = 256) -> str | None:
-    """Return a short scalar string, never recursively serializing objects."""
+def _observational(method):
+    """Make one telemetry entry point total.
 
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return None
-        return value[:max_length]
-    if isinstance(value, bool) or isinstance(value, int):
-        return str(value)[:max_length]
-    if isinstance(value, float) and math.isfinite(value):
-        return str(value)[:max_length]
-    return None
-
-
-def _safe_identifier(value: Any, *, max_length: int = 256) -> str | None:
-    value = _safe_string(value, max_length=max_length)
-    if value is None:
-        return None
-    # Identifiers are allowed, but a path is not.  Keep only the final segment
-    # if a native SDK accidentally reports a source path as a function/name.
-    value = value.replace("\\", "/").rsplit("/", 1)[-1]
-    return value[:max_length] or None
-
-
-def _safe_code(value: Any, default: str = "runtime_error") -> str:
-    value = _safe_string(value, max_length=96)
-    return value if value in _ALLOWED_ERROR_CODES else default
-
-
-def _safe_origin(value: Any) -> str | None:
-    value = _safe_string(value, max_length=32)
-    return value if value in _ALLOWED_ORIGINS else None
-
-
-def _safe_result(value: Any) -> str | None:
-    value = _safe_string(value, max_length=32)
-    return value if value in _ALLOWED_RESULTS else None
-
-
-def _safe_trace_status(value: Any) -> str | None:
-    value = _safe_string(value, max_length=32)
-    return value if value in _ALLOWED_TRACE_STATUSES else None
-
-
-def _safe_trace_identifier(value: Any, *, length: int) -> str | None:
-    value = _safe_string(value, max_length=64)
-    if value and re.fullmatch(rf"[0-9a-fA-F]{{{length}}}", value):
-        return value
-    return None
-
-
-def _safe_timestamp(value: Any) -> float | None:
-    if isinstance(value, datetime):
-        try:
-            value = value.timestamp()
-        except (OverflowError, OSError, ValueError):
-            return None
-    elif isinstance(value, str):
-        # sentry-sdk==2.68.1 serializes event timestamps before invoking the
-        # transaction callback with ``format_timestamp``: six fractional
-        # digits followed by a UTC ``Z`` suffix.  Accept that fixed SDK shape
-        # rather than treating arbitrary user strings as timestamps.
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z", value):
-            return None
-        try:
-            value = (
-                datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-        except ValueError:
-            return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return None
-        if math.isfinite(value):
-            return value
-    return None
-
-
-def _safe_attribute(name: str, value: Any) -> Any:
-    """Whitelist one known attribute and coerce it to a bounded scalar."""
-
-    if name not in _ALLOWED_ATTRIBUTES or value is None:
-        return None
-    if name == "error_code":
-        return _safe_code(value)
-    if name == "origin":
-        return _safe_origin(value)
-    if name == "result":
-        return _safe_result(value)
-    if name == "duration_ms":
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, (int, float)) and math.isfinite(float(value)):
-            return max(0, min(int(value), 86_400_000))
-        return None
-    if name in {"run_id", "task_id", "node_id", "reco_id", "action_id"}:
-        return _safe_string(value, max_length=128)
-    if name in {"task_name", "pi_entry", "controller_type", "resource_name", "name"}:
-        raw = _safe_string(value, max_length=256)
-        if raw is None or "/" in raw or "\\" in raw:
-            return None
-        return raw
-    return _safe_identifier(value, max_length=256)
-
-
-def _safe_data_fields(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    safe_data: dict[str, Any] = {}
-    for key in _ALLOWED_ATTRIBUTES:
-        safe = _safe_attribute(key, value.get(key))
-        if safe is not None:
-            safe_data[key] = safe
-    return safe_data or None
-
-
-def _common_event_fields(event: dict[str, Any]) -> dict[str, Any]:
-    """Copy only harmless SDK envelope fields into a scrubbed event."""
-
-    result: dict[str, Any] = {}
-    event_id = _safe_string(event.get("event_id"), max_length=64)
-    if event_id and re.fullmatch(r"[0-9a-fA-F]{32}", event_id):
-        result["event_id"] = event_id
-    platform_name = _safe_string(event.get("platform"), max_length=32)
-    if platform_name == "python":
-        result["platform"] = platform_name
-    level = _safe_string(event.get("level"), max_length=16)
-    if level in {"debug", "info", "warning", "error", "fatal"}:
-        result["level"] = level
-    # Release is attached by the service's client options.  Preserve only the
-    # generated ``project@version`` shape; never copy arbitrary user text.
-    release = _safe_string(event.get("release"), max_length=128)
-    if release and "@" in release and not any(c in release for c in "\\/\r\n"):
-        result["release"] = release
-    if event.get("environment") == "production":
-        result["environment"] = "production"
-
-    tags = event.get("tags")
-    if isinstance(tags, dict):
-        safe_tags: dict[str, str] = {}
-        for key in _ALLOWED_TAGS:
-            value = _safe_string(tags.get(key), max_length=128)
-            if value:
-                safe_tags[key] = value
-        if safe_tags:
-            result["tags"] = safe_tags
-
-    contexts = event.get("contexts")
-    if isinstance(contexts, dict):
-        mwu = contexts.get("mwu")
-        if isinstance(mwu, dict):
-            safe_mwu: dict[str, Any] = {}
-            for key in _ALLOWED_ATTRIBUTES:
-                value = _safe_attribute(key, mwu.get(key))
-                if value is not None:
-                    safe_mwu[key] = value
-            if safe_mwu:
-                result["contexts"] = {"mwu": safe_mwu}
-    return result
-
-
-def scrub_error_event(event: dict[str, Any], hint: dict[str, Any] | None = None):
-    """Whitelist-only ``before_send`` callback.
-
-    In particular, exception values are replaced with a controlled error code;
-    only exception type and function/line stack-frame fields survive.  Ordinary
-    SDK message events remain message events, with a bounded scalar message;
-    request, locals, user, and arbitrary extra payloads are still omitted.
+    Telemetry is strictly observational: a broken client must never alter task
+    execution, so every public entry point swallows its own failures instead of
+    making callers guard each call.
     """
 
-    hint = hint or {}
-    source = event if isinstance(event, dict) else {}
-    result = _common_event_fields(source)
-
-    source_contexts = source.get("contexts")
-    source_mwu = (
-        source_contexts.get("mwu") if isinstance(source_contexts, dict) else None
-    )
-    source_code = source_mwu.get("error_code") if isinstance(source_mwu, dict) else None
-    code = _safe_code(hint.get("telemetry_error_code"), default=_safe_code(source_code))
-    if isinstance(source_mwu, dict) or hint.get("telemetry_error_code") is not None:
-        contexts = result.setdefault("contexts", {}).setdefault("mwu", {})
-        contexts["error_code"] = code
-
-    values = None
-    exception = source.get("exception")
-    if isinstance(exception, dict) and isinstance(exception.get("values"), list):
-        values = exception["values"]
-
-    if not values:
-        # ``capture_message`` and ordinary ``capture_event`` calls do not carry
-        # an exception.  Keep their normal event shape while applying the same
-        # bounded-scalar policy to the message.
-        message = _safe_string(source.get("message"), max_length=256)
-        if message is not None:
-            result["message"] = message
-        return result
-
-    safe_values: list[dict[str, Any]] = []
-    for value in values[:8]:
-        if not isinstance(value, dict):
-            value = {}
-        exception_type = _safe_identifier(value.get("type"), max_length=128)
-        if not exception_type:
-            exc_info = hint.get("exc_info")
-            if isinstance(exc_info, tuple) and exc_info:
-                exception_type = _safe_identifier(
-                    getattr(exc_info[0], "__name__", None), max_length=128
-                )
-        exception_type = exception_type or "RuntimeError"
-        safe_value: dict[str, Any] = {
-            "type": exception_type,
-            # Deliberately not the original exception value.  This controlled
-            # code is useful for grouping while never exposing user text.
-            "value": code,
-        }
-        stacktrace = value.get("stacktrace")
-        frames = stacktrace.get("frames") if isinstance(stacktrace, dict) else None
-        safe_frames: list[dict[str, Any]] = []
-        if isinstance(frames, list):
-            for frame in frames[-64:]:
-                if not isinstance(frame, dict):
-                    continue
-                function = _safe_identifier(frame.get("function"), max_length=160)
-                lineno = frame.get("lineno")
-                if isinstance(lineno, bool) or not isinstance(lineno, int):
-                    lineno = None
-                if lineno is not None:
-                    lineno = max(0, min(lineno, 10_000_000))
-                if function is None and lineno is None:
-                    continue
-                output: dict[str, Any] = {}
-                if function is not None:
-                    output["function"] = function
-                if lineno is not None:
-                    output["lineno"] = lineno
-                safe_frames.append(output)
-        if safe_frames:
-            safe_value["stacktrace"] = {"frames": safe_frames}
-        safe_values.append(safe_value)
-    result["exception"] = {"values": safe_values}
-    return result
-
-
-def _transaction_name(value: Any) -> str:
-    value = _safe_string(value, max_length=64)
-    # Keep normal SDK transaction naming semantics for embedded Agents while
-    # retaining a bounded scalar and the historical fallback for malformed
-    # service-generated events.
-    return value or "mwu.run"
-
-
-def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None = None):
-    """Whitelist-only ``before_send_transaction`` callback."""
-
-    source = event if isinstance(event, dict) else {}
-    result = _common_event_fields(source)
-    result["type"] = "transaction"
-    result["transaction"] = _transaction_name(
-        source.get("transaction") or source.get("name")
-    )
-    transaction_info = source.get("transaction_info")
-    if isinstance(transaction_info, dict):
-        transaction_source = _safe_string(transaction_info.get("source"), max_length=32)
-        if transaction_source in _ALLOWED_TRANSACTION_SOURCES:
-            result["transaction_info"] = {"source": transaction_source}
-
-    status = _safe_trace_status(source.get("status"))
-    if status is not None:
-        result["status"] = status
-
-    for key in ("start_timestamp", "timestamp"):
-        value = _safe_timestamp(source.get(key))
-        if value is not None:
-            result[key] = value
-
-    safe_data = _safe_data_fields(source.get("data"))
-    if safe_data is not None:
-        result["data"] = safe_data
-
-    source_contexts = source.get("contexts")
-    trace = source_contexts.get("trace") if isinstance(source_contexts, dict) else None
-    if isinstance(trace, dict):
-        safe_trace: dict[str, Any] = {}
-        for key, length in (
-            ("trace_id", 32),
-            ("span_id", 16),
-            ("parent_span_id", 16),
-        ):
-            value = _safe_trace_identifier(trace.get(key), length=length)
-            if value is not None:
-                safe_trace[key] = value
-        op = _safe_string(trace.get("op"), max_length=64)
-        if op is not None:
-            safe_trace["op"] = op
-        description = _safe_string(trace.get("description"), max_length=256)
-        if description is not None:
-            safe_trace["description"] = description
-        origin = _safe_origin(trace.get("origin"))
-        if origin is not None:
-            safe_trace["origin"] = origin
-        trace_status = _safe_trace_status(trace.get("status"))
-        if trace_status is not None:
-            safe_trace["status"] = trace_status
-        trace_data = _safe_data_fields(trace.get("data"))
-        if trace_data is not None:
-            safe_trace["data"] = trace_data
-        if safe_trace:
-            contexts = result.setdefault("contexts", {})
-            contexts["trace"] = safe_trace
-
-    safe_spans: list[dict[str, Any]] = []
-    spans = source.get("spans")
-    if isinstance(spans, list):
-        for span in spans[:1000]:
-            if not isinstance(span, dict):
-                continue
-            op = _safe_string(span.get("op"), max_length=64)
-            description = _safe_string(span.get("description"), max_length=256)
-            name = _safe_string(span.get("name"), max_length=256)
-            op = op or description or name or "maa.node"
-            description = description or op
-            safe_span: dict[str, Any] = {"op": op, "description": description}
-            for key, length in (
-                ("trace_id", 32),
-                ("span_id", 16),
-                ("parent_span_id", 16),
-            ):
-                value = _safe_trace_identifier(span.get(key), length=length)
-                if value is not None:
-                    safe_span[key] = value
-            same_process = span.get("same_process_as_parent")
-            if isinstance(same_process, bool):
-                safe_span["same_process_as_parent"] = same_process
-            origin = _safe_origin(span.get("origin"))
-            if origin is not None:
-                safe_span["origin"] = origin
-            span_status = _safe_trace_status(span.get("status"))
-            if span_status is not None:
-                safe_span["status"] = span_status
-            for key in ("start_timestamp", "timestamp"):
-                value = _safe_timestamp(span.get(key))
-                if value is not None:
-                    safe_span[key] = value
-            span_data = _safe_data_fields(span.get("data"))
-            if span_data is not None:
-                safe_span["data"] = span_data
-            safe_spans.append(safe_span)
-    if safe_spans:
-        result["spans"] = safe_spans
-    return result
-
-
-def _raw_log_attribute(value: Any) -> Any:
-    """Unwrap Sentry's typed attribute representation for the scrubber."""
-
-    if isinstance(value, dict) and "value" in value and "type" in value:
-        return value.get("value")
-    return value
-
-
-def scrub_log(log: dict[str, Any], hint: dict[str, Any] | None = None):
-    """Scrub Sentry Logs without requiring an MWU event name.
-
-    MWU logs retain their structured event name and whitelisted attributes.
-    Ordinary Agent logs retain a bounded scalar body and the same safe
-    attribute whitelist; arbitrary structured payloads are intentionally not
-    forwarded.
-    """
-
-    if not isinstance(log, dict):
-        return None
-    attributes = log.get("attributes")
-    if not isinstance(attributes, dict):
-        attributes = {}
-    event_name = _raw_log_attribute(attributes.get("event_name"))
-    is_mwu_log = isinstance(event_name, str) and event_name in _ALLOWED_LOG_EVENTS
-    if is_mwu_log:
-        body = event_name
-    else:
-        body = _safe_string(log.get("body"), max_length=256)
-        if body is None:
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except Exception:
+            self._record_local_warning("telemetry_call_failed")
+            logger.debug("telemetry call failed", exc_info=True)
             return None
 
-    safe_attributes: dict[str, Any] = {}
-    if is_mwu_log:
-        safe_attributes["event_name"] = event_name
-    for key in _ALLOWED_ATTRIBUTES:
-        if key not in attributes:
-            continue
-        value = _safe_attribute(key, _raw_log_attribute(attributes[key]))
-        if value is not None:
-            safe_attributes[key] = value
-
-    severity_text = _safe_string(log.get("severity_text"), max_length=16) or "info"
-    if severity_text == "warn":
-        severity_text = "warning"
-    if severity_text not in {"debug", "info", "warning", "error", "fatal"}:
-        severity_text = "info"
-    severity_number = log.get("severity_number")
-    if isinstance(severity_number, bool) or not isinstance(severity_number, int):
-        severity_number = 9
-    timestamp = _safe_timestamp(log.get("time_unix_nano"))
-    if timestamp is None:
-        timestamp = time.time_ns()
-    result: dict[str, Any] = {
-        "severity_text": severity_text,
-        "severity_number": max(1, min(severity_number, 24)),
-        "body": body,
-        "attributes": safe_attributes,
-        "time_unix_nano": int(timestamp),
-        "trace_id": None,
-        "span_id": None,
-    }
-    # IDs are only correlation values.  Keep only bounded hexadecimal-looking
-    # values so no arbitrary text can be smuggled through these fields.
-    for key in ("trace_id", "span_id"):
-        value = _safe_string(log.get(key), max_length=64)
-        if value and re.fullmatch(r"[0-9a-fA-F-]{8,64}", value):
-            result[key] = value
-    return result
-
-
-class EpochBoundHttpTransport(HttpTransport):
-    """HttpTransport that drops queued/sending envelopes after epoch revocation."""
-
-    _telemetry_service: "TelemetryService | None" = None
-    _telemetry_epoch: int | None = None
-
-    def __init__(
-        self,
-        options: dict[str, Any],
-        service: "TelemetryService | None" = None,
-        epoch: int | None = None,
-    ) -> None:
-        if service is not None:
-            self._telemetry_service = service
-        if epoch is not None:
-            self._telemetry_epoch = epoch
-        super().__init__(options)
-
-    def _allowed(self) -> bool:
-        service = self._telemetry_service
-        epoch = self._telemetry_epoch
-        if service is None or epoch is None:
-            return False
-        try:
-            return service._can_send_epoch(epoch)
-        except Exception:
-            return False
-
-    def capture_envelope(self, envelope) -> None:
-        if not self._allowed():
-            return
-        try:
-            super().capture_envelope(envelope)
-        except Exception:
-            # The transport must never make a task or shutdown fail.
-            try:
-                self._telemetry_service._record_local_warning("transport_queue_failed")
-            except Exception:
-                pass
-            logger.debug("telemetry envelope queue failed", exc_info=True)
-
-    def _send_request(self, body, headers, endpoint_type, envelope=None):
-        if not self._allowed():
-            return None
-        try:
-            return super()._send_request(body, headers, endpoint_type, envelope)
-        except Exception:
-            try:
-                self._telemetry_service._record_local_warning(
-                    "transport_request_failed"
-                )
-            except Exception:
-                pass
-            logger.debug("telemetry request failed", exc_info=True)
-            return None
-
-
-def _bound_transport_class(service: "TelemetryService", epoch: int):
-    """Create a transport class accepted by sentry-sdk's Client factory."""
-
-    class _BoundEpochTransport(EpochBoundHttpTransport):
-        _telemetry_service = service
-        _telemetry_epoch = epoch
-
-    _BoundEpochTransport.__name__ = "MWUEpochBoundHttpTransport"
-    return _BoundEpochTransport
+    return wrapper
 
 
 @dataclass
@@ -631,6 +97,13 @@ class _TaskHandle:
     span: Span | None = None
     started_at: float = field(default_factory=time.monotonic)
     finished: bool = False
+    # Set by ``_open_task``.  An inert handle (inactive service) stays False so
+    # closing it cannot emit a span, a log, or an error event.
+    opened: bool = False
+    result: str = "success"
+    error_code: str | None = None
+    exception: BaseException | None = None
+    controller: Any | None = None
 
 
 @dataclass
@@ -643,6 +116,9 @@ class _NodeHandle:
     message_type: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     finished: bool = False
+    opened: bool = False
+    # ``None`` lets the close path derive the result from the message type.
+    result: str | None = None
 
 
 @dataclass
@@ -666,8 +142,90 @@ class TelemetryConsentStaleError(ValueError):
     """The UI consent dialog targeted an older interface DSN."""
 
 
+@contextmanager
+def task_span(
+    telemetry: "TelemetryService | None",
+    run_id: str | None,
+    task_name: str,
+    pi_entry: str,
+    *,
+    controller: Callable[[], Any] | None = None,
+) -> Iterator[_TaskHandle]:
+    """Open a task span for the duration of the block.
+
+    The yielded handle carries the outcome: set ``result`` (``success`` /
+    ``failed`` / ``stopped``) and ``error_code`` inside the block.  An
+    exception escaping the block is recorded as a failure.  Closing the block
+    finishes the span and, when the result is ``failed``, reports the matching
+    error event with ``controller()`` supplying the failure-attachment source.
+
+    A missing, unstarted, or inactive service yields an inert handle, so call
+    sites never branch on telemetry state.
+    """
+
+    handle = _TaskHandle(
+        run_id=run_id or "", task_name=task_name, pi_entry=pi_entry, epoch=-1
+    )
+    if telemetry is not None and run_id is not None:
+        opened = telemetry._open_task(run_id, task_name, pi_entry)
+        if opened is not None:
+            handle = opened
+    try:
+        yield handle
+    except BaseException as exc:
+        if handle.result == "success":
+            handle.result = "failed"
+            handle.error_code = handle.error_code or "mwu.task.failed"
+            handle.exception = exc
+        raise
+    finally:
+        if telemetry is not None:
+            if handle.controller is None and controller is not None:
+                handle.controller = controller()
+            telemetry._close_task(handle)
+
+
+@contextmanager
+def node_span(
+    telemetry: "TelemetryService | None",
+    run_id: str | None,
+    *,
+    task_name: str | None = None,
+    message_type: str | None = None,
+    details: dict[str, Any] | None = None,
+    trace_allowed: bool = False,
+) -> Iterator[_NodeHandle]:
+    """Open a node span for the duration of the block.
+
+    The result defaults to the one implied by ``message_type``; set
+    ``handle.result`` inside the block to override it.
+    """
+
+    handle = _NodeHandle(
+        run_id=run_id or "",
+        task_name=task_name,
+        epoch=-1,
+        message_type=message_type,
+    )
+    if telemetry is not None and run_id is not None:
+        opened = telemetry._open_node(
+            run_id,
+            task_name=task_name,
+            message_type=message_type,
+            details=details,
+            trace_allowed=trace_allowed,
+        )
+        if opened is not None:
+            handle = opened
+    try:
+        yield handle
+    finally:
+        if telemetry is not None:
+            telemetry._close_node(handle)
+
+
 class TelemetryService:
-    """Opt-in telemetry backend sharing Sentry's process-global client."""
+    """Opt-in telemetry backend publishing through Sentry's global client."""
 
     def __init__(
         self,
@@ -690,7 +248,25 @@ class TelemetryService:
             except Exception:
                 settings = SettingsModel()
         self._settings = settings
-        self._build_allowed_override = build_allowed
+        # The interface is loaded once during startup and never reloaded, so the
+        # Sentry target, the tracing switches, and the build gate are resolved
+        # exactly once instead of on every capture.
+        self._sentry = getattr(getattr(interface, "telemetry", None), "sentry", None)
+        self._tracing = self._resolve_tracing()
+        self._trace_rate = (
+            self._resolve_sample_rate("traces_sample_rate") if self._tracing else 0.0
+        )
+        self._attachment_rate = self._resolve_sample_rate(
+            "failure_attachments_sample_rate"
+        )
+        self._environment = self._resolve_environment()
+        self._build_allowed = (
+            bool(build_allowed)
+            if build_allowed is not None
+            else self._resolve_build_allowed()
+        )
+        self._dsn = self._parse_dsn()
+        self._config_id = self._compute_config_id()
         self._client_factory = client_factory or sentry_sdk.Client
         self._lock = threading.RLock()
         self._client: Any | None = None
@@ -701,11 +277,7 @@ class TelemetryService:
         self._saved_sys_excepthook: Any | None = None
         self._saved_threading_excepthook: Any | None = None
         self._saved_loop_handlers: dict[asyncio.AbstractEventLoop, Any] = {}
-        self._installed_sys_excepthook: Any | None = None
-        self._installed_threading_excepthook: Any | None = None
-        self._installed_loop_handlers: dict[asyncio.AbstractEventLoop, Any] = {}
         self._handlers_installed = False
-        self._invalid_dsn_reported = False
         self._last_warning_at: dict[str, float] = {}
         self._common_tags = self._build_common_tags()
 
@@ -719,39 +291,57 @@ class TelemetryService:
     # ------------------------------------------------------------------
 
     @property
-    def client(self) -> Any | None:
-        return self._client
-
-    @property
     def settings(self) -> SettingsModel:
         return self._settings
 
-    def is_configured(self) -> bool:
-        return self._parsed_dsn() is not None
+    def _is_configured(self) -> bool:
+        return self._dsn is not None
 
-    def is_build_allowed(self) -> bool:
-        if self._build_allowed_override is not None:
-            return bool(self._build_allowed_override)
+    def _is_build_allowed(self) -> bool:
+        return self._build_allowed
+
+    @staticmethod
+    def _resolve_build_allowed() -> bool:
         try:
             return bool(runtime_info.telemetry_build_allowed())
         except Exception:
             return False
 
-    def _parsed_dsn(self) -> Dsn | None:
-        raw = getattr(getattr(self.interface, "telemetry", None), "sentry", None)
-        dsn = getattr(raw, "dsn", None)
+    def _resolve_tracing(self) -> bool:
+        tracing = getattr(self._sentry, "tracing", True)
+        return True if tracing is None else bool(tracing)
+
+    def _resolve_sample_rate(self, field: str) -> float:
+        """Clamp one interface sample rate into ``[0, 1]``; invalid means zero."""
+
+        rate = getattr(self._sentry, field, 1.0)
+        if rate is None:
+            return 1.0
+        try:
+            rate = float(rate)
+        except (TypeError, ValueError):
+            return 0.0
+        return rate if math.isfinite(rate) and 0 <= rate <= 1 else 0.0
+
+    def _resolve_environment(self) -> str:
+        """PI ``telemetry.sentry.environment``; malformed values fall back."""
+
+        raw = getattr(self._sentry, "environment", None)
+        value = raw.strip() if isinstance(raw, str) else ""
+        return value if _ENVIRONMENT_RE.fullmatch(value) else "production"
+
+    def _parse_dsn(self) -> Dsn | None:
+        dsn = getattr(self._sentry, "dsn", None)
         if not isinstance(dsn, str) or not dsn.strip():
             return None
         try:
             return Dsn(dsn.strip())
         except (BadDsn, ValueError, TypeError) as exc:
-            if not self._invalid_dsn_reported:
-                self._invalid_dsn_reported = True
-                logger.warning("telemetry_invalid_dsn: %s", type(exc).__name__)
+            logger.warning("telemetry_invalid_dsn: %s", type(exc).__name__)
             return None
 
-    def _normalized_dsn(self, parsed: Dsn | None = None) -> str:
-        parsed = parsed or self._parsed_dsn()
+    def _normalized_dsn(self) -> str:
+        parsed = self._dsn
         if parsed is None:
             return ""
         # DSN credentials are included only in the local hash.  The recipient
@@ -764,16 +354,15 @@ class TelemetryService:
             f"{parsed.netloc[len(parsed.host) :]}{parsed.path}{parsed.project_id}"
         )
 
-    def config_id(self) -> str:
-        parsed = self._parsed_dsn()
-        if parsed is None:
+    def _compute_config_id(self) -> str:
+        if self._dsn is None:
             return ""
         name = str(getattr(self.interface, "name", "")).strip()
-        material = name + self._normalized_dsn(parsed)
+        material = name + self._normalized_dsn()
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    def recipient(self) -> dict[str, str] | None:
-        parsed = self._parsed_dsn()
+    def _recipient(self) -> dict[str, str] | None:
+        parsed = self._dsn
         if parsed is None:
             return None
         return {
@@ -787,22 +376,23 @@ class TelemetryService:
         consent = getattr(self._settings, "telemetry", None)
         if not isinstance(consent, TelemetryConsent):
             return False
-        current_id = self.config_id()
         return (
             consent.consent == "granted"
-            and bool(current_id)
-            and consent.configId == current_id
-            and self.is_build_allowed()
-            and self.is_configured()
+            and bool(self._config_id)
+            and consent.configId == self._config_id
+            and self._build_allowed
+            and self._dsn is not None
         )
 
-    def is_active(self) -> bool:
+    def _is_active(self) -> bool:
         with self._lock:
             client = self._client
             return bool(
                 self._authorized()
                 and client is not None
                 and self._client_epoch == self._epoch
+                # An embedded Agent that installs its own client takes the
+                # global slot; report inactive rather than claiming otherwise.
                 and self._owns_global_client(client)
             )
 
@@ -810,16 +400,16 @@ class TelemetryService:
         consent = getattr(self._settings, "telemetry", None)
         if not isinstance(consent, TelemetryConsent):
             consent = TelemetryConsent()
-        current_config_id = self.config_id()
+        current_config_id = self._config_id
         consent_matches_target = bool(current_config_id) and (
             consent.configId == current_config_id
         )
         return {
-            "configured": self.is_configured(),
-            "buildAllowed": self.is_build_allowed(),
-            "active": self.is_active(),
+            "configured": self._is_configured(),
+            "buildAllowed": self._is_build_allowed(),
+            "active": self._is_active(),
             "configId": current_config_id,
-            "recipient": self.recipient(),
+            "recipient": self._recipient(),
             "consent": consent.consent if consent_matches_target else "unknown",
             "failureAttachments": (
                 bool(consent.failureAttachments) if consent_matches_target else False
@@ -832,7 +422,7 @@ class TelemetryService:
         consent: Literal["granted", "denied"],
         failure_attachments: bool = False,
     ) -> dict[str, Any]:
-        expected = self.config_id()
+        expected = self._config_id
         if not expected or config_id != expected:
             raise TelemetryConsentStaleError("遥测接收目标已变化，请重新确认")
 
@@ -868,7 +458,7 @@ class TelemetryService:
         if consent == "granted":
             self._enable_client()
         else:
-            self.revoke()
+            self._revoke()
         return self.status_payload()
 
     # ------------------------------------------------------------------
@@ -890,27 +480,18 @@ class TelemetryService:
             "os": platform.system().lower()[:32] or "unknown",
         }
 
-    def _sentry_options(self, epoch: int) -> dict[str, Any]:
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        tracing = True if tracing is None else bool(tracing)
-        rate = getattr(sentry_config, "traces_sample_rate", 1.0)
-        if rate is None:
-            rate = 1.0
-        rate = (
-            float(rate) if math.isfinite(float(rate)) and 0 <= float(rate) <= 1 else 0.0
-        )
-        if not tracing:
-            rate = 0.0
+    def _sentry_options(self) -> dict[str, Any]:
         project_name = str(getattr(self.interface, "name", "unknown"))
         version = str(getattr(self.interface, "version", None) or "unknown")
         options: dict[str, Any] = {
-            "dsn": str(getattr(sentry_config, "dsn", "")).strip(),
+            "dsn": str(getattr(self._sentry, "dsn", "")).strip(),
+            # Master privacy switch: disables every default integration (which
+            # includes the excepthook/threading/atexit ones MWU replaces with
+            # its own hooks) *and* all auto-enabling integrations, so no
+            # framework integration can attach request, user, or breadcrumb
+            # data.  Verified against sentry-sdk 2.68.1: the resulting client
+            # carries zero integrations.
             "default_integrations": False,
-            "auto_enabling_integrations": False,
-            "integrations": [],
             "send_default_pii": False,
             "attach_stacktrace": False,
             "include_local_variables": False,
@@ -923,15 +504,10 @@ class TelemetryService:
             "trace_propagation_targets": [],
             "enable_backpressure_handling": False,
             "profiles_sample_rate": 0.0,
-            "traces_sample_rate": rate,
+            "traces_sample_rate": self._trace_rate,
             "trace_lifecycle": "static",
-            "enable_logs": True,
-            "before_send_log": scrub_log,
             "release": f"{project_name}@{version}",
-            "environment": "production",
-            "before_send": scrub_error_event,
-            "before_send_transaction": scrub_transaction_event,
-            "transport": _bound_transport_class(self, epoch),
+            "environment": self._environment,
             "debug": False,
         }
         return options
@@ -946,14 +522,15 @@ class TelemetryService:
             self._logs_enabled = False
             self._epoch += 1
             epoch = self._epoch
-            if old_client is not None:
-                self._unbind_global_client_locked(old_client)
         if old_client is not None:
+            # Detach before closing so the global scope never points at a
+            # closed client, including when the rebuild below fails.
+            self._unbind_global_client_locked(old_client)
             self._close_client(old_client, timeout=0)
 
         client = None
         try:
-            client = self._client_factory(**self._sentry_options(epoch))
+            client = self._client_factory(**self._sentry_options())
         except Exception:
             logger.warning("Sentry client 初始化失败，遥测保持关闭", exc_info=True)
 
@@ -961,17 +538,18 @@ class TelemetryService:
             return
         with self._lock:
             # A revoke/target change can race client construction.  Do not
-            # publish a client into an invalid epoch.
+            # adopt a client into an invalid epoch.
             if not self._authorized() or epoch != self._epoch:
                 self._close_client(client, timeout=0)
                 return
+            self._client = client
+            self._client_epoch = epoch
+            self._logs_enabled = True
+            # Publish through Sentry's global scope, exactly as
+            # ``sentry_sdk.init`` does.  Captures, transactions, and the logger
+            # resolve the client from the scope chain, so no per-capture scope
+            # binding is needed.  ``_revoke`` detaches it again.
             try:
-                self._client = client
-                self._client_epoch = epoch
-                self._logs_enabled = True
-                # Publish through the SDK's normal global scope.  This is the
-                # client used by sentry_sdk.capture_* and start_* in embedded
-                # Agents as well as by MWU's own wrappers.
                 global_scope = sentry_sdk.get_global_scope()
                 global_scope.set_client(client)
                 global_scope.set_tags(self._common_tags)
@@ -1013,8 +591,8 @@ class TelemetryService:
         except Exception:
             logger.debug("telemetry global client unbind failed", exc_info=True)
 
-    def revoke(self) -> None:
-        """Invalidate the current epoch before closing; never flush old data."""
+    def _revoke(self) -> None:
+        """Detach the client before closing so nothing new is captured."""
 
         with self._lock:
             self._epoch += 1
@@ -1027,10 +605,9 @@ class TelemetryService:
                 self._unbind_global_client_locked(old_client)
         self._restore_exception_handlers()
         if old_client is not None:
-            # Client.close() flushes internally in SDK 2.68.1, but the epoch
-            # gate makes every queued and in-flight pre-revocation send drop.
             self._close_client(old_client, timeout=0)
 
+    @_observational
     def flush_and_close_limited(self) -> None:
         """Close on normal exit, flushing for at most two seconds if active."""
 
@@ -1041,9 +618,8 @@ class TelemetryService:
             self._clear_run_buffers_locked()
         self._restore_exception_handlers()
         if client is not None:
-            # Keep the client/epoch visible to the transport while Client.close
-            # drains its queue.  Unlike revoke(), normal shutdown is allowed a
-            # bounded flush; invalidate the epoch only after close returns.
+            # Normal shutdown is allowed a bounded flush, so the global client
+            # stays installed while Client.close drains its queue.
             self._close_client(client, timeout=2.0 if active else 0)
         with self._lock:
             if self._client is client:
@@ -1066,24 +642,20 @@ class TelemetryService:
 
     def _install_exception_handlers(self) -> None:
         with self._lock:
-            if self._handlers_installed or not self.is_active():
+            if self._handlers_installed or not self._is_active():
                 return
             self._saved_sys_excepthook = sys.excepthook
-            self._installed_sys_excepthook = self._sys_excepthook
-            sys.excepthook = self._installed_sys_excepthook
+            sys.excepthook = self._sys_excepthook
             if hasattr(threading, "excepthook"):
                 self._saved_threading_excepthook = threading.excepthook
-                self._installed_threading_excepthook = self._threading_excepthook
-                threading.excepthook = self._installed_threading_excepthook
+                threading.excepthook = self._threading_excepthook
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None:
                 self._saved_loop_handlers[loop] = loop.get_exception_handler()
-                installed = self._loop_exception_handler
-                self._installed_loop_handlers[loop] = installed
-                loop.set_exception_handler(installed)
+                loop.set_exception_handler(self._loop_exception_handler)
             self._handlers_installed = True
 
     def _restore_exception_handlers(self) -> None:
@@ -1092,37 +664,32 @@ class TelemetryService:
                 return
             if (
                 self._saved_sys_excepthook is not None
-                and sys.excepthook is self._installed_sys_excepthook
+                and sys.excepthook == self._sys_excepthook
             ):
                 sys.excepthook = self._saved_sys_excepthook
             if (
                 self._saved_threading_excepthook is not None
-                and getattr(threading, "excepthook", None)
-                is self._installed_threading_excepthook
+                and getattr(threading, "excepthook", None) == self._threading_excepthook
             ):
                 threading.excepthook = self._saved_threading_excepthook
             for loop, handler in list(self._saved_loop_handlers.items()):
                 try:
                     if (
                         not loop.is_closed()
-                        and loop.get_exception_handler()
-                        is self._installed_loop_handlers.get(loop)
+                        and loop.get_exception_handler() == self._loop_exception_handler
                     ):
                         loop.set_exception_handler(handler)
                 except Exception:
                     pass
             self._saved_loop_handlers.clear()
-            self._installed_loop_handlers.clear()
             self._saved_sys_excepthook = None
             self._saved_threading_excepthook = None
-            self._installed_sys_excepthook = None
-            self._installed_threading_excepthook = None
             self._handlers_installed = False
 
     def _sys_excepthook(self, exc_type, exc_value, exc_traceback) -> None:
         try:
             if isinstance(exc_value, BaseException):
-                self.capture_exception(
+                self._capture_unhandled(
                     exc_value,
                     error_code="unhandled_exception",
                     traceback=exc_traceback,
@@ -1137,7 +704,7 @@ class TelemetryService:
         try:
             value = getattr(args, "exc_value", None)
             if isinstance(value, BaseException):
-                self.capture_exception(
+                self._capture_unhandled(
                     value,
                     error_code="unhandled_exception",
                     traceback=getattr(args, "exc_traceback", None),
@@ -1152,7 +719,7 @@ class TelemetryService:
         try:
             value = context.get("exception") if isinstance(context, dict) else None
             if isinstance(value, BaseException):
-                self.capture_exception(value, error_code="unhandled_exception")
+                self._capture_unhandled(value, error_code="unhandled_exception")
             else:
                 self._record_local_warning("asyncio_unhandled_exception")
         except Exception:
@@ -1185,26 +752,29 @@ class TelemetryService:
                 or not self._authorized()
             ):
                 return
-            safe_attrs: dict[str, Any] = {"event_name": event_name}
-            for key, value in attrs.items():
-                safe = _safe_attribute(key, value)
-                if safe is not None:
-                    safe_attrs[key] = safe
+            attributes: dict[str, Any] = {"event_name": event_name, **attrs}
         if not self._can_send_epoch(epoch):
             return
         try:
-            capture = getattr(sentry_logger, severity, sentry_logger.info)
-            capture(event_name, attributes=safe_attrs)
+            self._emit_log(severity, event_name, attributes)
         except Exception:
             self._record_local_warning("log_capture_failed")
 
+    @staticmethod
+    def _emit_log(severity: str, event_name: str, attributes: dict[str, Any]) -> None:
+        """Emit one log through the installed global client."""
+
+        capture = getattr(sentry_logger, severity, sentry_logger.info)
+        capture(event_name, attributes=attributes)
+
+    @_observational
     def start_run(
         self,
         run_id: str,
         origin: str,
         task_names: list[str] | None = None,
     ) -> _RunHandle | None:
-        if not self.is_active():
+        if not self._is_active():
             return None
         origin = origin if origin in _ALLOWED_ORIGINS else "in_app"
         task_names = [
@@ -1217,18 +787,7 @@ class TelemetryService:
             epoch = self._epoch
 
         transaction: Span | None = None
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        if tracing is None:
-            tracing = True
-        rate = getattr(sentry_config, "traces_sample_rate", 1.0)
-        try:
-            has_trace_rate = rate is None or float(rate) > 0
-        except (TypeError, ValueError):
-            has_trace_rate = False
-        if bool(tracing) and has_trace_rate:
+        if self._trace_rate > 0:
             try:
                 transaction = sentry_sdk.start_transaction(
                     name="mwu.run",
@@ -1253,7 +812,7 @@ class TelemetryService:
             if not self._can_send_epoch(epoch):
                 return None
             self._runs[run_id] = handle
-        if bool(tracing):
+        if self._tracing:
             self._capture_log(
                 "mwu.run.started",
                 {
@@ -1264,23 +823,14 @@ class TelemetryService:
             )
         return handle
 
+    @_observational
     def finish_run(self, run_id: str, result: str) -> None:
         with self._lock:
             handle = self._runs.pop(run_id, None)
         if handle is None:
             return
         result = result if result in _ALLOWED_RESULTS else "failed"
-        sentry_result = {
-            "success": "ok",
-            "failed": "internal_error",
-            "stopped": "cancelled",
-        }.get(result, result)
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        if tracing is None:
-            tracing = True
+        sentry_result = _SENTRY_STATUS.get(result, result)
         duration_ms = int(max(0.0, time.monotonic() - handle.started_at) * 1000)
         if handle.transaction is not None:
             try:
@@ -1291,7 +841,7 @@ class TelemetryService:
                     handle.transaction.finish()
             except Exception:
                 logger.debug("telemetry run transaction finish failed", exc_info=True)
-        if bool(tracing):
+        if self._tracing:
             self._capture_log(
                 "mwu.run.finished",
                 {
@@ -1306,6 +856,7 @@ class TelemetryService:
             )
         handle.diagnostics.clear()
 
+    @_observational
     def set_run_context(
         self,
         run_id: str,
@@ -1320,14 +871,17 @@ class TelemetryService:
             if run is None:
                 return
             if controller_type is not None:
-                run.controller_type = _safe_identifier(controller_type, max_length=64)
+                run.controller_type = controller_type
             if resource_name is not None:
-                run.resource_name = _safe_identifier(resource_name, max_length=256)
+                run.resource_name = resource_name
 
-    def start_task(
+    @_observational
+    def _open_task(
         self, run_id: str, task_name: str, pi_entry: str
     ) -> _TaskHandle | None:
-        if not self.is_active():
+        """Open a task span inside an active run; ``None`` means no span."""
+
+        if not self._is_active():
             return None
         with self._lock:
             run = self._runs.get(run_id)
@@ -1338,6 +892,7 @@ class TelemetryService:
                 task_name=str(task_name)[:256],
                 pi_entry=str(pi_entry)[:256],
                 epoch=run.epoch,
+                opened=True,
             )
             if run.transaction is not None:
                 try:
@@ -1348,85 +903,77 @@ class TelemetryService:
                     task.span.set_data("pi_entry", task.pi_entry)
                 except Exception:
                     logger.debug("telemetry task span failed", exc_info=True)
+                    task.span = None
             run.tasks[task.task_name] = task
             return task
 
-    def finish_task(
-        self, handle: _TaskHandle | None, status: str, error_code: str | None = None
-    ) -> None:
-        if handle is None or handle.finished:
+    @_observational
+    def _close_task(self, handle: _TaskHandle) -> None:
+        """Finish a task span and report its failure, if any."""
+
+        if not handle.opened or handle.finished:
             return
         handle.finished = True
-        status = status if status in _ALLOWED_RESULTS else "failed"
+        status = handle.result if handle.result in _ALLOWED_RESULTS else "failed"
         duration_ms = int(max(0.0, time.monotonic() - handle.started_at) * 1000)
+        with self._lock:
+            run = self._runs.get(handle.run_id)
+            controller_type = run.controller_type if run is not None else None
+            resource_name = run.resource_name if run is not None else None
         if handle.span is not None:
             try:
                 handle.span.set_data("task_name", handle.task_name)
                 handle.span.set_data("result", status)
                 handle.span.set_data("duration_ms", duration_ms)
-                if error_code:
-                    handle.span.set_data("error_code", _safe_code(error_code))
-                handle.span.set_status(
-                    {
-                        "success": "ok",
-                        "failed": "internal_error",
-                        "stopped": "cancelled",
-                    }.get(status, status)
-                )
+                if handle.error_code:
+                    handle.span.set_data("error_code", handle.error_code)
+                handle.span.set_status(_SENTRY_STATUS.get(status, status))
                 if self._can_send_epoch(handle.epoch):
                     handle.span.finish()
             except Exception:
                 logger.debug("telemetry task span finish failed", exc_info=True)
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        if tracing is None:
-            tracing = True
-        if bool(tracing):
+        if self._tracing:
             self._capture_log(
                 "mwu.task.finished",
                 {
                     "run_id": handle.run_id,
                     "task_name": handle.task_name,
                     "pi_entry": handle.pi_entry,
-                    "controller_type": self._run_context_value(
-                        handle.run_id, "controller_type"
-                    ),
-                    "resource_name": self._run_context_value(
-                        handle.run_id, "resource_name"
-                    ),
+                    "controller_type": controller_type,
+                    "resource_name": resource_name,
                     "result": status,
                     "duration_ms": duration_ms,
-                    "error_code": error_code,
+                    "error_code": handle.error_code,
                 },
                 severity="error" if status == "failed" else "info",
+            )
+        if status == "failed":
+            self._capture_error(
+                handle.run_id,
+                error_code=handle.error_code or "mwu.task.failed",
+                exception=handle.exception,
+                task_name=handle.task_name,
+                controller=handle.controller,
+                attach=True,
             )
         with self._lock:
             run = self._runs.get(handle.run_id)
             if run is not None:
                 run.tasks.pop(handle.task_name, None)
 
-    def _run_context_value(self, run_id: str, key: str) -> str | None:
-        with self._lock:
-            run = self._runs.get(run_id)
-            return getattr(run, key, None) if run is not None else None
-
-    def node_span(
+    @_observational
+    def _open_node(
         self,
         run_id: str,
+        *,
         task_name: str | None = None,
         message_type: str | None = None,
         details: dict[str, Any] | None = None,
         trace_allowed: bool = False,
     ) -> _NodeHandle | None:
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        if tracing is None:
-            tracing = True
-        if not trace_allowed or not bool(tracing) or not self.is_active():
+        """Open a node span under the current task, when tracing allows it."""
+
+        if not trace_allowed or not self._tracing or not self._is_active():
             return None
         with self._lock:
             run = self._runs.get(run_id)
@@ -1458,21 +1005,28 @@ class TelemetryService:
                 span=span,
                 message_type=message_type,
                 attributes=attrs,
+                opened=True,
             )
             if span is not None:
                 for key, value in attrs.items():
-                    safe = _safe_attribute(key, value)
-                    if safe is not None:
-                        span.set_data(key, safe)
+                    span.set_data(key, value)
             return node
 
-    def finish_node_span(
-        self, handle: _NodeHandle | None, result: str | None = None
-    ) -> None:
-        if handle is None or handle.finished:
+    @_observational
+    def _close_node(self, handle: _NodeHandle) -> None:
+        """Finish a node span, log its result, and buffer a diagnostic record."""
+
+        if not handle.opened or handle.finished:
             return
         handle.finished = True
-        result = result or "success"
+        result = handle.result
+        if result is None:
+            # MAA reports node failures through the message type.
+            result = (
+                "failed"
+                if (handle.message_type or "").endswith(".Failed")
+                else "success"
+            )
         if result not in _ALLOWED_RESULTS:
             result = "failed" if str(result).endswith("Failed") else "success"
         duration_ms = int(max(0.0, time.monotonic() - handle.started_at) * 1000)
@@ -1485,13 +1039,7 @@ class TelemetryService:
                     handle.span.finish()
             except Exception:
                 logger.debug("telemetry node span finish failed", exc_info=True)
-        sentry_config = getattr(
-            getattr(self.interface, "telemetry", None), "sentry", None
-        )
-        tracing = getattr(sentry_config, "tracing", True)
-        if tracing is None:
-            tracing = True
-        if bool(tracing):
+        if self._tracing:
             self._capture_log(
                 "mwu.node.result",
                 {
@@ -1501,7 +1049,7 @@ class TelemetryService:
                 },
                 severity="error" if result == "failed" else "info",
             )
-        self.record_diagnostic(
+        self._record_diagnostic(
             handle.run_id,
             message_type=handle.message_type,
             task_name=handle.task_name,
@@ -1513,6 +1061,7 @@ class TelemetryService:
             },
         )
 
+    @_observational
     def record_execution_rejected(
         self,
         *,
@@ -1530,7 +1079,7 @@ class TelemetryService:
     # Errors, diagnostics, and failure attachments
     # ------------------------------------------------------------------
 
-    def record_diagnostic(
+    def _record_diagnostic(
         self,
         run_id: str,
         *,
@@ -1543,16 +1092,13 @@ class TelemetryService:
             run = self._runs.get(run_id)
             if run is None:
                 return
-            record: dict[str, Any] = {"time": int(time.time())}
-            for key, value in {
+            record: dict[str, Any] = {
+                "time": int(time.time()),
                 "message_type": message_type,
                 "task_name": task_name,
                 "result": result,
                 **attrs,
-            }.items():
-                safe = _safe_attribute(key, value)
-                if safe is not None:
-                    record[key] = safe
+            }
             run.diagnostics.append(record)
 
     def _diagnostics_bytes(self, run: _RunHandle) -> bytes | None:
@@ -1579,19 +1125,16 @@ class TelemetryService:
 
     @staticmethod
     def _copy_cached_image(controller: Any) -> Any | None:
+        """Copy the failure-time frame before the controller mutates it again."""
+
         try:
             image = getattr(controller, "cached_image", None)
-        except Exception:
-            return None
-        if image is None:
-            return None
-        try:
+            if image is None:
+                return None
             if isinstance(image, Image.Image):
                 return image.copy()
             copier = getattr(image, "copy", None)
-            if callable(copier):
-                return copier()
-            return image
+            return copier() if callable(copier) else image
         except Exception:
             return None
 
@@ -1644,20 +1187,9 @@ class TelemetryService:
                 or self._client_epoch != run.epoch
             ):
                 return []
-            consent = self._settings.telemetry
-            if not consent.failureAttachments:
+            if not self._settings.telemetry.failureAttachments:
                 return []
-            sentry_config = getattr(
-                getattr(self.interface, "telemetry", None), "sentry", None
-            )
-            rate = getattr(sentry_config, "failure_attachments_sample_rate", 1.0)
-            if rate is None:
-                rate = 1.0
-            try:
-                rate = float(rate)
-            except (TypeError, ValueError):
-                return []
-            if not math.isfinite(rate) or rate <= 0 or random.random() >= rate:
+            if self._attachment_rate <= 0 or random.random() >= self._attachment_rate:
                 return []
             # Copy pixels while still in the failure callback.  Encoding can
             # then happen without borrowing a mutable controller image.
@@ -1677,6 +1209,7 @@ class TelemetryService:
             attachments.append(("diagnostics.jsonl", diagnostics, "application/json"))
         return attachments
 
+    @_observational
     def _capture_error(
         self,
         run_id: str | None,
@@ -1692,9 +1225,10 @@ class TelemetryService:
             exception, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)
         ):
             return
-        if not self.is_active():
+        with self._lock:
+            epoch = self._client_epoch
+        if epoch is None or not self._can_send_epoch(epoch):
             return
-        error_code = _safe_code(error_code)
         run: _RunHandle | None = None
         with self._lock:
             if run_id is not None:
@@ -1703,9 +1237,6 @@ class TelemetryService:
                     return
                 if run is not None:
                     run.errors.add(error_code)
-            epoch = self._client_epoch
-        if epoch is None or not self._can_send_epoch(epoch):
-            return
         if exception is None:
             exception = RuntimeError(error_code)
         attachments = (
@@ -1714,24 +1245,6 @@ class TelemetryService:
             else []
         )
 
-        def apply_scope(scope: Any) -> None:
-            scope.set_tags(self._common_tags)
-            scope.set_context(
-                "mwu",
-                {
-                    "run_id": run_id,
-                    "task_name": task_name,
-                    "error_code": error_code,
-                },
-            )
-            for filename, payload, content_type in attachments:
-                scope.add_attachment(
-                    bytes=payload,
-                    filename=filename,
-                    content_type=content_type,
-                    add_to_transactions=False,
-                )
-
         captured_exception: Any = exception
         if traceback is not None or exception.__traceback__ is not None:
             captured_exception = (
@@ -1739,38 +1252,52 @@ class TelemetryService:
                 exception,
                 traceback or exception.__traceback__,
             )
-        try:
-            sentry_sdk.capture_exception(captured_exception, scope=apply_scope)
-            self._capture_log(
-                "mwu.error",
-                {
-                    "run_id": run_id,
-                    "task_name": task_name,
-                    "error_code": error_code,
-                    "result": "failed",
-                },
-                severity="error",
+        scope = sentry_sdk.get_current_scope()
+        scope.set_context(
+            "mwu",
+            {
+                "run_id": run_id,
+                "task_name": task_name,
+                "error_code": error_code,
+            },
+        )
+        for filename, payload, content_type in attachments:
+            scope.add_attachment(
+                bytes=payload,
+                filename=filename,
+                content_type=content_type,
+                add_to_transactions=False,
             )
-        except Exception:
-            self._record_local_warning("error_capture_failed")
+        scope.capture_exception(captured_exception)
+        self._capture_log(
+            "mwu.error",
+            {
+                "run_id": run_id,
+                "task_name": task_name,
+                "error_code": error_code,
+                "result": "failed",
+            },
+            severity="error",
+        )
 
-    def capture_exception(
+    @_observational
+    def _capture_unhandled(
         self,
         exception: BaseException,
         *,
-        run_id: str | None = None,
         error_code: str = "mwu.error",
         traceback: TracebackType | None = None,
-        task_name: str | None = None,
     ) -> None:
+        """Capture an exception raised outside any MWU run, such as in a hook."""
+
         self._capture_error(
-            run_id,
+            None,
             error_code=error_code,
             exception=exception,
             traceback=traceback,
-            task_name=task_name,
         )
 
+    @_observational
     def capture_prepare_failed(
         self,
         run_id: str,
@@ -1785,17 +1312,21 @@ class TelemetryService:
             task_name=task_name,
         )
 
+    @_observational
     def capture_task_failed(
         self,
-        run_id: str,
+        run_id: str | None,
         task_name: str,
         exception: BaseException | None = None,
         *,
         controller: Any | None = None,
-        status: str | None = None,
     ) -> None:
-        if status in {"stopped", "cancelled"}:
-            return
+        """Report a task failure raised outside any task span.
+
+        Failures inside a span are reported by ``_close_task``; this covers the
+        pre-task window (event emission, interface lookup) where no span exists.
+        """
+
         self._capture_error(
             run_id,
             error_code="mwu.task.failed",
@@ -1820,10 +1351,8 @@ class TelemetryService:
 
 
 __all__ = [
-    "EpochBoundHttpTransport",
     "TelemetryConsentStaleError",
     "TelemetryService",
-    "scrub_error_event",
-    "scrub_log",
-    "scrub_transaction_event",
+    "node_span",
+    "task_span",
 ]

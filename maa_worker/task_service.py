@@ -5,6 +5,7 @@ import traceback
 from typing import TYPE_CHECKING
 
 from models.scheduler import PreTaskCommand, TaskOptionsByTask, TaskOptionValue
+from services.telemetry_service import task_span
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
@@ -13,6 +14,17 @@ if TYPE_CHECKING:
 class TaskService:
     def __init__(self, worker: "MaaWorker"):
         self.worker = worker
+
+    def _telemetry(self):
+        telemetry = getattr(self.worker, "telemetry", None)
+        if telemetry is None:
+            telemetry = getattr(
+                getattr(self.worker, "state", None), "telemetry_service", None
+            )
+        return telemetry
+
+    def _controller(self):
+        return getattr(self.worker.device_state, "controller", None)
 
     def _get_task_definition(self, task_name: str):
         return next(
@@ -189,14 +201,9 @@ class TaskService:
     ):
         state = self.worker.task_state
         state.pre_tasks = pre_tasks or []
-        telemetry = getattr(self.worker, "telemetry", None)
-        if telemetry is None:
-            telemetry = getattr(
-                getattr(self.worker, "state", None), "telemetry_service", None
-            )
+        telemetry = self._telemetry()
         active_run = getattr(getattr(self.worker, "state", None), "active_run", None)
         run_id = getattr(active_run, "run_id", None)
-        current_telemetry_task = None
         try:
             self.worker.events.emit_task_started(task_list)
             for task_index, task_name in enumerate(task_list):
@@ -206,11 +213,6 @@ class TaskService:
                     state.last_status = "stopped"
                     state.last_error = "任务已终止"
                     self.worker.events.send_log("任务已终止")
-                    if telemetry is not None:
-                        try:
-                            telemetry.finish_task(current_telemetry_task, "stopped")
-                        except Exception:
-                            pass
                     self.worker.events.emit_task_failed(task_list, "任务已终止")
                     return
 
@@ -220,82 +222,59 @@ class TaskService:
                     state.last_error = f"任务 {task_name} 不存在于当前 interface"
                     self.worker.events.emit_task_failed(task_list, state.last_error)
                     return
-                # Set this before post_task: synchronous native callbacks can
-                # arrive during submission and must bind to this PI task.
-                state.current_pi_task_name = task_name
-                if telemetry is not None and run_id is not None:
-                    try:
-                        current_telemetry_task = telemetry.start_task(
-                            run_id, task_name, task_definition.entry
-                        )
-                    except Exception:
-                        current_telemetry_task = None
-                pipeline_override = self.worker.pipeline.build_task_pipeline_override(
+                # 任务级遥测 span 与本次任务同生命周期；result 在块内改写，
+                # 关闭时统一收尾（失败附带错误事件与诊断附件）。
+                with task_span(
+                    telemetry,
+                    run_id,
                     task_name,
-                    options.get(task_name, {}),
-                    global_options or {},
-                )
-                if pipeline_override:
-                    task_result = self.worker.tasker.post_task(
-                        task_definition.entry, pipeline_override
+                    task_definition.entry,
+                    controller=self._controller,
+                ) as task:
+                    # Set this before post_task: synchronous native callbacks can
+                    # arrive during submission and must bind to this PI task.
+                    state.current_pi_task_name = task_name
+                    pipeline_override = (
+                        self.worker.pipeline.build_task_pipeline_override(
+                            task_name,
+                            options.get(task_name, {}),
+                            global_options or {},
+                        )
                     )
-                else:
-                    task_result = self.worker.tasker.post_task(task_definition.entry)
-                self.worker.events.send_log("正在运行任务: " + task_name)
-                while not task_result.done:
-                    time.sleep(0.5)
+                    if pipeline_override:
+                        task_result = self.worker.tasker.post_task(
+                            task_definition.entry, pipeline_override
+                        )
+                    else:
+                        task_result = self.worker.tasker.post_task(
+                            task_definition.entry
+                        )
+                    self.worker.events.send_log("正在运行任务: " + task_name)
+                    while not task_result.done:
+                        time.sleep(0.5)
+                        if state.stop_flag:
+                            task.result = "stopped"
+                            state.last_status = "stopped"
+                            state.last_error = "任务已终止"
+                            self.worker.events.send_log("任务已终止")
+                            self.worker.events.emit_task_failed(task_list, "任务已终止")
+                            return
                     if state.stop_flag:
+                        task.result = "stopped"
                         state.last_status = "stopped"
                         state.last_error = "任务已终止"
                         self.worker.events.send_log("任务已终止")
-                        if telemetry is not None:
-                            try:
-                                telemetry.finish_task(current_telemetry_task, "stopped")
-                            except Exception:
-                                pass
                         self.worker.events.emit_task_failed(task_list, "任务已终止")
                         return
-                if state.stop_flag:
-                    state.last_status = "stopped"
-                    state.last_error = "任务已终止"
-                    self.worker.events.send_log("任务已终止")
-                    if telemetry is not None:
-                        try:
-                            telemetry.finish_task(current_telemetry_task, "stopped")
-                        except Exception:
-                            pass
-                    self.worker.events.emit_task_failed(task_list, "任务已终止")
-                    return
-                # 真实任务终态：首个非成功立即终止批次
-                succeeded = bool(getattr(task_result, "succeeded", False))
-                if not succeeded:
-                    state.last_status = "failed"
-                    state.last_error = f"任务 {task_name} 执行失败"
-                    self.worker.events.send_log(state.last_error)
-                    if telemetry is not None and run_id is not None:
-                        try:
-                            telemetry.finish_task(
-                                current_telemetry_task,
-                                "failed",
-                                "mwu.task.failed",
-                            )
-                            telemetry.capture_task_failed(
-                                run_id,
-                                task_name,
-                                controller=getattr(
-                                    self.worker.device_state, "controller", None
-                                ),
-                            )
-                        except Exception:
-                            pass
-                    self.worker.events.emit_task_failed(task_list, state.last_error)
-                    return
-                if telemetry is not None:
-                    try:
-                        telemetry.finish_task(current_telemetry_task, "success")
-                    except Exception:
-                        pass
-                current_telemetry_task = None
+                    # 真实任务终态：首个非成功立即终止批次
+                    if not bool(getattr(task_result, "succeeded", False)):
+                        task.result = "failed"
+                        task.error_code = "mwu.task.failed"
+                        state.last_status = "failed"
+                        state.last_error = f"任务 {task_name} 执行失败"
+                        self.worker.events.send_log(state.last_error)
+                        self.worker.events.emit_task_failed(task_list, state.last_error)
+                        return
                 if task_index < len(task_list) - 1:
                     self.worker.events.send_log(f"任务 {task_name} 执行成功")
             state.last_status = "success"
@@ -305,23 +284,13 @@ class TaskService:
             traceback.print_exc()
             state.last_status = "failed"
             state.last_error = str(exc) or "任务执行失败"
-            if telemetry is not None and run_id is not None:
-                try:
-                    telemetry.finish_task(
-                        current_telemetry_task,
-                        "failed",
-                        "mwu.task.failed",
-                    )
-                    telemetry.capture_task_failed(
-                        run_id,
-                        state.current_pi_task_name or "未知任务",
-                        exc,
-                        controller=getattr(
-                            self.worker.device_state, "controller", None
-                        ),
-                    )
-                except Exception:
-                    pass
+            if telemetry is not None:
+                telemetry.capture_task_failed(
+                    run_id,
+                    state.current_pi_task_name or "未知任务",
+                    exc,
+                    controller=self._controller(),
+                )
             self.worker.events.emit_task_failed(task_list, state.last_error)
             self.worker.events.send_log("任务出现异常，请检查终端日志")
             self.worker.events.send_log(

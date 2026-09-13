@@ -9,9 +9,7 @@ from models.settings import SettingsModel, TelemetryConsent
 from services.telemetry_service import (
     TelemetryConsentStaleError,
     TelemetryService,
-    scrub_error_event,
-    scrub_log,
-    scrub_transaction_event,
+    task_span,
 )
 
 _created_services: list[TelemetryService] = []
@@ -21,7 +19,7 @@ _created_services: list[TelemetryService] = []
 def _cleanup_services():
     yield
     for service in _created_services:
-        service.revoke()
+        service._revoke()
     _created_services.clear()
 
 
@@ -51,13 +49,13 @@ def _service(tmp_path: Path, **sentry) -> TelemetryService:
 
 def test_config_id_is_stable_and_dsn_change_is_stale(tmp_path):
     first = _service(tmp_path)
-    config_id = first.config_id()
-    assert config_id == _service(tmp_path).config_id()
+    config_id = first._config_id
+    assert config_id == _service(tmp_path)._config_id
     first.apply_consent(config_id, "granted")
-    assert first.is_active()
+    assert first.status_payload()["active"] is True
 
     changed = _service(tmp_path, dsn="https://public@example.test/43")
-    assert changed.config_id() != config_id
+    assert changed._config_id != config_id
     with pytest.raises(TelemetryConsentStaleError):
         changed.apply_consent(config_id, "granted")
 
@@ -72,8 +70,7 @@ def test_missing_or_blank_dsn_keeps_telemetry_disabled(tmp_path):
         )
         _created_services.append(service)
 
-        assert not service.is_configured()
-        assert service.client is None
+        assert service._client is None
         status = service.status_payload()
         assert status["configured"] is False
         assert status["active"] is False
@@ -82,7 +79,7 @@ def test_missing_or_blank_dsn_keeps_telemetry_disabled(tmp_path):
 
 
 def test_status_projects_stale_disk_consent_to_unknown(tmp_path):
-    previous_target = _service(tmp_path).config_id()
+    previous_target = _service(tmp_path)._config_id
     settings = SettingsModel(
         telemetry=TelemetryConsent(
             consent="granted",
@@ -114,7 +111,7 @@ def test_status_projects_stale_disk_consent_to_unknown(tmp_path):
 
 def test_recipient_does_not_expose_dsn_key(tmp_path):
     service = _service(tmp_path, dsn="https://public-secret@example.test/path/42")
-    recipient = service.recipient()
+    recipient = service.status_payload()["recipient"]
     assert recipient == {
         "project": "Telemetry Game",
         "host": "example.test",
@@ -124,177 +121,88 @@ def test_recipient_does_not_expose_dsn_key(tmp_path):
     assert "public-secret" not in repr(recipient)
 
 
-def test_scrubbers_are_whitelist_only():
-    error = scrub_error_event(
-        {
-            "exception": {
-                "values": [
-                    {
-                        "type": "ValueError",
-                        "value": "SECRET exception value",
-                        "stacktrace": {
-                            "frames": [
-                                {
-                                    "filename": "C:/SECRET/project.py",
-                                    "function": "C:/SECRET/function",
-                                    "lineno": 9,
-                                }
-                            ]
-                        },
-                    }
-                ]
-            },
-            "request": {"headers": {"Authorization": "SECRET"}},
-            "locals": {"secret": "SECRET"},
-            "extra": {"secret": "SECRET"},
-        },
-        {"telemetry_error_code": "mwu.task.failed"},
-    )
-    encoded = repr(error)
-    assert "SECRET" not in encoded
-    encoded = repr(
-        scrub_error_event(
-            {
-                "event_id": "SECRET",
-                "platform": "SECRET",
-                "release": "SECRET",
-                "environment": "SECRET",
-                "exception": {"values": [{"value": "SECRET"}]},
-            }
-        )
-    )
-    assert "SECRET" not in encoded
-    assert error["exception"]["values"][0]["type"] == "ValueError"
-    assert error["exception"]["values"][0]["stacktrace"]["frames"] == [
-        {"function": "function", "lineno": 9}
-    ]
-
-    log = scrub_log(
-        {
-            "body": "mwu.run.started",
-            "attributes": {
-                "event_name": "mwu.run.started",
-                "run_id": "run-1",
-                "options": "SECRET",
-                "body": "SECRET",
-            },
-            "time_unix_nano": "SECRET",
-            "trace_id": "SECRET",
-        }
-    )
-    assert log is not None
-    assert "SECRET" not in repr(log)
-    assert set(log["attributes"]) == {"event_name", "run_id"}
-
-    transaction = scrub_transaction_event(
-        {
-            "type": "transaction",
-            "transaction": "mwu.run",
-            "extra": {"secret": "SECRET"},
-            "spans": [
-                {"op": "maa.task", "data": {"task_name": "Task", "secret": "SECRET"}}
-            ],
-        }
-    )
-    assert "SECRET" not in repr(transaction)
-    assert transaction["spans"][0]["data"] == {"task_name": "Task"}
-
-
-def test_real_sdk_transaction_serialization_preserves_protocol_fields():
-    class RecordingTransport(Transport):
-        def __init__(self):
-            super().__init__()
-            self.envelopes = []
-
-        def capture_envelope(self, envelope):
-            self.envelopes.append(envelope)
-
-    transport = RecordingTransport()
-    raw_events = []
-
-    def before_send_transaction(event, hint):
-        raw_events.append(event)
-        return scrub_transaction_event(event, hint)
-
-    client = sentry_sdk.Client(
-        dsn="https://public@example.test/42",
-        default_integrations=False,
-        auto_enabling_integrations=False,
-        integrations=[],
-        send_default_pii=False,
-        traces_sample_rate=1.0,
-        before_send_transaction=before_send_transaction,
-        transport=transport,
-    )
-    with sentry_sdk.new_scope() as scope:
-        scope.set_client(client)
-        transaction = sentry_sdk.start_transaction(
-            name="mwu.run", op="mwu.run", origin="manual"
-        )
-        transaction.set_data("run_id", "run-1")
-        transaction.set_data("secret", "SECRET")
-        span = transaction.start_child(op="maa.task", name="maa.task", origin="manual")
-        span.set_data("task_name", "Task")
-        span.set_data("secret", "SECRET")
-        span.set_status("cancelled")
-        span.finish()
-        transaction.set_status("internal_error")
-        transaction.finish()
-    client.close(timeout=0)
-
-    assert len(raw_events) == 1
-    raw = raw_events[0]
-    assert isinstance(raw["start_timestamp"], str)
-    assert isinstance(raw["timestamp"], str)
-    assert isinstance(raw["contexts"]["trace"]["data"], dict)
-    assert isinstance(raw["spans"][0]["start_timestamp"], str)
-    assert isinstance(raw["spans"][0]["timestamp"], str)
-
-    assert len(transport.envelopes) == 1
-    event = transport.envelopes[0].get_transaction_event()
-    assert event is not None
-    assert isinstance(event["start_timestamp"], float)
-    assert isinstance(event["timestamp"], float)
-    trace = event["contexts"]["trace"]
-    assert trace["trace_id"] == raw["contexts"]["trace"]["trace_id"]
-    assert trace["span_id"] == raw["contexts"]["trace"]["span_id"]
-    assert trace["status"] == "internal_error"
-    assert trace["data"] == {"run_id": "run-1"}
-    assert event["spans"]
-    child = event["spans"][0]
-    raw_child = raw["spans"][0]
-    assert child["trace_id"] == raw_child["trace_id"]
-    assert child["span_id"] == raw_child["span_id"]
-    assert child["parent_span_id"] == trace["span_id"]
-    assert isinstance(child["start_timestamp"], float)
-    assert isinstance(child["timestamp"], float)
-    assert child["status"] == "cancelled"
-    assert child["data"] == {"task_name": "Task"}
-    assert "SECRET" not in repr(event)
-
-
 def test_tracing_false_suppresses_lifecycle_logs_and_spans(tmp_path):
     service = _service(tmp_path, tracing=False)
-    service.apply_consent(service.config_id(), "granted")
+    service.apply_consent(service._config_id, "granted")
     run = service.start_run("run-1", "manual", ["Task"])
     assert run is not None
     assert run.transaction is None
-    task = service.start_task("run-1", "Task", "Entry")
-    assert task is not None
-    assert task.span is None
-    service.finish_task(task, "success")
+    with task_span(service, "run-1", "Task", "Entry") as task:
+        assert task.span is None
     service.finish_run("run-1", "success")
 
 
 def test_epoch_revocation_drops_future_captures(tmp_path):
-    service = _service(tmp_path)
-    service.apply_consent(service.config_id(), "granted")
-    client = service.client
-    assert client is not None
+    received: list[object] = []
+
+    class _Recorder(Transport):
+        def capture_envelope(self, envelope):
+            received.append(envelope)
+
+    def factory(**options):
+        options["transport"] = _Recorder()
+        return sentry_sdk.Client(**options)
+
+    service = TelemetryService(
+        _interface(dsn="https://public@example.test/42"),
+        SettingsModel(),
+        tmp_path / "settings.json",
+        build_allowed=True,
+        client_factory=factory,
+    )
+    _created_services.append(service)
+    service.apply_consent(service._config_id, "granted")
     epoch = service._client_epoch
     assert epoch is not None
-    service.revoke()
+
+    service.capture_task_failed("run-1", "Task", RuntimeError("secret"))
+    service._client.flush(timeout=2.0)
+    # An error report fans out over two channels: the error event itself and
+    # the matching structured log.
+    delivered = len(received)
+    assert delivered >= 1
+
+    service._revoke()
+
     assert not service._can_send_epoch(epoch)
-    assert not service.is_active()
-    assert sentry_sdk.get_client() is not client
-    assert sentry_sdk.capture_exception(RuntimeError("secret")) is None
+    assert service.status_payload()["active"] is False
+    assert service._client is None
+    service.capture_task_failed("run-1", "Task", RuntimeError("secret"))
+    assert len(received) == delivered
+
+
+def test_consent_installs_and_revocation_detaches_the_global_client(tmp_path):
+    service = _service(tmp_path)
+    service.apply_consent(service._config_id, "granted")
+    client = service._client
+    assert client is not None
+    assert sentry_sdk.get_global_scope().client is client
+
+    service.apply_consent(service._config_id, "denied")
+
+    assert service._client is None
+    assert sentry_sdk.get_global_scope().client is not client
+
+
+def test_agent_installed_client_is_never_clobbered(tmp_path):
+    """An embedded Agent may take the global slot; MWU must yield, not fight."""
+
+    service = _service(tmp_path)
+    service.apply_consent(service._config_id, "granted")
+
+    sentry_sdk.init(
+        dsn="https://public@example.test/99",
+        default_integrations=False,
+        integrations=[],
+    )
+    agent_client = sentry_sdk.get_global_scope().client
+    try:
+        # MWU cannot deliver through a client it no longer owns, and must say so
+        # instead of reporting an active telemetry path that cannot send.
+        assert service.status_payload()["active"] is False
+
+        service.apply_consent(service._config_id, "denied")
+
+        assert sentry_sdk.get_global_scope().client is agent_client
+    finally:
+        sentry_sdk.get_global_scope().set_client(None)

@@ -531,14 +531,11 @@ async def _complete_run(
     active_run = state.active_run
     telemetry = getattr(state, "telemetry_service", None)
     if telemetry is not None:
-        try:
-            telemetry.start_run(
-                run_id,
-                active_run.origin if active_run is not None else "in_app",
-                event_task_list,
-            )
-        except Exception:
-            logger.debug("启动遥测 run 事务失败", exc_info=True)
+        telemetry.start_run(
+            run_id,
+            active_run.origin if active_run is not None else "in_app",
+            event_task_list,
+        )
     try:
         if worker is None:
             raise RuntimeError("Worker 未就绪")
@@ -567,20 +564,15 @@ async def _complete_run(
             worker.interface,
         )
         if telemetry is not None:
-            try:
-                telemetry.set_run_context(
-                    run_id,
-                    controller_type=(
-                        payload.device.device_type
-                        if payload is not None and payload.device
-                        else None
-                    ),
-                    resource_name=payload.resource_name
-                    if payload is not None
-                    else None,
-                )
-            except Exception:
-                logger.debug("设置遥测 run 上下文失败", exc_info=True)
+            telemetry.set_run_context(
+                run_id,
+                controller_type=(
+                    payload.device.device_type
+                    if payload is not None and payload.device
+                    else None
+                ),
+                resource_name=payload.resource_name if payload is not None else None,
+            )
 
         # 3-5. 准备临界区：权限 → 释放旧连接 → PI pretask + 用户命令；
         # 随后在同一临界区内按设置重试 connect + set_resource。
@@ -718,14 +710,11 @@ async def _complete_run(
             and not task_started
             and not suppress_prepare_telemetry
         ):
-            try:
-                telemetry.capture_prepare_failed(
-                    run_id,
-                    e,
-                    task_name=event_task_list[0] if event_task_list else None,
-                )
-            except Exception:
-                logger.debug("发送遥测准备失败事件失败", exc_info=True)
+            telemetry.capture_prepare_failed(
+                run_id,
+                e,
+                task_name=event_task_list[0] if event_task_list else None,
+            )
         if worker is not None:
             worker.events.send_log(f"任务执行失败: {e}")
             if not task_started:
@@ -758,10 +747,7 @@ async def _complete_run(
             # Finish Sentry before SQLite bookkeeping: the transaction covers
             # the real execution terminal state, not storage latency.
             if telemetry is not None:
-                try:
-                    telemetry.finish_run(run_id, status)
-                except Exception:
-                    logger.debug("完成遥测 run 事务失败", exc_info=True)
+                telemetry.finish_run(run_id, status)
             await asyncio.shield(
                 asyncio.to_thread(
                     finish_execution, state.scheduler_db_path, run_id, status, error
