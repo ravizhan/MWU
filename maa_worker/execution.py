@@ -582,8 +582,9 @@ async def _complete_run(
             except Exception:
                 logger.debug("设置遥测 run 上下文失败", exc_info=True)
 
-        # 3-5. 准备临界区：权限 → 释放旧连接 → PI pretask + 用户命令 →
-        # connect + set_resource。preparation_lock 与直接 device/resource API 互斥。
+        # 3-5. 准备临界区：权限 → 释放旧连接 → PI pretask + 用户命令；
+        # 随后在同一临界区内按设置重试 connect + set_resource。
+        # preparation_lock 与直接 device/resource API 互斥。
         # stop_flag 由 TaskService.start() 在任务线程启动时重置；此处不得重置，
         # 否则 stop_active() 在准入后、本阶段前设置的停止请求会被吞掉。
         effective_controller = payload.controller_name or payload.device.controller_name
@@ -599,7 +600,7 @@ async def _complete_run(
             if state.update_in_progress or state.is_shutting_down:
                 raise PretaskStopped("更新或关停中，运行终止")
 
-            # PI pretask + 用户命令 + 低层 connect（不加载 resource）。
+            # PI pretask + 用户命令（不连接、不加载 resource）。
             # shield 包裹：协程被取消时仍等待 pretask 线程退出后再传播取消，
             # 避免 finally 提前清槽导致新运行与未退出的 pretask 进程并发。
             try:
@@ -624,8 +625,7 @@ async def _complete_run(
                     + (worker.device_state.last_device_error or "未知错误")
                 )
 
-            # set_resource + 按设置重试（重试只重试 connect+set_resource，
-            # 不重放已成功的准备程序）
+            # 按设置重试 connect + set_resource（不重放已成功的准备程序）
             settings = load_settings()
             max_retry = settings.runtime.maxRetryCount
             retry_interval = settings.runtime.retryInterval
@@ -638,9 +638,8 @@ async def _complete_run(
                             worker.device.connect, device_model
                         ):
                             raise RuntimeError("connect() 返回 False")
-                    # prepare_connection 复用 locked 上下文时 resource 已加载，
-                    # set_resource() 对 locked 状态一律拒绝，重试只会耗尽次数。
-                    # 仅当 resource 未加载（新连接）时才真正调用 set_resource()。
+                    # 复用已锁定的连接时资源已经加载，set_resource() 对
+                    # locked 状态一律拒绝；新连接则完成实际资源加载。
                     if (
                         worker.device_state.current_resource_name
                         != payload.resource_name

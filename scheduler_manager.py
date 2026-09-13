@@ -118,18 +118,11 @@ async def scheduled_job_fired(**kwargs) -> None:
         return
     from maa_worker import execution  # 延迟导入避免循环依赖
 
-    # fire-time 身份校验：task_identity 缺失或 task name 不在当前 PI 中时，
-    # 落库一条失败记录（含 job id 与具体未知名称）并通知，不让校验异常
-    # 逃出 APScheduler 回调形成无记录触发。
+    # fire-time 任务名校验：task name 不在当前 PI 中时，落库一条失败记录
+    # （含 job id 与具体未知名称）并通知，不让校验异常逃出 APScheduler
+    # 回调形成无记录触发。task_identity 缺失/错误已在解码与启动前置校验拒绝。
     worker = state.worker
-    if (
-        kwargs.get("task_identity") != "name"
-        or worker is None
-        or not getattr(worker, "interface", None)
-    ):
-        await _record_fire_time_skip(
-            state, task, "任务身份标记缺失（task_identity != name）"
-        )
+    if worker is None or not getattr(worker, "interface", None):
         return
     from models.task_config import find_unknown_task_names
 

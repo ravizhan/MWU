@@ -1,3 +1,4 @@
+import { tryCatch } from "@/utils/tryCatch"
 import { z } from "zod"
 
 const integerStringSchema = z.string().regex(z.regexes.integer)
@@ -7,6 +8,12 @@ const positiveIntegerSchema = z
   .trim()
   .pipe(integerStringSchema)
   .pipe(z.coerce.number<string>().int().positive().safe())
+  .transform(String)
+const nonNegativeIntegerSchema = z
+  .string()
+  .trim()
+  .pipe(integerStringSchema)
+  .pipe(z.coerce.number<string>().int().nonnegative().safe())
   .transform(String)
 
 /** IPv4 or hostname plus TCP port, normalized to host:port. */
@@ -44,7 +51,7 @@ const gamepadAddressSchema = z
   .trim()
   .transform((address, ctx) => {
     const [rawHwnd, rawType, extra] = address.split("|")
-    const hwndResult = positiveIntegerSchema.safeParse(rawHwnd)
+    const hwndResult = nonNegativeIntegerSchema.safeParse(rawHwnd)
     const typeResult = z.enum(["0", "1"]).safeParse(rawType)
 
     if (extra !== undefined || !hwndResult.success || !typeResult.success) {
@@ -136,11 +143,11 @@ const linuxRuntimeAddressObjectSchema = z
   })
 
 function decodeJsonAddress(address: string): { ok: true; value: unknown } | { ok: false } {
-  try {
-    return { ok: true, value: JSON.parse(address) }
-  } catch {
+  const [value, error] = tryCatch(() => JSON.parse(address))
+  if (error) {
     return { ok: false }
   }
+  return { ok: true, value }
 }
 
 function canonicalizeLinuxAddress(value: object): string {
@@ -153,7 +160,15 @@ function canonicalizeLinuxAddress(value: object): string {
   }
   const fields = Object.entries(value)
     .filter(([, field]) => field !== undefined)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .sort(([left], [right]) => {
+      if (left < right) {
+        return -1
+      }
+      if (left > right) {
+        return 1
+      }
+      return 0
+    })
     .map(([key, field]) => `${serialize(key)}: ${serialize(field)}`)
   return `{${fields.join(", ")}}`
 }

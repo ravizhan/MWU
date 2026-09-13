@@ -51,6 +51,8 @@
         class="min-h-48"
         :current-task-id="currentSettingTaskId"
         :options="taskOptions"
+        :controller-name="controllerName"
+        :resource-name="resourceName"
         :show-header="true"
         :header-label="t('settings.scheduler.dialog.currentSetting')"
         :empty-text="t('settings.scheduler.dialog.selectTaskTip')"

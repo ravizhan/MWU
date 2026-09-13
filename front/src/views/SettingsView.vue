@@ -165,7 +165,10 @@ const sections = computed<SettingsSection[]>(() => {
   const values: SettingsSection[] = [
     { id: "update", label: t("settings.anchor.update"), icon: ArrowUpCircleOutline },
   ]
-  if (interfaceStore.getSettingSections.length > 0) {
+  if (
+    interfaceStore.getSettingSections.length > 0 ||
+    interfaceStore.getUncoveredOptionNames.length > 0
+  ) {
     values.push({
       id: "taskSettings",
       label: t("settings.anchor.taskSettings"),

@@ -158,9 +158,15 @@ class EventService:
         event: RealtimeEventName = "notification.test",
         level: RealtimeEventLevel = "info",
         notify: list[str] | None = None,
+        details: dict[str, Any] | None = None,
     ):
         self.emit(
-            event, message, level=level, notify=notify or ["notification"], title=title
+            event,
+            message,
+            level=level,
+            notify=notify or ["notification"],
+            title=title,
+            details=details,
         )
 
     def _build_task_subject(self, task_list: list[str]) -> str:
@@ -171,11 +177,14 @@ class EventService:
         return f"{len(task_list)} 个任务"
 
     def emit_task_started(self, task_list: list[str]):
+        active_run = getattr(getattr(self.worker, "state", None), "active_run", None)
+        run_id = getattr(active_run, "run_id", None)
         self.send_notification(
             "任务开始",
             f"开始执行: {self._build_task_subject(task_list)}",
             event="task.started",
             level="info",
+            details={"run_id": run_id} if run_id else None,
         )
 
     def emit_task_completed(self, task_list: list[str]):

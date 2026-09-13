@@ -3,6 +3,8 @@
     <TaskOptionPanel
       :current-task-id="selectedTaskId"
       :options="configStore.options"
+      :controller-name="deviceStore.selectedControllerName"
+      :resource-name="deviceStore.resource"
       :empty-text="t('settings.scheduler.dialog.selectTaskTip')"
       :no-options-text="t('settings.scheduler.dialog.noOptions')"
     />
@@ -15,10 +17,11 @@ import { computed } from "vue"
 import { useI18n } from "vue-i18n"
 import TaskDescriptionCard from "@/components/panel/task/TaskDescriptionCard.vue"
 import TaskOptionPanel from "@/components/panel/task/TaskOptionPanel.vue"
-import { useIndexStore, useTaskConfigStore } from "@/stores"
+import { useDeviceConnectionStore, useIndexStore, useTaskConfigStore } from "@/stores"
 
 const { t } = useI18n()
 const indexStore = useIndexStore()
 const configStore = useTaskConfigStore()
+const deviceStore = useDeviceConnectionStore()
 const selectedTaskId = computed(() => indexStore.SelectedTaskID)
 </script>

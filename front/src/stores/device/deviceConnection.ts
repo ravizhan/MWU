@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import { watch } from "vue"
+import { toRaw, watch } from "vue"
 import i18n from "@/app/i18n"
 import { customDeviceAddressSchema, playCoverAddressSchema } from "@/validation/device"
 import { tryCatch } from "@/utils/tryCatch"
@@ -8,14 +8,10 @@ import {
   getDevices,
   getResource,
   postCustomDevice,
-  postDevices,
-  postResource,
   startTask,
   stopTask,
   type ConnectableDevice,
   type DeviceControllerCapability,
-  type PostDeviceResult,
-  type PostResourceResult,
 } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useIndexStore } from "@/stores/panel/session"
@@ -45,6 +41,17 @@ let activeRestartPromise: Promise<boolean> | null = null
 /** Cleanup handles (release watcher / retry timers) for the currently in-flight restart op. */
 let activeRestartCleanup: (() => void)[] = []
 
+interface TaskStartSnapshot {
+  device: ConnectableDevice
+  controllerName: string
+  resourceName: string
+}
+
+interface PendingTaskStart {
+  runId: string
+  snapshot: TaskStartSnapshot
+}
+
 export const useDeviceConnectionStore = defineStore("deviceConnection", {
   state: (): {
     selectedController: string | null
@@ -62,6 +69,8 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     initialized: boolean
     startConflict: StartConflict | null
     showElevationPrompt: boolean
+    lastTaskStartedRunId: string | null
+    pendingStart: PendingTaskStart | null
     _fetchDevicesRequestId: number
     _fetchResourcesRequestId: number
   } => ({
@@ -80,6 +89,8 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     initialized: false,
     startConflict: null,
     showElevationPrompt: false,
+    lastTaskStartedRunId: null,
+    pendingStart: null,
     _fetchDevicesRequestId: 0,
     _fetchResourcesRequestId: 0,
   }),
@@ -153,29 +164,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
 
       return null
     },
-
-    currentSelectionFingerprint(): string {
-      if (this.selectedControllerCapability?.type === "PlayCover") {
-        const address = this.playCoverAddress.trim()
-        return address ? `playcover|${address}|` : ""
-      }
-      return this.selectedDevice ? buildDeviceFingerprint(this.selectedDevice) : ""
-    },
-
-    isCurrentSelectionConnected(): boolean {
-      const indexStore = useIndexStore()
-      const settingsStore = useSettingsStore()
-      const savedDevice = settingsStore.settings.panel.lastConnectedDevice
-      const selectedCapability = this.selectedControllerCapability
-
-      if (!indexStore.Connected || !savedDevice || !selectedCapability) {
-        return false
-      }
-      if (!storedDeviceMatchesController(savedDevice, selectedCapability)) {
-        return false
-      }
-      return getStoredDeviceFingerprint(savedDevice) === this.currentSelectionFingerprint
-    },
   },
 
   // ---------------------------------------------------------------------------
@@ -194,6 +182,40 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     async persistLastResource(name: string) {
       const settingsStore = useSettingsStore()
       await settingsStore.updateSetting("panel", "lastResource", name)
+    },
+
+    /**
+     * Persist the selection captured for a manually accepted run only after
+     * the matching task.started event confirms that the worker reached start.
+     */
+    async persistTaskStartSnapshot(pending: PendingTaskStart): Promise<void> {
+      const settingsStore = useSettingsStore()
+      const storedDevice = await this.persistLastConnectedDevice(
+        pending.snapshot.device,
+        pending.snapshot.controllerName,
+      )
+      await settingsStore.addRecentDevice(storedDevice)
+      await this.persistLastResource(pending.snapshot.resourceName)
+    },
+
+    /** Record the latest started run and commit its matching accepted snapshot. */
+    handleTaskStarted(runId: string): void {
+      if (!runId) {
+        return
+      }
+
+      this.lastTaskStartedRunId = runId
+      const pending = this.pendingStart
+      if (!pending || pending.runId !== runId) {
+        return
+      }
+
+      // Clear before awaiting any settings writes so duplicate events cannot
+      // persist the same run twice.
+      this.pendingStart = null
+      void this.persistTaskStartSnapshot(pending).catch((error) => {
+        console.error("Failed to persist task start selection:", error)
+      })
     },
 
     restoreLastConnectedDevice() {
@@ -504,64 +526,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return { device: { type: "PlayCover", address: parseResult.data } }
     },
 
-    // --- Connection ---
-    async connectDevices(): Promise<PostDeviceResult> {
-      const t = i18n.global.t
-
-      if (this.isDeviceResourceLocked) {
-        return { success: false, message: "设备与资源已锁定，无法切换" }
-      }
-
-      const selectedCapability = this.selectedControllerCapability
-      if (!selectedCapability || this.selectedControllerDisabled) {
-        return { success: false, message: t("panel.selectDeviceType") }
-      }
-
-      let currentDevice: ConnectableDevice | null = null
-      if (selectedCapability.type === "PlayCover") {
-        const playCoverResult = this.buildPlayCoverDevice()
-        if ("error" in playCoverResult) {
-          return { success: false, message: playCoverResult.error }
-        }
-        currentDevice = playCoverResult.device
-      }
-
-      if (!currentDevice) {
-        currentDevice = this.selectedDevice
-      }
-
-      if (!currentDevice) {
-        return { success: false, message: t("panel.selectDevice") }
-      }
-      // 新契约：/api/device 平面请求携带必需 resource_name（准备并连接）
-      if (!this.resource) {
-        return { success: false, message: t("panel.selectResource") }
-      }
-
-      const indexStore = useIndexStore()
-      const settingsStore = useSettingsStore()
-
-      const result = await postDevices({
-        controller_name: selectedCapability.name,
-        device: currentDevice,
-        resource_name: this.resource,
-      })
-
-      indexStore.setConnected(result.success)
-      if (result.success) {
-        const storedDevice = await this.persistLastConnectedDevice(
-          currentDevice,
-          selectedCapability.name,
-        )
-        if (storedDevice) {
-          await settingsStore.addRecentDevice(storedDevice)
-        }
-        await this.getResourceList()
-        await this.syncDeviceRuntimeState()
-      }
-      return result
-    },
-
     resetResourceLoading(requestId: number) {
       if (requestId === this._fetchResourcesRequestId) {
         this.loading = false
@@ -598,27 +562,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       this.resetResourceLoading(requestId)
     },
 
-    async postResourceSelection(): Promise<PostResourceResult> {
-      const t = i18n.global.t
-
-      if (this.isDeviceResourceLocked) {
-        return { success: false, message: "设备与资源已锁定，无法切换" }
-      }
-      if (!this.isCurrentSelectionConnected) {
-        return { success: false, message: t("panel.connectFirstHint") }
-      }
-      if (!this.resource) {
-        return { success: false, message: t("panel.selectResource") }
-      }
-
-      const result = await postResource(this.resource)
-      if (result.success) {
-        await this.persistLastResource(this.resource)
-        await this.syncDeviceRuntimeState()
-      }
-      return result
-    },
-
     // --- Task control ---
     async StartTask(): Promise<boolean> {
       const t = i18n.global.t
@@ -632,7 +575,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         return false
       }
 
-      let selectedDevice: ConnectableDevice | null = null
+      let selectedDevice = this.selectedDevice
       if (selectedCapability.type === "PlayCover") {
         const playCoverResult = this.buildPlayCoverDevice()
         if ("error" in playCoverResult) {
@@ -640,21 +583,20 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
           return false
         }
         selectedDevice = playCoverResult.device
-      } else {
-        selectedDevice = this.selectedDevice
-        if (!selectedDevice) {
-          showGlobalMessage("error", t("panel.selectDevice"))
-          return false
-        }
+      }
+      if (!selectedDevice) {
+        showGlobalMessage("error", t("panel.selectDevice"))
+        return false
       }
 
-      if (!this.resource) {
+      const resourceName = this.resource
+      if (!resourceName) {
         showGlobalMessage("error", t("panel.selectResource"))
         return false
       }
 
       const isTaskCompatibleInCurrentContext = (taskId: string) =>
-        interfaceStore.isTaskCompatibleByName(taskId, selectedCapability.name, this.resource)
+        interfaceStore.isTaskCompatibleByName(taskId, selectedCapability.name, resourceName)
 
       const selectedTaskIds = configStore.selectedTaskIds
       const allCompatibleTaskIds = configStore.taskList
@@ -677,7 +619,14 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const base = configStore.buildExecutionPayload(compatibleTaskIds)
       const controllerName = selectedCapability.name
       const deviceType = selectedCapability.type
-      const deviceAddress = buildDeviceAddress(selectedDevice)
+      const snapshot: TaskStartSnapshot = {
+        // ConnectableDevice is JSON-shaped; clone it before the async request
+        // so later scans or selection changes cannot mutate this run's data.
+        device: structuredClone(toRaw(selectedDevice)),
+        controllerName,
+        resourceName,
+      }
+      const deviceAddress = buildDeviceAddress(snapshot.device)
 
       const payload: ManualStartPayload = {
         ...base,
@@ -688,11 +637,18 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
           device_type: deviceType,
           device_address: deviceAddress,
         },
-        resource_name: this.resource || "",
+        resource_name: resourceName,
       }
 
       const result = await startTask(payload)
       if (result.accepted) {
+        if (result.runId) {
+          this.pendingStart = { runId: result.runId, snapshot }
+          // The SSE event may win the race against the /api/start response.
+          if (this.lastTaskStartedRunId === result.runId) {
+            this.handleTaskStarted(result.runId)
+          }
+        }
         indexStore.setTaskRunning(true)
         // 清掉重试路径留下的过期冲突，避免 StartConflictDialog 在运行中弹出
         this.startConflict = null

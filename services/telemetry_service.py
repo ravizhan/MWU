@@ -21,7 +21,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -99,6 +99,31 @@ _ALLOWED_ORIGINS = frozenset({"manual", "in_app", "native"})
 _ALLOWED_RESULTS = frozenset(
     {"success", "failed", "stopped", "ok", "internal_error", "cancelled"}
 )
+_ALLOWED_TRACE_STATUSES = frozenset(
+    {
+        "aborted",
+        "already_exists",
+        "cancelled",
+        "data_loss",
+        "deadline_exceeded",
+        "error",
+        "failed_precondition",
+        "internal_error",
+        "invalid_argument",
+        "not_found",
+        "ok",
+        "out_of_range",
+        "permission_denied",
+        "resource_exhausted",
+        "unauthenticated",
+        "unavailable",
+        "unimplemented",
+        "unknown_error",
+    }
+)
+_ALLOWED_TRANSACTION_SOURCES = frozenset(
+    {"component", "custom", "route", "task", "url", "view"}
+)
 
 
 def _safe_string(value: Any, *, max_length: int = 256) -> str | None:
@@ -141,11 +166,38 @@ def _safe_result(value: Any) -> str | None:
     return value if value in _ALLOWED_RESULTS else None
 
 
+def _safe_trace_status(value: Any) -> str | None:
+    value = _safe_string(value, max_length=32)
+    return value if value in _ALLOWED_TRACE_STATUSES else None
+
+
+def _safe_trace_identifier(value: Any, *, length: int) -> str | None:
+    value = _safe_string(value, max_length=64)
+    if value and re.fullmatch(rf"[0-9a-fA-F]{{{length}}}", value):
+        return value
+    return None
+
+
 def _safe_timestamp(value: Any) -> float | None:
     if isinstance(value, datetime):
         try:
             value = value.timestamp()
         except (OverflowError, OSError, ValueError):
+            return None
+    elif isinstance(value, str):
+        # sentry-sdk==2.68.1 serializes event timestamps before invoking the
+        # transaction callback with ``format_timestamp``: six fractional
+        # digits followed by a UTC ``Z`` suffix.  Accept that fixed SDK shape
+        # rather than treating arbitrary user strings as timestamps.
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z", value):
+            return None
+        try:
+            value = (
+                datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+        except ValueError:
             return None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
@@ -182,6 +234,17 @@ def _safe_attribute(name: str, value: Any) -> Any:
             return None
         return raw
     return _safe_identifier(value, max_length=256)
+
+
+def _safe_data_fields(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    safe_data: dict[str, Any] = {}
+    for key in _ALLOWED_ATTRIBUTES:
+        safe = _safe_attribute(key, value.get(key))
+        if safe is not None:
+            safe_data[key] = safe
+    return safe_data or None
 
 
 def _common_event_fields(event: dict[str, Any]) -> dict[str, Any]:
@@ -329,8 +392,14 @@ def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None =
     result["transaction"] = _transaction_name(
         source.get("transaction") or source.get("name")
     )
-    status = _safe_string(source.get("status"), max_length=32)
-    if status in {"ok", "internal_error", "cancelled"}:
+    transaction_info = source.get("transaction_info")
+    if isinstance(transaction_info, dict):
+        transaction_source = _safe_string(transaction_info.get("source"), max_length=32)
+        if transaction_source in _ALLOWED_TRANSACTION_SOURCES:
+            result["transaction_info"] = {"source": transaction_source}
+
+    status = _safe_trace_status(source.get("status"))
+    if status is not None:
         result["status"] = status
 
     for key in ("start_timestamp", "timestamp"):
@@ -338,32 +407,40 @@ def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None =
         if value is not None:
             result[key] = value
 
-    data = source.get("data")
-    if isinstance(data, dict):
-        safe_data: dict[str, Any] = {}
-        for key in _ALLOWED_ATTRIBUTES:
-            value = _safe_attribute(key, data.get(key))
-            if value is not None:
-                safe_data[key] = value
-        if safe_data:
-            result["data"] = safe_data
+    safe_data = _safe_data_fields(source.get("data"))
+    if safe_data is not None:
+        result["data"] = safe_data
 
-    contexts = result.setdefault("contexts", {})
-    trace = (
-        source.get("contexts", {}).get("trace")
-        if isinstance(source.get("contexts"), dict)
-        else None
-    )
+    source_contexts = source.get("contexts")
+    trace = source_contexts.get("trace") if isinstance(source_contexts, dict) else None
     if isinstance(trace, dict):
-        safe_trace: dict[str, str] = {}
-        for key in ("trace_id", "span_id"):
-            value = _safe_string(trace.get(key), max_length=64)
-            if value and re.fullmatch(r"[0-9a-fA-F]{8,64}", value):
+        safe_trace: dict[str, Any] = {}
+        for key, length in (
+            ("trace_id", 32),
+            ("span_id", 16),
+            ("parent_span_id", 16),
+        ):
+            value = _safe_trace_identifier(trace.get(key), length=length)
+            if value is not None:
                 safe_trace[key] = value
+        op = _safe_string(trace.get("op"), max_length=64)
+        if op is not None:
+            safe_trace["op"] = op
+        description = _safe_string(trace.get("description"), max_length=256)
+        if description is not None:
+            safe_trace["description"] = description
+        origin = _safe_origin(trace.get("origin"))
+        if origin is not None:
+            safe_trace["origin"] = origin
+        trace_status = _safe_trace_status(trace.get("status"))
+        if trace_status is not None:
+            safe_trace["status"] = trace_status
+        trace_data = _safe_data_fields(trace.get("data"))
+        if trace_data is not None:
+            safe_trace["data"] = trace_data
         if safe_trace:
+            contexts = result.setdefault("contexts", {})
             contexts["trace"] = safe_trace
-    if not contexts:
-        result.pop("contexts", None)
 
     safe_spans: list[dict[str, Any]] = []
     spans = source.get("spans")
@@ -371,25 +448,36 @@ def scrub_transaction_event(event: dict[str, Any], hint: dict[str, Any] | None =
         for span in spans[:1000]:
             if not isinstance(span, dict):
                 continue
-            span_name = _safe_string(
-                span.get("op") or span.get("description") or span.get("name"),
-                max_length=64,
-            )
-            span_name = span_name or "maa.node"
-            safe_span: dict[str, Any] = {"op": span_name, "description": span_name}
+            op = _safe_string(span.get("op"), max_length=64)
+            description = _safe_string(span.get("description"), max_length=256)
+            name = _safe_string(span.get("name"), max_length=256)
+            op = op or description or name or "maa.node"
+            description = description or op
+            safe_span: dict[str, Any] = {"op": op, "description": description}
+            for key, length in (
+                ("trace_id", 32),
+                ("span_id", 16),
+                ("parent_span_id", 16),
+            ):
+                value = _safe_trace_identifier(span.get(key), length=length)
+                if value is not None:
+                    safe_span[key] = value
+            same_process = span.get("same_process_as_parent")
+            if isinstance(same_process, bool):
+                safe_span["same_process_as_parent"] = same_process
+            origin = _safe_origin(span.get("origin"))
+            if origin is not None:
+                safe_span["origin"] = origin
+            span_status = _safe_trace_status(span.get("status"))
+            if span_status is not None:
+                safe_span["status"] = span_status
             for key in ("start_timestamp", "timestamp"):
                 value = _safe_timestamp(span.get(key))
                 if value is not None:
                     safe_span[key] = value
-            data = span.get("data")
-            if isinstance(data, dict):
-                safe_data: dict[str, Any] = {}
-                for key in _ALLOWED_ATTRIBUTES:
-                    value = _safe_attribute(key, data.get(key))
-                    if value is not None:
-                        safe_data[key] = value
-                if safe_data:
-                    safe_span["data"] = safe_data
+            span_data = _safe_data_fields(span.get("data"))
+            if span_data is not None:
+                safe_span["data"] = span_data
             safe_spans.append(safe_span)
     if safe_spans:
         result["spans"] = safe_spans
@@ -606,7 +694,6 @@ class TelemetryService:
         self._client_factory = client_factory or sentry_sdk.Client
         self._lock = threading.RLock()
         self._client: Any | None = None
-        self._transport: Any | None = None
         self._client_epoch: int | None = None
         self._epoch = 0
         self._logs_enabled = False
@@ -634,10 +721,6 @@ class TelemetryService:
     @property
     def client(self) -> Any | None:
         return self._client
-
-    @property
-    def transport(self) -> Any | None:
-        return self._transport
 
     @property
     def settings(self) -> SettingsModel:
@@ -727,14 +810,20 @@ class TelemetryService:
         consent = getattr(self._settings, "telemetry", None)
         if not isinstance(consent, TelemetryConsent):
             consent = TelemetryConsent()
+        current_config_id = self.config_id()
+        consent_matches_target = bool(current_config_id) and (
+            consent.configId == current_config_id
+        )
         return {
             "configured": self.is_configured(),
             "buildAllowed": self.is_build_allowed(),
             "active": self.is_active(),
-            "configId": self.config_id(),
+            "configId": current_config_id,
             "recipient": self.recipient(),
-            "consent": consent.consent,
-            "failureAttachments": bool(consent.failureAttachments),
+            "consent": consent.consent if consent_matches_target else "unknown",
+            "failureAttachments": (
+                bool(consent.failureAttachments) if consent_matches_target else False
+            ),
         }
 
     def apply_consent(
@@ -801,7 +890,7 @@ class TelemetryService:
             "os": platform.system().lower()[:32] or "unknown",
         }
 
-    def _sentry_options(self, epoch: int, *, experiments: bool) -> dict[str, Any]:
+    def _sentry_options(self, epoch: int) -> dict[str, Any]:
         sentry_config = getattr(
             getattr(self.interface, "telemetry", None), "sentry", None
         )
@@ -835,6 +924,9 @@ class TelemetryService:
             "enable_backpressure_handling": False,
             "profiles_sample_rate": 0.0,
             "traces_sample_rate": rate,
+            "trace_lifecycle": "static",
+            "enable_logs": True,
+            "before_send_log": scrub_log,
             "release": f"{project_name}@{version}",
             "environment": "production",
             "before_send": scrub_error_event,
@@ -842,16 +934,6 @@ class TelemetryService:
             "transport": _bound_transport_class(self, epoch),
             "debug": False,
         }
-        if experiments:
-            options["_experiments"] = {
-                "trace_lifecycle": "static",
-                "enable_logs": True,
-                "before_send_log": scrub_log,
-            }
-        else:
-            # The SDK fallback intentionally sends no logs.  Error and
-            # transaction callbacks remain installed independently.
-            options["enable_logs"] = False
         return options
 
     def _enable_client(self) -> None:
@@ -860,8 +942,8 @@ class TelemetryService:
         with self._lock:
             old_client = self._client
             self._client = None
-            self._transport = None
             self._client_epoch = None
+            self._logs_enabled = False
             self._epoch += 1
             epoch = self._epoch
             if old_client is not None:
@@ -870,23 +952,10 @@ class TelemetryService:
             self._close_client(old_client, timeout=0)
 
         client = None
-        logs_enabled = False
         try:
-            options = self._sentry_options(epoch, experiments=True)
-            client = self._client_factory(**options)
-            logs_enabled = True
-        except TypeError:
-            logger.warning("Sentry 实验选项不可用，已禁用结构化 Logs")
-            try:
-                client = self._client_factory(
-                    **self._sentry_options(epoch, experiments=False)
-                )
-            except Exception:
-                logger.warning("Sentry client 初始化失败，遥测保持关闭", exc_info=True)
-                client = None
+            client = self._client_factory(**self._sentry_options(epoch))
         except Exception:
             logger.warning("Sentry client 初始化失败，遥测保持关闭", exc_info=True)
-            client = None
 
         if client is None:
             return
@@ -898,9 +967,8 @@ class TelemetryService:
                 return
             try:
                 self._client = client
-                self._transport = getattr(client, "transport", None)
                 self._client_epoch = epoch
-                self._logs_enabled = logs_enabled
+                self._logs_enabled = True
                 # Publish through the SDK's normal global scope.  This is the
                 # client used by sentry_sdk.capture_* and start_* in embedded
                 # Agents as well as by MWU's own wrappers.
@@ -909,7 +977,6 @@ class TelemetryService:
                 global_scope.set_tags(self._common_tags)
             except Exception:
                 self._client = None
-                self._transport = None
                 self._client_epoch = None
                 self._logs_enabled = False
                 self._unbind_global_client_locked(client)
@@ -922,11 +989,6 @@ class TelemetryService:
     def _close_client(client: Any, *, timeout: float) -> None:
         try:
             client.close(timeout=timeout)
-        except TypeError:
-            try:
-                client.close()
-            except Exception:
-                logger.debug("telemetry client close failed", exc_info=True)
         except Exception:
             logger.debug("telemetry client close failed", exc_info=True)
 
@@ -987,12 +1049,9 @@ class TelemetryService:
             if self._client is client:
                 self._epoch += 1
                 self._client = None
-                self._transport = None
                 self._client_epoch = None
                 if client is not None:
                     self._unbind_global_client_locked(client)
-
-    shutdown = flush_and_close_limited
 
     def _can_send_epoch(self, epoch: int) -> bool:
         with self._lock:

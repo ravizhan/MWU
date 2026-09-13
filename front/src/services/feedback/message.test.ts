@@ -1,8 +1,15 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import type { MessageApiInjection } from "naive-ui/es/message/src/MessageProvider"
+import type { DialogApiInjection } from "naive-ui/es/dialog/src/DialogProvider"
 
 let showGlobalMessage: (type: "info" | "success" | "warning" | "error", content: string) => void
 let registerMessageApi: (api: MessageApiInjection) => void
+let showGlobalDialog: (
+  type: "info" | "success" | "warning" | "error",
+  content: string,
+  title?: string,
+) => void
+let registerDialogApi: (api: DialogApiInjection) => void
 let _resetMessageApiForTest: () => void
 
 function makeApiSpy(): MessageApiInjection {
@@ -17,12 +24,25 @@ function makeApiSpy(): MessageApiInjection {
   }
 }
 
+function makeDialogApiSpy(): DialogApiInjection {
+  return {
+    create: vi.fn<DialogApiInjection["create"]>(),
+    info: vi.fn<DialogApiInjection["info"]>(),
+    success: vi.fn<DialogApiInjection["success"]>(),
+    warning: vi.fn<DialogApiInjection["warning"]>(),
+    error: vi.fn<DialogApiInjection["error"]>(),
+    destroyAll: vi.fn<DialogApiInjection["destroyAll"]>(),
+  }
+}
+
 describe("message service", () => {
   beforeEach(async () => {
     vi.resetModules()
     const messageModule = await import("@/services/feedback/message")
     showGlobalMessage = messageModule.showGlobalMessage
     registerMessageApi = messageModule.registerMessageApi
+    showGlobalDialog = messageModule.showGlobalDialog
+    registerDialogApi = messageModule.registerDialogApi
     _resetMessageApiForTest = messageModule._resetMessageApiForTest
     _resetMessageApiForTest()
   })
@@ -62,5 +82,28 @@ describe("message service", () => {
       type: "warning",
       duration: 3000,
     })
+  })
+
+  it("shows a one-shot dialog through the registered dialog provider", () => {
+    const api = makeDialogApiSpy()
+    registerDialogApi(api)
+
+    showGlobalDialog("warning", "Please choose", "Task interaction")
+
+    expect(api.warning).toHaveBeenCalledWith({
+      title: "Task interaction",
+      content: "Please choose",
+      positiveText: "确定",
+      maskClosable: true,
+      closeOnEsc: true,
+    })
+  })
+
+  it("does not queue a dialog before the provider is registered", () => {
+    showGlobalDialog("info", "ephemeral")
+    const api = makeDialogApiSpy()
+    registerDialogApi(api)
+
+    expect(api.info).not.toHaveBeenCalled()
   })
 })

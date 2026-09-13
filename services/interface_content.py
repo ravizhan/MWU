@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,10 @@ _HTTP_TIMEOUT = httpx.Timeout(10.0)
 _MAX_BODY_BYTES = 1024 * 1024
 _MAX_REDIRECTS = 3
 _ALLOWED_SCHEMES = {"http", "https"}
+_TEXT_FILE_PATTERN = re.compile(
+    r"^(?:\./)?(?:[^/]+[/])*[^/]+\.(?:md|markdown|txt|html?)$",
+    re.IGNORECASE,
+)
 
 
 class InterfaceContentError(ValueError):
@@ -153,9 +158,10 @@ class InterfaceContentService:
             raise InterfaceContentError("文档内容为空")
         if _is_http_url(text):
             return self._fetch_document_url(text)
-        # 含路径分隔符且无换行的短值视为文件引用；其余按直接文本处理。
+        # 含路径分隔符或常见根文档扩展名且无换行的短值视为文件引用；
+        # 统一交给根目录 resolver 做 containment 与路径合法性检查。
         if (
-            "/" in text
+            ("/" in text or _TEXT_FILE_PATTERN.fullmatch(text) is not None)
             and "\n" not in text
             and len(text) < 512
             and not text.startswith("<")
@@ -194,7 +200,7 @@ class InterfaceContentService:
                 elif isinstance(doc, list):
                     for item in doc:
                         add(item)
-        for pretask in _pretask_list(interface):
+        for pretask in interface.pretask or []:
             add(pretask.description)
         for group in interface.group or []:
             add(group.description)
@@ -211,12 +217,3 @@ class InterfaceContentService:
         for section in interface.setting or []:
             add(section.description)
         return sources
-
-
-def _pretask_list(interface: "InterfaceModel") -> list[Any]:
-    pretask = interface.pretask
-    if pretask is None:
-        return []
-    if isinstance(pretask, list):
-        return pretask
-    return [pretask]

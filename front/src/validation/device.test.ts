@@ -106,6 +106,23 @@ describe("customDeviceAddressSchema", () => {
     ).toBe(true)
   })
 
+  it("accepts a windowless Gamepad with hWnd 0", () => {
+    expect(customDeviceAddressSchema.parse({ type: "Gamepad", address: "000|0" })).toEqual({
+      type: "Gamepad",
+      address: "0|0",
+    })
+    expect(customDeviceAddressSchema.parse({ type: "Gamepad", address: "0|1" })).toEqual({
+      type: "Gamepad",
+      address: "0|1",
+    })
+  })
+
+  it("rejects a negative Gamepad hWnd", () => {
+    expect(customDeviceAddressSchema.safeParse({ type: "Gamepad", address: "-1|0" }).success).toBe(
+      false,
+    )
+  })
+
   it("rejects Gamepad with invalid type", () => {
     expect(
       customDeviceAddressSchema.safeParse({ type: "Gamepad", address: "12345|2" }).success,
@@ -208,6 +225,13 @@ describe("runtimeDeviceAddressSchema", () => {
     expect(runtimeDeviceAddressSchema.parse({ type: "MacOS", address: " 0042 " })).toEqual({
       type: "MacOS",
       address: "42",
+    })
+  })
+
+  it("accepts a scanned windowless Gamepad", () => {
+    expect(runtimeDeviceAddressSchema.parse({ type: "Gamepad", address: "0|0" })).toEqual({
+      type: "Gamepad",
+      address: "0|0",
     })
   })
 

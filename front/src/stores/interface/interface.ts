@@ -29,6 +29,35 @@ export const useInterfaceStore = defineStore("interface", {
     getPresetList: (state): Preset[] => state.interface?.preset || [],
     getPretasks: (state): Pretask[] => state.interface?.pretask || [],
     getSettingSections: (state): SettingSection[] => state.interface?.setting || [],
+    getUncoveredOptionNames: (state): string[] => {
+      const model = state.interface
+      const covered = new Set<string>()
+      for (const section of model.setting ?? []) {
+        for (const optionName of section.option ?? []) {
+          covered.add(optionName)
+        }
+      }
+
+      const candidates = [
+        ...(model.global_option ?? []),
+        ...(model.resource ?? []).flatMap((item) => item.option ?? []),
+        ...(model.controller ?? []).flatMap((item) => item.option ?? []),
+      ]
+      const seen = new Set<string>()
+      const result: string[] = []
+      for (const optionName of candidates) {
+        if (
+          covered.has(optionName) ||
+          seen.has(optionName) ||
+          model.option?.[optionName] === undefined
+        ) {
+          continue
+        }
+        seen.add(optionName)
+        result.push(optionName)
+      }
+      return result
+    },
   },
   actions: {
     async setInterface() {

@@ -713,6 +713,36 @@ class TestPretaskAdmission:
         assert row.id == admission.run_id
         assert row.status == "success"
 
+    async def test_connection_retry_does_not_repeat_preparation(
+        self, state: AppState, monkeypatch
+    ):
+        settings = SimpleNamespace(
+            runtime=SimpleNamespace(maxRetryCount=2, retryInterval=0)
+        )
+        monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
+        worker = _FakeWorker(start_result=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        connect_results = iter([False, True])
+        connect_calls: list[int] = []
+
+        def flaky_connect(_model):
+            connect_calls.append(1)
+            return next(connect_results)
+
+        worker.device.connect = flaky_connect
+        state.worker = worker
+
+        admission = await submit_manual(state, make_payload())
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert len(connect_calls) == 2
+        assert len(worker.pretasks.calls) == 1
+        row = list_executions(state.scheduler_db_path)[0]
+        assert row.status == "success"
+
 
 # ---------------------------------------------------------------------------
 # stop_active / 取消清理

@@ -348,7 +348,11 @@ class TestLinuxSupport:
             "LinuxController",
             "Linux",
             LinuxDeviceAddress(
-                kind="wlr", wlr_socket_path="/run/user/1000/wayland-1"
+                kind="wlr",
+                wlr_socket_path="/run/user/1000/wayland-1",
+                uinput_path="/dev/uinput",
+                uinput_screen_width=1920,
+                uinput_screen_height=1080,
             ).to_compact_json(),
         )
         with (
@@ -364,6 +368,9 @@ class TestLinuxSupport:
             "input_method": 1,
             "wlr_socket_path": "/run/user/1000/wayland-1",
             "use_win32_vk_code": True,
+            "uinput_path": "/dev/uinput",
+            "uinput_screen_width": 1920,
+            "uinput_screen_height": 1080,
         }
         bind.assert_called_once()
 
@@ -385,7 +392,13 @@ class TestLinuxSupport:
         model = DeviceService.build_device_model_from_config(
             "LinuxController",
             "Linux",
-            LinuxDeviceAddress(kind="gamescope", display_no=0).to_compact_json(),
+            LinuxDeviceAddress(
+                kind="gamescope",
+                display_no=0,
+                uinput_path="/dev/uinput-gamescope",
+                uinput_screen_width=2560,
+                uinput_screen_height=1440,
+            ).to_compact_json(),
         )
         instance = SimpleNamespace(
             display_no=0,
@@ -406,6 +419,9 @@ class TestLinuxSupport:
             "pw_node_id": 77,
             "eis_socket_path": "/run/user/1000/gamescope-0-ei",
             "use_win32_vk_code": False,
+            "uinput_path": "/dev/uinput-gamescope",
+            "uinput_screen_width": 2560,
+            "uinput_screen_height": 1440,
         }
 
     def test_connect_gamescope_missing_instance_fails(self, app_root: Path):
@@ -476,7 +492,12 @@ class TestLinuxSupport:
         model = DeviceService.build_device_model_from_config(
             "LinuxController",
             "Linux",
-            LinuxDeviceAddress(kind="portal").to_compact_json(),
+            LinuxDeviceAddress(
+                kind="portal",
+                uinput_path="/dev/uinput-portal",
+                uinput_screen_width=1280,
+                uinput_screen_height=720,
+            ).to_compact_json(),
         )
         helper = SimpleNamespace(
             open_stream=lambda: True,
@@ -497,6 +518,9 @@ class TestLinuxSupport:
             "pw_socket_fd": 12,
             "pw_node_id": 99,
             "use_win32_vk_code": False,
+            "uinput_path": "/dev/uinput-portal",
+            "uinput_screen_width": 1280,
+            "uinput_screen_height": 720,
         }
         # PortalHelper 保留在运行态，供 reset/shutdown 释放
         assert worker.device_state.portal_helper is helper

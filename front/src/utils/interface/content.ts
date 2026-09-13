@@ -3,7 +3,6 @@ import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
 import { z } from "zod"
 
-const textFilePattern = /^(?:\.\/)?(?:[^/]+[/])*[^/]+\.(?:md|markdown|txt|html?)$/i
 const invalidPathNotified = new Set<string>()
 const windowsDrivePattern = /^[A-Za-z]:/
 

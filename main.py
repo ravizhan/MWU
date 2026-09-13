@@ -578,6 +578,21 @@ async def connect_device(request: DeviceConnectRequest):
         if not prepared:
             msg = app_state.worker.device_state.last_device_error or "设备连接失败"
             return {"status": "failed", "message": msg}
+        # prepare_connection 只负责一次性准备上下文；该旧平面 API 仍须
+        # 保持“连接成功”语义，因此在准备成功后显式完成首次低层连接。
+        # 已复用的锁定连接不能再次 connect，否则 SDK 会拒绝重连。
+        if not app_state.worker.device_state.connected:
+            try:
+                connected = await asyncio.to_thread(
+                    app_state.worker.device.connect,
+                    device,
+                )
+            except Exception as e:
+                app_state.send_log(f"设备连接失败: {e}")
+                return {"status": "failed", "message": str(e)}
+            if not connected:
+                msg = app_state.worker.device_state.last_device_error or "设备连接失败"
+                return {"status": "failed", "message": msg}
         return {"status": "success"}
 
 
@@ -1134,7 +1149,8 @@ def cancel_focus_interaction(interaction_id: str):
 async def restart_elevated():
     """以管理员权限重启当前程序。
 
-    重启前：停止运行中的任务、取消 pending modal、完成已授权的有限遥测收尾。
+    停止任务、取消 pending modal 并完成有限遥测收尾后退出旧实例。
+    独立启动器在旧实例退出后请求授权；拒绝或失败不恢复旧实例。
     不跨进程自动重放任务 payload；用户在新实例中重新启动。
     提权后继续监听 0.0.0.0:5566（用户明确选择保留局域网访问）。
     """
@@ -1142,7 +1158,7 @@ async def restart_elevated():
 
     if is_elevated():
         return {"status": "failed", "message": "当前已是管理员权限"}
-    # 停止运行
+
     if app_state.worker is not None and app_state.worker.task_state.running:
         app_state.worker.tasks.stop()
     # 取消 pending modal
@@ -1151,17 +1167,17 @@ async def restart_elevated():
     # 已授权遥测的有限收尾（≤2s flush）
     if app_state.telemetry_service is not None:
         app_state.telemetry_service.flush_and_close_limited()
-    # 提权重启（服务端构造命令，无客户端输入）
-    submitted = await asyncio.to_thread(request_elevation, APP_ROOT_DIR)
-    if not submitted:
-        return {"status": "failed", "message": "提权请求被拒绝"}
 
     def _exit():
-        time.sleep(1)
-        os._exit(0)
+        # 给当前 HTTP 响应留出发送时间，不等待授权结果。
+        time.sleep(0.2)
+        os.kill(os.getpid(), signal.SIGTERM)
 
-    threading.Thread(target=_exit, daemon=True).start()
-    return {"status": "success", "message": "提权重启已提交"}
+    try:
+        result = await asyncio.to_thread(request_elevation, APP_ROOT_DIR)
+    finally:
+        threading.Thread(target=_exit, daemon=True).start()
+    return {"status": result.status, "message": result.message}
 
 
 @app.post("/api/internal/scheduler/native-dispatch")

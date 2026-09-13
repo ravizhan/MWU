@@ -133,6 +133,43 @@ describe("dispatchRealtimeEvent", () => {
       expect(stores.indexStore.RunningLog).toContain("hello")
       expect(showToastMessage).toHaveBeenCalledTimes(1)
     })
+
+    it("passes a non-empty started run id to the device store", () => {
+      const handleTaskStarted = vi.fn<(runId: string) => void>()
+      const stores = {
+        ...makeStores(),
+        deviceStore: { showElevationPrompt: false, handleTaskStarted },
+      }
+
+      dispatchRealtimeEvent(
+        { ...baseEvent, event: "task.started", details: { run_id: "run-123" } },
+        stores,
+      )
+
+      expect(handleTaskStarted).toHaveBeenCalledWith("run-123")
+    })
+
+    it.each([undefined, null, "", "   ", 123])(
+      "does not persist a malformed started run id (%s)",
+      (runId) => {
+        const handleTaskStarted = vi.fn<(value: string) => void>()
+        const stores = {
+          ...makeStores(),
+          deviceStore: { showElevationPrompt: false, handleTaskStarted },
+        }
+
+        dispatchRealtimeEvent(
+          {
+            ...baseEvent,
+            event: "task.started",
+            details: runId === undefined ? undefined : { run_id: runId },
+          },
+          stores,
+        )
+
+        expect(handleTaskStarted).not.toHaveBeenCalled()
+      },
+    )
   })
 
   describe("non-task events fall through to common handler", () => {

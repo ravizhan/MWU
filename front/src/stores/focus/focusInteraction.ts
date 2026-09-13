@@ -6,27 +6,25 @@ import {
   cancelFocusInteraction,
   FocusInteractionError,
 } from "@/services/api/modules/focus"
+import { showGlobalDialog, showGlobalMessage } from "@/services/feedback/message"
 import type { FocusInteractionPayload } from "@/services/api/modules/focus"
+import { tryCatch } from "@/utils/tryCatch"
 
 /** 后端 focus 交互（dialog / modal）的前端状态（API 契约别名）。 */
 export type FocusInteraction = FocusInteractionPayload
 
-/** store 公开契约（供 dispatcher 等消费方引用，避免 ReturnType 推导）。 */
-export interface FocusInteractionStoreContract {
-  pending: FocusInteraction[]
-  hydrated: boolean
-  upsert: (interaction: FocusInteraction) => void
-  removeById: (id: string) => void
-  applyRealtime: (payload: {
-    id?: unknown
-    mode?: unknown
-    state?: unknown
-    run_id?: unknown
-    phase?: unknown
-  }) => void
-  hydrate: () => Promise<void>
-  acknowledge: (id: string) => Promise<void>
-  cancel: (id: string) => Promise<void>
+type FocusRealtimeLevel = "info" | "success" | "warning" | "error"
+
+/** SSE focus.interaction 负载；字段由 store 在入口处运行时收窄。 */
+export interface FocusInteractionRealtimePayload {
+  id?: unknown
+  mode?: unknown
+  state?: unknown
+  run_id?: unknown
+  phase?: unknown
+  content?: unknown
+  title?: unknown
+  level?: unknown
 }
 
 /**
@@ -42,6 +40,11 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
   const hydrated = ref(false)
 
   function upsert(interaction: FocusInteraction): void {
+    // Dialogs are display-only realtime events.  They never enter the modal
+    // pending list or the hydrate path.
+    if (interaction.mode === "dialog") {
+      return
+    }
     if (interaction.state !== "pending") {
       removeById(interaction.id)
       return
@@ -49,9 +52,9 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
     const existing = pending.value.find((item) => item.id === interaction.id)
     if (existing) {
       Object.assign(existing, interaction)
-    } else {
-      pending.value.push(interaction)
+      return
     }
+    pending.value.push(interaction)
   }
 
   function removeById(id: string): void {
@@ -62,15 +65,20 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
   }
 
   /** SSE focus.interaction（details.phase = created | finished）。 */
-  function applyRealtime(payload: {
-    id?: unknown
-    mode?: unknown
-    state?: unknown
-    run_id?: unknown
-    phase?: unknown
-  }): void {
+  function applyRealtime(payload: FocusInteractionRealtimePayload): void {
     const id = typeof payload.id === "string" ? payload.id : ""
     if (!id) {
+      return
+    }
+    const mode = payload.mode === "dialog" ? "dialog" : "modal"
+    if (payload.phase === "created" && mode === "dialog") {
+      const content = typeof payload.content === "string" ? payload.content : ""
+      const type: FocusRealtimeLevel =
+        payload.level === "success" || payload.level === "warning" || payload.level === "error"
+          ? payload.level
+          : "info"
+      const title = typeof payload.title === "string" ? payload.title : undefined
+      showGlobalDialog(type, content, title)
       return
     }
     const state =
@@ -82,9 +90,9 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
     upsert({
       id,
       run_id: typeof payload.run_id === "string" ? payload.run_id : "",
-      mode: payload.mode === "dialog" ? "dialog" : "modal",
+      mode,
       state,
-      content: "",
+      content: typeof payload.content === "string" ? payload.content : "",
       created_at: Date.now(),
     })
   }
@@ -95,45 +103,51 @@ export const useFocusInteractionStore = defineStore("focusInteraction", () => {
       return
     }
     hydrated.value = true
-    try {
-      const remote = await fetchFocusInteractions()
-      for (const item of remote) {
-        upsert(item)
-      }
-    } catch {
+    const [remote] = await tryCatch(() => fetchFocusInteractions())
+    if (!remote) {
       // 拉取失败不阻塞；SSE 仍会补
+      return
+    }
+    for (const item of remote) {
+      upsert(item)
     }
   }
 
-  async function acknowledge(id: string): Promise<void> {
-    const item = pending.value.find((entry) => entry.id === id)
-    try {
-      await acknowledgeFocusInteraction(id)
+  async function acknowledge(id: string): Promise<boolean> {
+    const [, error] = await tryCatch(() => acknowledgeFocusInteraction(id))
+    if (!error) {
       removeById(id)
-    } catch (error) {
-      // 仅 404/409 证明后端交互已结束（本地移除）；网络错误/5xx 时后端仍
-      // 阻塞在 wait_modal()，必须恢复 pending 项保留用户唯一的解除入口。
-      if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
-        removeById(id)
-      } else if (item) {
-        upsert(item)
-      }
+      return true
     }
+    // 仅 404/409 证明后端交互已结束（本地移除）；网络错误/5xx 时后端仍
+    // 阻塞在 wait_modal()，保留仍 pending 项作为用户唯一的解除入口，不能复活
+    // 已被 finished 移除的 modal。
+    if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
+      removeById(id)
+      return false
+    }
+    // 非终态失败时保持当前 pending；不要用旧快照复活已由 SSE finished
+    // 移除的 modal。
+    showGlobalMessage("error", error.message || "确认焦点交互失败")
+    return false
   }
 
-  async function cancel(id: string): Promise<void> {
-    const item = pending.value.find((entry) => entry.id === id)
-    try {
-      await cancelFocusInteraction(id)
+  async function cancel(id: string): Promise<boolean> {
+    const [, error] = await tryCatch(() => cancelFocusInteraction(id))
+    if (!error) {
       removeById(id)
-    } catch (error) {
-      // 同上：仅 404/409 视为后端已结束；其余失败恢复 pending。
-      if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
-        removeById(id)
-      } else if (item) {
-        upsert(item)
-      }
+      return true
     }
+    // 同上：仅 404/409 视为后端已结束；其余失败保留仍 pending 项，不能复活
+    // 已被 finished 移除的 modal。
+    if (error instanceof FocusInteractionError && [404, 409].includes(error.httpStatus ?? 0)) {
+      removeById(id)
+      return false
+    }
+    // 非终态失败时保持当前 pending；不要用旧快照复活已由 SSE finished
+    // 移除的 modal。
+    showGlobalMessage("error", error.message || "取消焦点交互失败")
+    return false
   }
 
   return {

@@ -72,38 +72,7 @@ import TaskSettingOptionRow from "@/components/settings/sections/TaskSettingOpti
 const { locale, t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const sections = computed(() => interfaceStore.getSettingSections)
-// 未被任何 setting 分区覆盖的全局/资源/控制器级 option 编辑入口
-const uncoveredOptionNames = computed<string[]>(() => {
-  const model = interfaceStore.interface
-  if (!model) {
-    return []
-  }
-  const covered = new Set<string>()
-  for (const section of model.setting ?? []) {
-    for (const optionName of section.option ?? []) {
-      covered.add(optionName)
-    }
-  }
-  const candidates = [
-    ...(model.global_option ?? []),
-    ...(model.resource ?? []).flatMap((item) => item.option ?? []),
-    ...(model.controller ?? []).flatMap((item) => item.option ?? []),
-  ]
-  const seen = new Set<string>()
-  const result: string[] = []
-  for (const optionName of candidates) {
-    if (
-      covered.has(optionName) ||
-      seen.has(optionName) ||
-      model.option?.[optionName] === undefined
-    ) {
-      continue
-    }
-    seen.add(optionName)
-    result.push(optionName)
-  }
-  return result
-})
+const uncoveredOptionNames = computed(() => interfaceStore.getUncoveredOptionNames)
 const defaultExpandedNames = computed(() =>
   sections.value
     .filter((section) => section.default_expand !== false)

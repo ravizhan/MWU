@@ -67,7 +67,6 @@ export function useInterfaceMetadata(locale: Ref<string>) {
     resolvedTitle,
     resolvedWelcome,
     resolvedIconUrl,
-    welcomeFingerprint,
     welcomeShouldShow,
     markWelcomeShown,
   }

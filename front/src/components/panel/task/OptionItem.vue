@@ -52,6 +52,8 @@
         :name="childName"
         :level="(level || 0) + 1"
         :task-options="taskOptions"
+        :controller-name="controllerName"
+        :resource-name="resourceName"
       />
     </template>
   </template>
@@ -69,7 +71,6 @@ import type {
   SwitchOption,
 } from "@/types/interfaceModel"
 import type { NullableTaskOptionValue } from "@/types/schedulerModel"
-import { useDeviceConnectionStore } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { isOptionApplicable } from "@/utils/interface/applicability"
 import { tryCatch } from "@/utils/tryCatch"
@@ -83,27 +84,23 @@ const {
   name,
   level,
   taskOptions: rawTaskOptions,
+  controllerName = null,
+  resourceName = null,
 } = defineProps<{
   name: string
   level?: number
   taskOptions: Record<string, NullableTaskOptionValue>
+  controllerName?: string | null
+  resourceName?: string | null
 }>()
 
 const { locale } = useI18n()
 const interfaceStore = useInterfaceStore()
-const deviceStore = useDeviceConnectionStore()
 const taskOptions = computed(() => rawTaskOptions)
 const option = computed(() => interfaceStore.interface?.option?.[name])
-// 不适用的 option 隐藏子树；值保留在 taskOptions 中，切回环境即恢复
-// option.controller 存的是规范控制器名，必须用 selectedControllerName
-// （selectedController 是 UI display_label，label≠name 时会误判不适用）。
-const applicable = computed(() =>
-  isOptionApplicable(
-    option.value,
-    deviceStore.selectedControllerName,
-    deviceStore.resource || null,
-  ),
-)
+// 不适用的 option 隐藏子树；值保留在 taskOptions 中，切回环境即恢复。
+// controllerName/resourceName 由各自的页面环境显式提供，避免定时任务读取首页环境。
+const applicable = computed(() => isOptionApplicable(option.value, controllerName, resourceName))
 const scanSelectRefreshing = ref(false)
 
 const resolvedLabel = computed(() =>

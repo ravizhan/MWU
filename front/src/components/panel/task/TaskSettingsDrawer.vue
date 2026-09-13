@@ -20,6 +20,8 @@
           <TaskOptionPanel
             :current-task-id="selectedTaskId"
             :options="configStore.options"
+            :controller-name="deviceStore.selectedControllerName"
+            :resource-name="deviceStore.resource"
             :empty-text="t('settings.scheduler.dialog.selectTaskTip')"
             :no-options-text="t('settings.scheduler.dialog.noOptions')"
           />
@@ -36,13 +38,19 @@ import { useI18n } from "vue-i18n"
 import { CloseOutline } from "@vicons/ionicons5"
 import TaskDescriptionCard from "@/components/panel/task/TaskDescriptionCard.vue"
 import TaskOptionPanel from "@/components/panel/task/TaskOptionPanel.vue"
-import { useIndexStore, useInterfaceStore, useTaskConfigStore } from "@/stores"
+import {
+  useDeviceConnectionStore,
+  useIndexStore,
+  useInterfaceStore,
+  useTaskConfigStore,
+} from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
 
 const { t, locale } = useI18n()
 const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
 const interfaceStore = useInterfaceStore()
+const deviceStore = useDeviceConnectionStore()
 
 const selectedTaskId = computed(() => indexStore.SelectedTaskID || null)
 const drawerVisible = computed({

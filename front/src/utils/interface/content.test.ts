@@ -95,42 +95,33 @@ describe("resolveInterfaceText", () => {
   })
 
   it("resolves $key via nested translation path", () => {
-    const model = {
+    const model: Partial<InterfaceModel> = {
       translations: {
         "zh-CN": { docs: { main: "主文档" } },
       },
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    } as Partial<InterfaceModel>
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    expect(resolveInterfaceText(model as InterfaceModel, "zh-CN", "$docs.main")).toBe("主文档")
+    }
+    expect(resolveInterfaceText(model, "zh-CN", "$docs.main")).toBe("主文档")
   })
 
   it("resolves $key via flat single key", () => {
-    const model = {
+    const model: Partial<InterfaceModel> = {
       translations: {
         "en-US": { "task.main.title": "Main Task" },
       },
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    } as Partial<InterfaceModel>
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    expect(resolveInterfaceText(model as InterfaceModel, "en-US", "$task.main.title")).toBe(
-      "Main Task",
-    )
+    }
+    expect(resolveInterfaceText(model, "en-US", "$task.main.title")).toBe("Main Task")
   })
 
   it("falls back when translation key is missing in all locales", () => {
-    const model = {
+    const model: Partial<InterfaceModel> = {
       translations: { "zh-CN": { other: "其他" } },
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    } as Partial<InterfaceModel>
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    expect(resolveInterfaceText(model as InterfaceModel, "zh-CN", "$missing", "fb")).toBe("fb")
+    }
+    expect(resolveInterfaceText(model, "zh-CN", "$missing", "fb")).toBe("fb")
   })
 })
 
 describe("resolveInterfaceAssetUrl", () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const mockModel = {} as InterfaceModel
+  const mockModel: Partial<InterfaceModel> = {}
 
   it("returns external URL as-is", () => {
     const result = resolveInterfaceAssetUrl(mockModel, "en", "https://example.com/logo.png")
@@ -152,8 +143,7 @@ describe("resolveInterfaceAssetUrl", () => {
 })
 
 describe("resolveInterfaceDocumentContent", () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const mockModel = {} as InterfaceModel
+  const mockModel: Partial<InterfaceModel> = {}
 
   beforeEach(() => {
     vi.spyOn(globalThis, "fetch").mockReset()
@@ -170,11 +160,12 @@ describe("resolveInterfaceDocumentContent", () => {
   })
 
   it("posts to the document API with source and locale", async () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ status: "success", content: "# Hello" }),
-    } as Response)
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "success", content: "# Hello" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
 
     const result = await resolveInterfaceDocumentContent(mockModel, "zh-CN", "readme.md")
     expect(result).toBe("# Hello")
@@ -186,10 +177,7 @@ describe("resolveInterfaceDocumentContent", () => {
   })
 
   it("returns resolved value when API responds 404 (unknown source)", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      { ok: false, status: 404 } as Response,
-    )
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 404 }))
 
     const result = await resolveInterfaceDocumentContent(
       mockModel,
@@ -201,11 +189,12 @@ describe("resolveInterfaceDocumentContent", () => {
   })
 
   it("returns resolved value when API returns failed status", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ status: "failed", message: "未知文档来源" }),
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    } as Response)
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "failed", message: "未知文档来源" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
 
     const result = await resolveInterfaceDocumentContent(mockModel, "en", "script.py")
     expect(result).toBe("script.py")
@@ -219,23 +208,19 @@ describe("resolveInterfaceDocumentContent", () => {
   })
 
   it("resolves $translation keys before posting", async () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const translatedModel = {
+    const translatedModel: Partial<InterfaceModel> = {
       translations: {
         "zh-CN": { docs: { main: "指南" } },
       },
-    } as Partial<InterfaceModel>
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ status: "success", content: "内容" }),
-    } as Response)
-
-    const result = await resolveInterfaceDocumentContent(
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      translatedModel as InterfaceModel,
-      "zh-CN",
-      "$docs.main",
+    }
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "success", content: "内容" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     )
+
+    const result = await resolveInterfaceDocumentContent(translatedModel, "zh-CN", "$docs.main")
     expect(result).toBe("内容")
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/interface/document", {
       method: "POST",
@@ -245,11 +230,12 @@ describe("resolveInterfaceDocumentContent", () => {
   })
 
   it("trims whitespace before checking", async () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ status: "success", content: "trimmed content" }),
-    } as Response)
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "success", content: "trimmed content" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
 
     const result = await resolveInterfaceDocumentContent(mockModel, "en", "  readme.md  ")
     expect(result).toBe("trimmed content")

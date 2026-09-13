@@ -4,7 +4,9 @@
 
 <script setup lang="ts">
 import { useMessage } from "naive-ui"
-import { registerMessageApi } from "./message"
+import { useDialog } from "naive-ui"
+import { registerDialogApi, registerMessageApi } from "./message"
 
 registerMessageApi(useMessage())
+registerDialogApi(useDialog())
 </script>

@@ -6,8 +6,6 @@ import webbrowser
 from typing import TYPE_CHECKING
 
 from maa_worker.focus_protocol import (
-    DISPLAY_DIALOG,
-    DISPLAY_MODAL,
     DISPLAY_NOTIFICATION,
     DISPLAY_TOAST,
     FocusDisplayEvent,
@@ -27,7 +25,7 @@ class FocusEventProcessor:
     - "log":          SSE 日志推送
     - "toast":        SSE toast 推送（前端 Naive UI 渲染）
     - "notification": 系统通知 (plyer / browser Notification)
-    - "dialog":       非阻塞提示（SSE focus.interaction，前端展示后自动确认）
+    - "dialog":       非阻塞提示（SSE focus.interaction created，前端一次性展示）
     - "modal":        阻塞确认（SSE focus.interaction，等待用户确认/取消）
     """
 
@@ -60,13 +58,11 @@ class FocusEventProcessor:
     # ---- 交互渠道 ------------------------------------------------------------
 
     def handle_dialog(self, event: FocusDisplayEvent) -> None:
-        """dialog：非阻塞。创建后立即视为已确认，不等待。"""
+        """dialog：非阻塞。created 事件携带 content 一次性展示，无确认状态机。"""
         if self._interactions is None:
             self.dispatch(event)
             return
-        state = self._interactions.create_dialog(self._current_run_id(), event.content)
-        # dialog 展示即确认
-        self._interactions.acknowledge(state.id)
+        self._interactions.create_dialog(self._current_run_id(), event.content)
 
     def handle_modal(self, event: FocusDisplayEvent) -> str:
         """modal：阻塞确认。在回调线程中调用，Event.wait 期间 GIL 释放。

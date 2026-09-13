@@ -76,15 +76,11 @@ def _applicable_pi_pretasks(
     interface, controller_name: str, resource_name: str
 ) -> list:
     """返回对当前 controller/resource 适用的 PI pretask 列表。"""
-    raw = interface.pretask
-    if raw is None:
-        return []
-    pretasks = raw if isinstance(raw, list) else [raw]
     return [
-        p
-        for p in pretasks
-        if (not p.controller or controller_name in p.controller)
-        and (not p.resource or resource_name in p.resource)
+        pretask
+        for pretask in interface.pretask or []
+        if (not pretask.controller or controller_name in pretask.controller)
+        and (not pretask.resource or resource_name in pretask.resource)
     ]
 
 
@@ -790,6 +786,13 @@ class DeviceService:
         state = self.worker.device_state
         screencap_int = 1 if screencap == "Wlr" else 4
         input_int = {"Wlr": 1, "UInput": 2, "Libei": 4}[input_method]
+        uinput_config: dict[str, Any] = {}
+        if address.uinput_path:
+            uinput_config["uinput_path"] = address.uinput_path
+        if address.uinput_screen_width is not None:
+            uinput_config["uinput_screen_width"] = address.uinput_screen_width
+        if address.uinput_screen_height is not None:
+            uinput_config["uinput_screen_height"] = address.uinput_screen_height
 
         if address.kind == "wlr":
             config: dict[str, Any] = {
@@ -797,13 +800,8 @@ class DeviceService:
                 "input_method": input_int,
                 "wlr_socket_path": address.wlr_socket_path,
                 "use_win32_vk_code": use_win32_vk_code,
+                **uinput_config,
             }
-            if address.uinput_path:
-                config["uinput_path"] = address.uinput_path
-            if address.uinput_screen_width is not None:
-                config["uinput_screen_width"] = address.uinput_screen_width
-            if address.uinput_screen_height is not None:
-                config["uinput_screen_height"] = address.uinput_screen_height
             return config
 
         if address.kind == "gamescope":
@@ -824,6 +822,7 @@ class DeviceService:
                 "input_method": input_int,
                 "pw_node_id": instance.pipewire_node_id,
                 "use_win32_vk_code": use_win32_vk_code,
+                **uinput_config,
             }
             if input_method == "Libei":
                 eis_socket_path = address.eis_socket_path or instance.eis_socket_path
@@ -849,6 +848,7 @@ class DeviceService:
             "pw_socket_fd": helper.get_pipewire_fd(),
             "pw_node_id": helper.get_pipewire_node_id(),
             "use_win32_vk_code": use_win32_vk_code,
+            **uinput_config,
         }
         if input_method == "Libei":
             config["eis_socket_path"] = address.eis_socket_path
@@ -1149,8 +1149,8 @@ class DeviceService:
         user_pre_tasks: list[PreTaskCommand],
     ) -> bool:
         """准备临界区内的连接前准备：权限 → 释放旧连接 → 适用 PI pretask →
-        用户命令 → 低层 connect。不加载 resource；调用者随后在同一临界区
-        调用 set_resource。
+        用户命令 → 复用判定。不调用低层 connect，也不加载 resource；调用者
+        随后应在同一临界区内完成 connect 与 set_resource。
 
         只要本次有适用 PI pretask 或启用用户命令，就重新创建 Controller
         （释放旧连接）；没有准备程序且 controller/resource 匹配时允许复用。
@@ -1197,8 +1197,7 @@ class DeviceService:
         if state.connected or state.configuration_locked:
             self.reset_connection_state("准备新的连接上下文，已释放旧连接")
 
-        # 5. 低层 connect（不加载 resource）
-        if not self.connect(device_config):
-            return False
+        # 5. 仅记录本次准备所对应的资源上下文；低层 connect 由调用者
+        # 在同一临界区内执行，以便其 retry 循环不会重复运行上述准备阶段。
         state.prepared_resource_name = resource_name
         return True

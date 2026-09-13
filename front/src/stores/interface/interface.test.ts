@@ -89,6 +89,24 @@ describe("useInterfaceStore", () => {
 
       expect(Object.keys(store.getOptionList("task-two"))).toEqual(["mode"])
     })
+
+    it("derives uncovered global, resource, and controller options", () => {
+      const store = useInterfaceStore()
+      store.interface = {
+        global_option: ["global", "covered", "missing"],
+        resource: [{ name: "resource-a", path: [], option: ["resource", "global"] }],
+        controller: [{ name: "adb", type: "Adb", option: ["controller", "resource"] }],
+        setting: [{ name: "general", option: ["covered"] }],
+        option: {
+          global: { type: "switch", cases: [{ name: "on" }, { name: "off" }] },
+          covered: { type: "switch", cases: [{ name: "on" }, { name: "off" }] },
+          resource: { type: "switch", cases: [{ name: "on" }, { name: "off" }] },
+          controller: { type: "switch", cases: [{ name: "on" }, { name: "off" }] },
+        },
+      }
+
+      expect(store.getUncoveredOptionNames).toEqual(["global", "resource", "controller"])
+    })
   })
 
   describe("isPretaskCompatible", () => {

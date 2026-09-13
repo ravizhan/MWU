@@ -37,15 +37,7 @@ class PretaskService:
         global_options: dict[str, TaskOptionValue] | None = None,
     ) -> None:
         """Run matching PI pretasks first, then enabled user shell commands."""
-        raw_pretasks = self.worker.interface.pretask
-        if raw_pretasks is None:
-            pi_pretasks: list[Pretask] = []
-        elif isinstance(raw_pretasks, list):
-            pi_pretasks = raw_pretasks
-        else:
-            pi_pretasks = [raw_pretasks]
-
-        for pretask in pi_pretasks:
+        for pretask in self.worker.interface.pretask or []:
             if pretask.controller and controller_name not in pretask.controller:
                 continue
             if pretask.resource and resource_name not in pretask.resource:

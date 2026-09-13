@@ -174,3 +174,27 @@ def test_normal_settings_write_preserves_disk_owned_fields(tmp_path: Path):
 
     assert written["panel"]["customDevices"] == disk["panel"]["customDevices"]
     assert written["telemetry"] == disk["telemetry"]
+
+
+def test_normal_settings_write_prunes_illegal_disk_custom_devices(tmp_path: Path):
+    path = tmp_path / "config" / "settings.json"
+    disk = {
+        "panel": {
+            "customDevices": [
+                {
+                    "type": _LEGACY_TYPE,
+                    "controller_name": "Legacy",
+                    "address": _LEGACY_ADDRESS,
+                },
+                {"type": "Adb", "controller_name": "A", "address": "device"},
+            ]
+        }
+    }
+    _write_settings(path, disk)
+
+    written = settings_io.write_settings_preserving_protected(path, SettingsModel())
+
+    assert written["panel"]["customDevices"] == [
+        {"type": "Adb", "controller_name": "A", "address": "device"}
+    ]
+    assert settings_io.load_settings_model(path).panel.customDevices[0].type == "Adb"

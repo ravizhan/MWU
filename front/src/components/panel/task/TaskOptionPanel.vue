@@ -15,6 +15,8 @@
           :key="optName"
           :name="optName"
           :task-options="currentTaskOptions"
+          :controller-name="controllerName"
+          :resource-name="resourceName"
         />
       </NEl>
       <div v-else class="text-center py-8 opacity-50">
@@ -37,6 +39,8 @@ import { resolveInterfaceText } from "@/utils/interface/content"
 interface Props {
   currentTaskId: string | null
   options: TaskOptionsByTask
+  controllerName?: string | null
+  resourceName?: string | null
   showHeader?: boolean
   headerLabel?: string
   emptyText?: string
@@ -47,6 +51,8 @@ interface Props {
 const {
   currentTaskId,
   options,
+  controllerName = null,
+  resourceName = null,
   showHeader = false,
   headerLabel = "",
   emptyText = "",

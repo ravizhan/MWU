@@ -12,7 +12,6 @@ from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.focus_protocol import UnifiedFocusResolver
-from maa_worker.focus_protocol import DISPLAY_DIALOG, DISPLAY_MODAL
 
 if TYPE_CHECKING:
     from maa_worker.event_service import EventService
@@ -102,6 +101,14 @@ class SinkHandler:
             node_handle = None
 
         try:
+            # Ordinary channels are independent from interactive channels.
+            # Dispatch them first so a mixed declaration cannot be swallowed
+            # by the blocking modal path below.  Dialogs are emitted before a
+            # modal starts waiting, making their non-blocking UI observable.
+            if event.has_log or event.has_toast or event.has_notification:
+                self._processor.dispatch(event)
+            if event.has_dialog:
+                self._processor.handle_dialog(event)
             if event.has_modal:
                 # modal：阻塞确认。cancelled → 置 stop_flag 终止流水线
                 result = self._processor.handle_modal(event)
@@ -113,11 +120,6 @@ class SinkHandler:
                         self._processor._events.worker.tasks.stop()
                     except Exception:
                         pass
-                return
-            if event.has_dialog:
-                self._processor.handle_dialog(event)
-                return
-            self._processor.dispatch(event)
         finally:
             if node_handle is not None and telemetry is not None:
                 try:

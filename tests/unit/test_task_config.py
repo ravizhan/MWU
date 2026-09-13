@@ -11,6 +11,7 @@ from models.interface import (
     OptionCase,
     Preset,
     PresetTask,
+    Pretask,
     Resource,
     Task,
 )
@@ -29,6 +30,7 @@ from models.task_config import (
     _normalize_raw_snapshot,
     _normalize_raw_task_options,
     build_interface_preset_snapshot,
+    normalize_global_option_values,
     normalize_snapshot,
     normalize_task_config,
     normalize_task_execution_payload,
@@ -304,6 +306,23 @@ class TestBuildTaskOptionMaps:
         maps = _build_task_option_maps(iface)
         assert "parent_opt" in maps["T"]
         assert "sub_opt" in maps["T"]
+
+
+# ---------------------------------------------------------------------------
+# normalize_global_option_values — pretask 选项在统一列表契约下可达
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeGlobalOptionValues:
+    def test_pretask_options_collected_from_normalized_list(self):
+        opt = _make_option("select", cases=["fast", "safe"])
+        iface = _make_interface(
+            tasks=[Task(name="T", entry="T")],
+            options={"mode": opt},
+        )
+        iface.pretask = [Pretask(exec="prepare", option=["mode"])]
+        result = normalize_global_option_values({"mode": "safe"}, iface)
+        assert result == {"mode": "safe"}
 
 
 # ---------------------------------------------------------------------------

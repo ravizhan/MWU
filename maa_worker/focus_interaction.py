@@ -4,6 +4,10 @@
 dialog：非阻塞提示（前端 toast/对话框展示，自动消失，不等待）。
 modal：阻塞确认 — 在 MAA 节点回调线程内等待 Python threading.Event，
 等待期间 GIL 释放；用户在 UI 确认/取消后解除阻塞，流水线继续/停止。
+
+广播规则：只有 pending → acknowledged / cancelled 的终态转换方（用户
+ack/cancel 与 stop 兜底 wake_all_for_stop）负责广播 finished；等待与提醒
+只观察状态，不广播。wait 超时返回 pending，等待方自行决定处理，不伪造终态。
 """
 
 from __future__ import annotations
@@ -27,13 +31,18 @@ class FocusInteractionState:
     content: str
     created_at: float = field(default_factory=time.time)
     state: str = "pending"  # pending | acknowledged | cancelled
-    # 线程内部：阻塞等待事件与提醒时间戳
+    # 线程内部：阻塞等待事件（提醒起点 = 创建时刻，见 __post_init__）
     _ack_event: threading.Event = field(default_factory=threading.Event, repr=False)
-    _acknowledged: bool = False
-    _cancelled: bool = False
-    _reminded_at: float = 0.0
+    _reminded_at: float = field(default=0.0, repr=False)
     _reminder_count: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        # Start the reminder interval at creation; a new modal must not be
+        # reminded immediately on the next monitor tick.  Explicit created_at
+        # (tests / replay) must behave identically: no second time source.
+        if self._reminded_at == 0.0:
+            self._reminded_at = self.created_at
 
     # ---- 公开语义 ------------------------------------------------------------
 
@@ -43,7 +52,6 @@ class FocusInteractionState:
             if self.state != "pending":
                 return False
             self.state = "acknowledged"
-            self._acknowledged = True
         self._ack_event.set()
         return True
 
@@ -53,7 +61,6 @@ class FocusInteractionState:
             if self.state != "pending":
                 return False
             self.state = "cancelled"
-            self._cancelled = True
         self._ack_event.set()
         return True
 
@@ -72,7 +79,7 @@ class FocusInteractionState:
             return self._reminder_count
 
     def wait(self, timeout: float | None = None) -> str:
-        """在回调线程中阻塞等待用户操作；返回最终状态。"""
+        """在回调线程中阻塞等待用户操作；返回当前状态（可能仍为 pending）。"""
         self._ack_event.wait(timeout)
         with self._lock:
             return self.state
@@ -96,6 +103,8 @@ class FocusInteractionService:
         self._on_created = on_created
         self._on_finished = on_finished
         self._lock = threading.Lock()
+        # 仅登记仍 pending 的 modal。等待方直接持有 create_modal() 返回的
+        # state 对象，不依赖（也不查询）本表；本表只服务 HTTP 与提醒查询。
         self._interactions: dict[str, FocusInteractionState] = {}
 
     # ---- 查询 ----------------------------------------------------------------
@@ -108,50 +117,46 @@ class FocusInteractionService:
                 if it.state == "pending"
             ]
 
-    def _find(self, interaction_id: str) -> FocusInteractionState | None:
-        with self._lock:
-            return self._interactions.get(interaction_id)
-
     # ---- 创建与等待 ------------------------------------------------------------
 
-    def create_dialog(self, run_id: str, content: str) -> FocusInteractionState:
-        """创建非阻塞 dialog：广播后立即返回 acknowledged。"""
-        state = FocusInteractionState(
-            id=uuid.uuid4().hex,
-            run_id=run_id,
-            mode="dialog",
-            content=content,
-        )
-        with self._lock:
-            self._interactions[state.id] = state
-        self._notify_created(state)
-        return state
+    @staticmethod
+    def _new_public_data(run_id: str, mode: str, content: str) -> dict:
+        return {
+            "id": uuid.uuid4().hex,
+            "run_id": run_id,
+            "mode": mode,
+            "state": "pending",
+            "content": content,
+            "created_at": time.time(),
+        }
+
+    def create_dialog(self, run_id: str, content: str) -> None:
+        """创建非阻塞 dialog：只广播一次 created，不登记/确认。"""
+        self._notify_created(self._new_public_data(run_id, "dialog", content))
 
     def create_modal(self, run_id: str, content: str) -> FocusInteractionState:
-        """创建阻塞 modal：创建后由回调线程 wait()。"""
+        """创建阻塞 modal：创建后由调用方直接 wait() 同一对象。"""
+        data = self._new_public_data(run_id, "modal", content)
         state = FocusInteractionState(
-            id=uuid.uuid4().hex,
+            id=data["id"],
             run_id=run_id,
             mode="modal",
             content=content,
+            created_at=data["created_at"],
         )
         with self._lock:
             self._interactions[state.id] = state
-        self._notify_created(state)
+        self._notify_created(data)
         return state
 
     def wait_modal(
         self, state: FocusInteractionState, timeout: float | None = None
     ) -> str:
-        """在回调线程中等待 modal 的用户操作。
+        """在回调线程中等待 modal 的用户操作；只等待并返回，不广播。
 
         绝不在回调线程中调用 MAA 任务/stop/网络；仅 Event.wait。
         """
-        if state.mode != "modal":
-            return state.state
-        result = state.wait(timeout)
-        self._notify_finished(state)
-        return result
+        return state.wait(timeout)
 
     # ---- 确认 / 取消 -----------------------------------------------------------
 
@@ -162,6 +167,7 @@ class FocusInteractionService:
         if not state.acknowledge():
             # 幂等：已结束的交互不重复广播
             return state
+        self._remove_pending(state)
         self._notify_finished(state)
         return state
 
@@ -170,7 +176,9 @@ class FocusInteractionService:
         if state is None:
             return None
         if not state.cancel():
+            # 幂等：已结束的交互不重复广播
             return state
+        self._remove_pending(state)
         self._notify_finished(state)
         return state
 
@@ -187,25 +195,24 @@ class FocusInteractionService:
             ]
         for it in pending:
             if it.cancel():
+                self._remove_pending(it)
                 self._notify_finished(it)
 
-    def prune_finished(self, keep: int = 200) -> None:
-        """清理已结束交互，控制内存。"""
+    def _remove_pending(self, state: FocusInteractionState) -> None:
         with self._lock:
-            if len(self._interactions) <= keep:
-                return
-            finished = [
-                k for k, v in self._interactions.items() if v.state != "pending"
-            ]
-            for k in finished[: len(finished) - keep // 2]:
-                del self._interactions[k]
+            if self._interactions.get(state.id) is state:
+                del self._interactions[state.id]
 
     # ---- 广播 ----------------------------------------------------------------
 
-    def _notify_created(self, state: FocusInteractionState) -> None:
+    def _find(self, interaction_id: str) -> FocusInteractionState | None:
+        with self._lock:
+            return self._interactions.get(interaction_id)
+
+    def _notify_created(self, payload: dict) -> None:
         if self._on_created is not None:
             try:
-                self._on_created(state.to_public_dict())
+                self._on_created(payload)
             except Exception:
                 pass
 

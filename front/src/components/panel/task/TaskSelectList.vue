@@ -46,35 +46,15 @@
             <span class="text-xs opacity-60">{{ group.items.length }}</span>
           </button>
           <NEl v-show="expandedGroups.has(group.key)" tag="div">
-            <div
+            <TaskSelectRow
               v-for="item in group.items"
               :key="item.id"
-              class="task-row flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors"
-              :style="{ background: 'var(--card-color)' }"
+              :label="resolveTaskLabel(item.id, item.name)"
+              :checked="isTaskSelected(item.id)"
               @click="handleRowClick(item.id)"
-            >
-              <NCheckbox
-                class="shrink-0"
-                :checked="isTaskSelected(item.id)"
-                size="large"
-                @click.stop
-                @update:checked="handleSelectedChange(item.id, $event)"
-              />
-              <span class="flex-1 text-base truncate select-none">{{
-                resolveTaskLabel(item.id, item.name)
-              }}</span>
-              <NButton
-                quaternary
-                circle
-                size="small"
-                class="shrink-0"
-                @click.stop="handleConfig(item.id)"
-              >
-                <template #icon>
-                  <NIcon size="20"><SettingsOutline /></NIcon>
-                </template>
-              </NButton>
-            </div>
+              @update:checked="handleSelectedChange(item.id, $event)"
+              @config="handleConfig(item.id)"
+            />
           </NEl>
         </NEl>
       </template>
@@ -88,39 +68,17 @@
         :delay-on-touch-only="true"
         ghost-class="ghost"
       >
-        <NEl
-          tag="div"
+        <TaskSelectRow
           v-for="item in taskListData"
           :key="item.id"
-          class="task-row flex items-center gap-3 px-3 py-2.5 border-b border-solid last:border-b-0 cursor-pointer transition-colors"
-          :style="{ borderColor: 'var(--divider-color)', background: 'var(--card-color)' }"
+          :label="resolveTaskLabel(item.id, item.name)"
+          :checked="isTaskSelected(item.id)"
+          show-drag-handle
+          bordered
           @click="handleRowClick(item.id)"
-        >
-          <NIcon size="20" class="cursor-grab active:cursor-grabbing shrink-0">
-            <ReorderThreeOutline />
-          </NIcon>
-          <NCheckbox
-            class="shrink-0"
-            :checked="isTaskSelected(item.id)"
-            size="large"
-            @click.stop
-            @update:checked="handleSelectedChange(item.id, $event)"
-          />
-          <span class="flex-1 text-base truncate select-none">{{
-            resolveTaskLabel(item.id, item.name)
-          }}</span>
-          <NButton
-            quaternary
-            circle
-            size="small"
-            class="shrink-0"
-            @click.stop="handleConfig(item.id)"
-          >
-            <template #icon>
-              <NIcon size="20"><SettingsOutline /></NIcon>
-            </template>
-          </NButton>
-        </NEl>
+          @update:checked="handleSelectedChange(item.id, $event)"
+          @config="handleConfig(item.id)"
+        />
       </VueDraggable>
     </NEl>
   </NCard>
@@ -130,11 +88,12 @@
 import { computed, ref, watchEffect } from "vue"
 import { VueDraggable } from "vue-draggable-plus"
 import { useI18n } from "vue-i18n"
-import { CaretForwardOutline, ReorderThreeOutline, SettingsOutline } from "@vicons/ionicons5"
+import { CaretForwardOutline } from "@vicons/ionicons5"
 import { useInterfaceStore } from "@/stores"
 import type { TaskListItem } from "@/types/taskConfigModel"
 import type { Task } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import TaskSelectRow from "@/components/panel/task/TaskSelectRow.vue"
 
 interface Props {
   tasks: TaskListItem[]
@@ -246,9 +205,10 @@ function toggleGroup(key: string): void {
   const next = new Set(expandedGroups.value)
   if (next.has(key)) {
     next.delete(key)
-  } else {
-    next.add(key)
+    expandedGroups.value = next
+    return
   }
+  next.add(key)
   expandedGroups.value = next
 }
 
@@ -363,12 +323,6 @@ function handleRowClick(taskId: string) {
 </script>
 
 <style scoped>
-.cursor-grab {
-  cursor: grab;
-}
-.cursor-grab:active {
-  cursor: grabbing;
-}
 .group-header {
   cursor: pointer;
 }

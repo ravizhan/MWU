@@ -6,9 +6,7 @@ vi.mock("@/services/api", () => ({
   getDeviceState: vi.fn<() => void>(),
   getDevices: vi.fn<() => void>(),
   getResource: vi.fn<() => void>(),
-  postDevices: vi.fn<() => void>(),
   postCustomDevice: vi.fn<() => void>(),
-  postResource: vi.fn<() => void>(),
   startTask: vi.fn<() => void>(),
   stopTask: vi.fn<() => void>(),
   getSettings: vi.fn<() => void>(),
@@ -41,7 +39,6 @@ import type {
   DeviceSearchData,
   ResourceInfo,
 } from "@/services/api"
-import type { PanelLastConnectedDevice } from "@/types/settingsModel"
 
 const disconnectedState: DeviceRuntimeState = {
   connected: false,
@@ -107,19 +104,6 @@ const scannedCustomAdbDevice: ConnectableDevice = {
   screencap_methods: 1,
   input_methods: 1,
   config: {},
-}
-
-const savedAdbDevice: PanelLastConnectedDevice = {
-  type: "Adb",
-  controller_name: "adb",
-  fingerprint: "adb|/usr/bin/adb|127.0.0.1:5555",
-  adb_path: "/usr/bin/adb",
-  address: "127.0.0.1:5555",
-  class_name: "",
-  window_name: "",
-  hWnd: 0,
-  gamepad_type: 0,
-  uuid: "",
 }
 
 describe("useDeviceConnectionStore", () => {
@@ -227,8 +211,6 @@ describe("useDeviceConnectionStore", () => {
       const result = await store.StartTask()
       expect(result).toBe(true)
       expect(api.getDeviceState).not.toHaveBeenCalled()
-      expect(api.postDevices).not.toHaveBeenCalled()
-      expect(api.postResource).not.toHaveBeenCalled()
       expect(api.startTask).toHaveBeenCalled()
     })
 
@@ -331,6 +313,80 @@ describe("useDeviceConnectionStore", () => {
       const result = await store.StartTask()
       expect(result).toBe(true)
       expect(api.startTask).toHaveBeenCalledWith(expectedPayload)
+    })
+
+    it("persists the captured selection only after the matching task.started event", async () => {
+      const store = useDeviceConnectionStore()
+      const configStore = useTaskConfigStore()
+      const interfaceStore = useInterfaceStore()
+      const selectedDevice = { ...adbDevice }
+      store.controllerCapabilities = [adbCapability]
+      store.selectedController = "ADB"
+      store.selectedDeviceKey = "adb|/usr/bin/adb|127.0.0.1:5555"
+      store.availableDevices = [selectedDevice]
+      store.resource = "res1"
+      configStore.configLoaded = true
+      configStore.taskList = [{ id: "Task 1", name: "Task 1", order: 0, checked: true }]
+      interfaceStore.interface = {
+        task: [{ name: "Task 1", entry: "task1" }],
+      }
+      vi.mocked(api.startTask).mockResolvedValue({ accepted: true, runId: "run-1" })
+
+      await expect(store.StartTask()).resolves.toBe(true)
+      expect(api.updateSettings).not.toHaveBeenCalled()
+
+      selectedDevice.address = "127.0.0.1:6666"
+      store.handleTaskStarted("other-run")
+      expect(api.updateSettings).not.toHaveBeenCalled()
+
+      store.handleTaskStarted("run-1")
+      await vi.waitFor(() =>
+        expect(api.updateSettings).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            panel: expect.objectContaining({
+              lastConnectedDevice: expect.objectContaining({ address: adbDevice.address }),
+              recentDevices: expect.arrayContaining([
+                expect.objectContaining({ address: adbDevice.address }),
+              ]),
+              lastResource: "res1",
+            }),
+          }),
+        ),
+      )
+    })
+
+    it("matches an event received before the admission response", async () => {
+      const store = useDeviceConnectionStore()
+      const configStore = useTaskConfigStore()
+      const interfaceStore = useInterfaceStore()
+      store.controllerCapabilities = [adbCapability]
+      store.selectedController = "ADB"
+      store.selectedDeviceKey = "adb|/usr/bin/adb|127.0.0.1:5555"
+      store.availableDevices = [adbDevice]
+      store.resource = "res1"
+      configStore.configLoaded = true
+      configStore.taskList = [{ id: "Task 1", name: "Task 1", order: 0, checked: true }]
+      interfaceStore.interface = {
+        task: [{ name: "Task 1", entry: "task1" }],
+      }
+
+      vi.mocked(api.startTask).mockImplementation(() => {
+        store.handleTaskStarted("run-before-response")
+        expect(api.updateSettings).not.toHaveBeenCalled()
+        return Promise.resolve({ accepted: true, runId: "run-before-response" })
+      })
+
+      await expect(store.StartTask()).resolves.toBe(true)
+      await vi.waitFor(() =>
+        expect(api.updateSettings).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            panel: expect.objectContaining({
+              lastConnectedDevice: expect.objectContaining({ address: adbDevice.address }),
+              lastResource: "res1",
+            }),
+          }),
+        ),
+      )
     })
 
     it("sets startConflict and returns false on conflict without toast", async () => {
@@ -990,165 +1046,6 @@ describe("useDeviceConnectionStore", () => {
       await promise1
       expect(store.resourcesList).toEqual([{ label: "res2", value: "res2" }])
       expect(store.loading).toBe(false)
-    })
-  })
-
-  describe("connectDevices", () => {
-    it("fails when device resource is locked", async () => {
-      const store = useDeviceConnectionStore()
-      store.isDeviceResourceLocked = true
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("设备与资源已锁定，无法切换")
-    })
-
-    it("fails when no controller selected", async () => {
-      const store = useDeviceConnectionStore()
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.selectDeviceType")
-    })
-
-    it("fails when selected controller is disabled", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [{ ...adbCapability, enabled: false }]
-      store.selectedController = "ADB"
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.selectDeviceType")
-    })
-
-    it("PlayCover fails on empty address", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [playCoverCapability]
-      store.selectedController = "PlayCover"
-      store.playCoverAddress = "  "
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.playcoverAddress")
-    })
-
-    it("PlayCover fails on invalid address format", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [playCoverCapability]
-      store.selectedController = "PlayCover"
-      store.playCoverAddress = "bad-address"
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.invalidPlaycoverAddress")
-    })
-
-    it("fails when no device selected for non-PlayCover controller", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      store.selectedDeviceKey = null
-      const result = await store.connectDevices()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.selectDevice")
-    })
-
-    it("succeeds and persists device on valid selection", async () => {
-      const store = useDeviceConnectionStore()
-      const settingsStore = useSettingsStore()
-      const indexStore = useIndexStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      store.selectedDeviceKey = "adb|/usr/bin/adb|127.0.0.1:5555"
-      store.availableDevices = [adbDevice]
-      store.resource = "res1"
-      vi.mocked(api.getDeviceState).mockResolvedValue({
-        connected: true,
-        configuration_locked: true,
-        controller_name: "adb",
-        resource_name: "res1",
-      })
-      vi.mocked(api.postDevices).mockResolvedValue({ success: true, message: "ok" })
-      vi.mocked(api.getResource).mockResolvedValue([{ name: "res1" }])
-      const result = await store.connectDevices()
-      expect(result.success).toBe(true)
-      expect(api.postDevices).toHaveBeenCalledWith({
-        controller_name: "adb",
-        device: adbDevice,
-        resource_name: "res1",
-      })
-      expect(indexStore.Connected).toBe(true)
-      expect(settingsStore.settings.panel.lastConnectedDevice).not.toBeNull()
-      expect(store.resourcesList).toEqual([{ label: "res1", value: "res1" }])
-    })
-  })
-
-  describe("buildPlayCoverDevice", () => {
-    it("returns an error without making API calls for an invalid address", () => {
-      const store = useDeviceConnectionStore()
-      store.playCoverAddress = "bad-address"
-
-      expect(store.buildPlayCoverDevice()).toEqual({
-        error: "panel.invalidPlaycoverAddress",
-      })
-      expect(api.postDevices).not.toHaveBeenCalled()
-      expect(api.postCustomDevice).not.toHaveBeenCalled()
-      expect(api.getDevices).not.toHaveBeenCalled()
-    })
-
-    it("returns a device with a canonical address", () => {
-      const store = useDeviceConnectionStore()
-      store.playCoverAddress = " 127.000.000.001:01717 "
-
-      expect(store.buildPlayCoverDevice()).toEqual({
-        device: { type: "PlayCover", address: "127.0.0.1:1717" },
-      })
-    })
-  })
-
-  describe("postResourceSelection", () => {
-    it("fails when locked", async () => {
-      const store = useDeviceConnectionStore()
-      store.isDeviceResourceLocked = true
-      const result = await store.postResourceSelection()
-      expect(result.success).toBe(false)
-    })
-
-    it("fails when not connected", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      store.resource = "res1"
-      const result = await store.postResourceSelection()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.connectFirstHint")
-    })
-
-    it("fails when no resource selected", async () => {
-      const store = useDeviceConnectionStore()
-      const indexStore = useIndexStore()
-      const settingsStore = useSettingsStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      store.selectedDeviceKey = "adb|/usr/bin/adb|127.0.0.1:5555"
-      store.availableDevices = [adbDevice]
-      indexStore.Connected = true
-      settingsStore.settings.panel.lastConnectedDevice = savedAdbDevice
-      const result = await store.postResourceSelection()
-      expect(result.success).toBe(false)
-      expect(result.message).toBe("panel.selectResource")
-    })
-
-    it("succeeds when connected and resource selected", async () => {
-      const store = useDeviceConnectionStore()
-      const indexStore = useIndexStore()
-      const settingsStore = useSettingsStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      store.selectedDeviceKey = "adb|/usr/bin/adb|127.0.0.1:5555"
-      store.availableDevices = [adbDevice]
-      store.resource = "res1"
-      indexStore.Connected = true
-      settingsStore.settings.panel.lastConnectedDevice = savedAdbDevice
-      vi.mocked(api.postResource).mockResolvedValue({ success: true, message: "ok" })
-      const result = await store.postResourceSelection()
-      expect(result.success).toBe(true)
-      expect(api.postResource).toHaveBeenCalledWith("res1")
     })
   })
 

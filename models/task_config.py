@@ -304,18 +304,9 @@ def _collect_global_scope_option_names(
         collect(controller.option)
     for section in interface_model.setting or []:
         collect(section.option)
-    for pretask in _pretask_iter(interface_model):
+    for pretask in interface_model.pretask or []:
         collect(pretask.option)
     return ordered
-
-
-def _pretask_iter(interface_model: InterfaceModel):
-    pretask = interface_model.pretask
-    if pretask is None:
-        return []
-    if isinstance(pretask, list):
-        return pretask
-    return [pretask]
 
 
 def normalize_task_execution_payload(

@@ -1,12 +1,21 @@
 <template>
   <NModal
-    v-model:show="visible"
+    :show="current !== null"
+    :closable="false"
     :mask-closable="false"
     :close-on-esc="false"
     preset="dialog"
     :title="title"
     positive-text="继续"
     negative-text="停止任务"
+    :positive-button-props="{
+      disabled: submitting !== null,
+      loading: submitting === 'acknowledge',
+    }"
+    :negative-button-props="{
+      disabled: submitting !== null,
+      loading: submitting === 'cancel',
+    }"
     @positive-click="onAcknowledge"
     @negative-click="onCancel"
   >
@@ -15,45 +24,51 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { useFocusInteractionStore } from "@/stores/focus/focusInteraction"
+import { tryCatch } from "@/utils/tryCatch"
 
 /**
  * 焦点交互桥：pending modal 阻塞后端流水线时的确认/取消 UI。
- * 必须挂在 NDialogProvider 内。一次只显示最早的 pending 项。
+ * 必须挂在 NDialogProvider 内。一次只显示最早的 pending modal；
+ * 非阻塞 dialog 由 feedback bridge 直接展示，不进入这里的 pending 状态。
  */
 const store = useFocusInteractionStore()
 const { t } = useI18n()
-
-const visible = ref(false)
+const submitting = ref<"acknowledge" | "cancel" | null>(null)
 
 const current = computed(() => {
-  const modals = store.pending.filter((item) => item.mode === "modal")
-  return modals.length > 0 ? modals[0] : null
+  return store.pending.find((item) => item.mode === "modal") ?? null
 })
 
-const title = computed(() => t("focus.interaction.title"))
+const title = computed(() => t("common.confirm"))
 
-watch(
-  current,
-  (value) => {
-    visible.value = value !== null
-  },
-  { immediate: true },
-)
-
-function onAcknowledge(): void {
-  if (current.value) {
-    void store.acknowledge(current.value.id)
+async function onAcknowledge(): Promise<boolean> {
+  if (submitting.value !== null) {
+    return false
   }
-  visible.value = false
+  const item = current.value
+  if (!item) {
+    return false
+  }
+  submitting.value = "acknowledge"
+  const [result] = await tryCatch(() => store.acknowledge(item.id))
+  submitting.value = null
+  return result ?? false
 }
 
-function onCancel(): void {
-  if (current.value) {
-    void store.cancel(current.value.id)
+async function onCancel(): Promise<boolean> {
+  if (submitting.value !== null) {
+    return false
   }
-  visible.value = false
+  const item = current.value
+  if (!item) {
+    return false
+  }
+  submitting.value = "cancel"
+  const [result] = await tryCatch(() => store.cancel(item.id))
+  submitting.value = null
+  return result ?? false
 }
 </script>

@@ -598,13 +598,7 @@ def _validate_task_context_constraints(
 
 
 def _validate_pretasks(interface_model: InterfaceModel) -> None:
-    raw_pretasks = interface_model.pretask
-    if raw_pretasks is None:
-        pretasks = []
-    elif isinstance(raw_pretasks, list):
-        pretasks = raw_pretasks
-    else:
-        pretasks = [raw_pretasks]
+    pretasks = interface_model.pretask or []
 
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}

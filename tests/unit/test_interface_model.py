@@ -307,11 +307,6 @@ class TestTelemetryConfig:
             "resource": [{"name": "main", "path": ["resource"]}],
         }
 
-    def test_blank_dsn_rejected(self):
-        data = self._base() | {"telemetry": {"sentry": {"dsn": "   "}}}
-        with pytest.raises(Exception):
-            InterfaceModel.model_validate(data)
-
     def test_sample_rate_out_of_range_rejected(self):
         for bad in (1.5, -0.1):
             data = self._base() | {

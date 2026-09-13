@@ -481,18 +481,11 @@ class SentryTelemetryConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    dsn: str
+    dsn: str = ""
     tracing: bool | None = True
     traces_sample_rate: float | None = 1.0
     failure_attachments_sample_rate: float | None = 1.0
     environment: str | None = None
-
-    @field_validator("dsn")
-    @classmethod
-    def dsn_not_blank(cls, value: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("telemetry.sentry.dsn 必须是非空字符串")
-        return value
 
     @field_validator("traces_sample_rate")
     @classmethod
@@ -539,7 +532,7 @@ class InterfaceModel(BaseModel):
     group: list[Group] | None = None
     agent: Agent | list[Agent] | None = None
     task: list[Task] | None = None
-    pretask: Pretask | list[Pretask] | None = None
+    pretask: list[Pretask] | None = None
     option: dict[str, Option] | None = None
     global_option: list[str] | None = None
     setting: list[SettingSection] | None = None

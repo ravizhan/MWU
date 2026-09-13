@@ -1,19 +1,29 @@
 import type { RealtimeEvent, RealtimeEventName } from "@/types/realtimeModel"
 import type { useIndexStore } from "@/stores/panel/session"
 import type { useSettingsStore } from "@/stores/settings/settings"
-import type { FocusInteractionStoreContract } from "@/stores/focus/focusInteraction"
+import type { FocusInteractionRealtimePayload } from "@/stores/focus/focusInteraction"
 import { formatRealtimeLog, showBrowserRealtimeNotification, showToastMessage } from "./events"
 
-/** dispatcher 所需的 device store 最小契约（提权弹窗开关）。 */
+/** dispatcher 所需的 device store 最小契约。 */
 export interface DeviceElevationContract {
   showElevationPrompt: boolean
+  handleTaskStarted: (runId: string) => void
+}
+
+/**
+ * dispatcher 所需的 focus 交互 store 最小契约：SSE focus.interaction 事件
+ * 经本文件构造后调用 store.applyRealtime（详情字段按 realtimeModel 的
+ * Record<string, unknown> 流入，由 store 内部收窄）。
+ */
+export interface FocusInteractionConsumer {
+  applyRealtime: (payload: FocusInteractionRealtimePayload) => void
 }
 
 export interface RealtimeStoreRefs {
   indexStore: ReturnType<typeof useIndexStore>
   settingsStore: ReturnType<typeof useSettingsStore>
   deviceStore?: DeviceElevationContract
-  focusInteractionStore?: FocusInteractionStoreContract
+  focusInteractionStore?: FocusInteractionConsumer
 }
 
 /**
@@ -41,6 +51,10 @@ function handleCommon(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
 function handleTaskStarted(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
   handleCommon(event, stores)
   stores.indexStore.setTaskRunning(true)
+  const runId = event.details?.run_id
+  if (stores.deviceStore && typeof runId === "string" && runId.trim()) {
+    stores.deviceStore.handleTaskStarted(runId)
+  }
 }
 
 /** Task batch completed — clear running state. */
@@ -66,15 +80,13 @@ function handleFocusInteraction(event: RealtimeEvent, stores: RealtimeStoreRefs)
   if (!stores.focusInteractionStore || !event.details) {
     return
   }
-  stores.focusInteractionStore.applyRealtime(event.details)
-  // modal 内容在 details 里没有（message 才是内容），补齐最新一条 pending 的内容
-  const store = stores.focusInteractionStore
-  if (event.details.phase === "created" && store.pending.length > 0) {
-    const latest = store.pending[store.pending.length - 1]
-    if (!latest.content) {
-      latest.content = event.message
-    }
+  const payload: FocusInteractionRealtimePayload = {
+    ...event.details,
+    content: event.message,
+    title: event.title,
+    level: event.level,
   }
+  stores.focusInteractionStore.applyRealtime(payload)
 }
 
 /**

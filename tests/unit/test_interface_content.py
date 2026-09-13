@@ -6,6 +6,7 @@ import pytest
 from models.interface import (
     Controller,
     InterfaceModel,
+    Pretask,
     Resource,
     Task,
 )
@@ -105,6 +106,13 @@ class TestResolveDocument:
         svc = _service(tmp_path)
         assert svc.resolve_document("docs/readme.md", "zh-CN") == "# 文档"
 
+    def test_root_document_extensions_are_files(self, tmp_path):
+        (tmp_path / "README.md").write_text("# 根文档", encoding="utf-8")
+        (tmp_path / "notice.TXT").write_text("根目录通知", encoding="utf-8")
+        svc = _service(tmp_path)
+        assert svc.resolve_document("README.md", "zh-CN") == "# 根文档"
+        assert svc.resolve_document("notice.TXT", "zh-CN") == "根目录通知"
+
     def test_file_escape_rejected(self, tmp_path):
         svc = _service(tmp_path)
         with pytest.raises(InterfaceContentError):
@@ -173,3 +181,12 @@ class TestCollectDocumentSources:
         assert "$doc" in sources
         assert "docs/zh.md" in sources
         assert "docs/en.md" in sources
+
+    def test_pretask_description_sources_collected(self, tmp_path):
+        iface = _make_interface()
+        iface.pretask = [
+            Pretask(name="prepare", exec="prepare", description="docs/a.md")
+        ]
+        svc = InterfaceContentService(iface, tmp_path)
+        sources = svc.collect_document_sources()
+        assert "docs/a.md" in sources

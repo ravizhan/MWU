@@ -133,6 +133,7 @@ def write_settings_preserving_protected(
     with SETTINGS_LOCK:
         payload = settings.model_dump()
         disk = read_settings_raw(path)
+        _prune_illegal_device_entries(disk)
         disk_panel = disk.get("panel") if isinstance(disk, dict) else None
         if isinstance(disk_panel, dict) and "customDevices" in disk_panel:
             panel = payload.get("panel")

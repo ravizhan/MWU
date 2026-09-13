@@ -1,10 +1,5 @@
 import type { ApiResponse } from "@/services/api/core/types"
 
-export interface PostDeviceResult {
-  success: boolean
-  message: string
-}
-
 export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "MacOS" | "Linux"
 
 export interface AdbDevice {
@@ -62,12 +57,6 @@ export type ConnectableDevice =
   | MacOSDevice
   | LinuxDevice
 
-export interface ConnectDevicePayload {
-  controller_name: string
-  device: ConnectableDevice
-  resource_name: string
-}
-
 export interface SaveCustomDevicePayload {
   controller_name: string
   type: DeviceControllerType
@@ -123,30 +112,6 @@ export function getDevices(controllerName?: string): Promise<DeviceSearchData> {
   return fetch(`/api/device${query}`, { method: "GET" })
     .then((res) => res.json())
     .then((data: DeviceResponse) => data.data)
-}
-
-export function postDevices(payload: ConnectDevicePayload): Promise<PostDeviceResult> {
-  return fetch("/api/device", {
-    method: "POST",
-    body: JSON.stringify({
-      device: { ...payload.device, controller_name: payload.controller_name },
-      resource_name: payload.resource_name,
-    }),
-    headers: {
-      "Content-Type": "application/json",
-    },
-  })
-    .then((res) => res.json())
-    .then((data: ApiResponse) => {
-      if (data.status === "success") {
-        return { success: true, message: "设备连接成功" }
-      }
-      return { success: false, message: data.message || "设备连接失败，请检查终端日志" }
-    })
-    .catch((error) => {
-      console.error("Failed to connect device:", error)
-      return { success: false, message: "网络错误，请稍后重试" }
-    })
 }
 
 export function postCustomDevice(
