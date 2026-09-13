@@ -298,8 +298,6 @@
     "noDevice": "无可用设备",
     "noMatchingDevice": "无匹配设备",
     "useCustomValue": "使用“{value}”",
-    "recentDevices": "最近使用",
-    "discoveredDevices": "已发现设备",
     "selectTask": "请至少选择一个任务",
     "noCompatibleTask": "当前资源/控制器下没有可执行任务",
     "resetConfigConfirm": "确定要重置所有任务配置吗？此操作不可撤销。",

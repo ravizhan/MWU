@@ -435,21 +435,6 @@ def is_option_applicable(
     return True
 
 
-def is_option_applicable_any(
-    option: "Option",
-    controller_names: set[str],
-    resource_name: str | None,
-) -> bool:
-    """多活跃控制器变体（pipeline override 使用）。"""
-    if option.controller and not controller_names.intersection(option.controller):
-        return False
-    if option.resource and (
-        resource_name is None or resource_name not in option.resource
-    ):
-        return False
-    return True
-
-
 class PresetTask(BaseModel):
     name: str
     enabled: bool | None = True

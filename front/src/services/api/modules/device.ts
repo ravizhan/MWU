@@ -2,6 +2,18 @@ import type { ApiResponse } from "@/services/api/core/types"
 
 export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "MacOS" | "Linux"
 
+/** Narrow a wire string to a known device controller type. */
+export function isDeviceControllerType(type: string): type is DeviceControllerType {
+  return (
+    type === "Adb" ||
+    type === "Win32" ||
+    type === "Gamepad" ||
+    type === "PlayCover" ||
+    type === "MacOS" ||
+    type === "Linux"
+  )
+}
+
 export interface AdbDevice {
   type: "Adb"
   name: string
@@ -93,25 +105,17 @@ export interface DeviceRuntimeState {
   resource_name: string | null
 }
 
-interface DeviceResponse {
-  status: string
-  data: DeviceSearchData
-}
-
-interface DeviceStateResponse {
-  status: string
-  state: DeviceRuntimeState
-}
-
-interface CustomDeviceResponse extends ApiResponse {
-  data?: ConnectableDevice
-}
+/**
+ * Backend response envelope: the payload key is `data` for device endpoints and
+ * `state` for the runtime-state endpoint.
+ */
+type Envelope<T, K extends string = "data"> = ApiResponse & Record<K, T>
 
 export function getDevices(controllerName?: string): Promise<DeviceSearchData> {
   const query = controllerName ? `?controller=${encodeURIComponent(controllerName)}` : ""
   return fetch(`/api/device${query}`, { method: "GET" })
     .then((res) => res.json())
-    .then((data: DeviceResponse) => data.data)
+    .then((body: Envelope<DeviceSearchData>) => body.data)
 }
 
 export function postCustomDevice(
@@ -125,11 +129,11 @@ export function postCustomDevice(
     },
   })
     .then((res) => res.json())
-    .then((data: CustomDeviceResponse) => {
-      if (data.status === "success" && data.data) {
-        return { success: true, message: data.message || "自定义设备已保存", data: data.data }
+    .then((body: Envelope<ConnectableDevice | undefined>) => {
+      if (body.status === "success" && body.data) {
+        return { success: true, message: body.message || "自定义设备已保存", data: body.data }
       }
-      return { success: false, message: data.message || "保存自定义设备失败" }
+      return { success: false, message: body.message || "保存自定义设备失败" }
     })
     .catch((error) => {
       console.error("Failed to save custom device:", error)
@@ -140,10 +144,10 @@ export function postCustomDevice(
 export function getDeviceState(): Promise<DeviceRuntimeState> {
   return fetch("/api/device/state", { method: "GET" })
     .then((res) => res.json())
-    .then((data: DeviceStateResponse & ApiResponse) => {
-      if (data.status !== "success") {
-        throw new Error(data.message || "获取设备状态失败")
+    .then((body: Envelope<DeviceRuntimeState, "state">) => {
+      if (body.status !== "success") {
+        throw new Error(body.message || "获取设备状态失败")
       }
-      return data.state
+      return body.state
     })
 }

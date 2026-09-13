@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, cast
 
 import json_utils as json
 from maa_worker.hotkey import hotkey_value_to_codes
-from models.interface import PipelineOverride, is_option_applicable_any
+from models.interface import PipelineOverride, is_option_applicable
 from models.scheduler import TaskOptionValue
 
 if TYPE_CHECKING:
@@ -39,13 +39,6 @@ class PipelineOverrideService:
                 if task.name == task_name
             ),
             None,
-        )
-
-    def _is_option_active_for_context(self, option, controller_names: set[str]) -> bool:
-        return is_option_applicable_any(
-            option,
-            controller_names,
-            self.worker.device_state.current_resource_name,
         )
 
     def _normalize_choice_value(
@@ -289,14 +282,18 @@ class PipelineOverrideService:
         self,
         option_name: str,
         options: dict[str, TaskOptionValue],
-        controller_names: set[str],
+        controller_name: str | None,
         lineage: set[str] | None = None,
     ) -> PipelineOverride:
         option_map = self.worker.interface.option or {}
         option = option_map.get(option_name)
         if option is None:
             return {}
-        if not self._is_option_active_for_context(option, controller_names):
+        if not is_option_applicable(
+            option,
+            controller_name,
+            self.worker.device_state.current_resource_name,
+        ):
             return {}
 
         lineage = lineage or set()
@@ -306,17 +303,13 @@ class PipelineOverrideService:
 
         merged: PipelineOverride = {}
         if option.type == "hotkey":
-            controller_definitions = (
-                self.worker.device.get_active_controller_definitions()
-            )
-            controller_type = (
-                controller_definitions[0].type if controller_definitions else None
-            )
+            controller = self.worker.device.get_active_controller()
+            controller_type = controller.type if controller is not None else None
             if (
-                controller_definitions
+                controller is not None
                 and controller_type == "Linux"
-                and controller_definitions[0].linux
-                and controller_definitions[0].linux.use_win32_vk_code
+                and controller.linux
+                and controller.linux.use_win32_vk_code
             ):
                 return self._deep_merge(
                     merged,
@@ -368,7 +361,7 @@ class PipelineOverrideService:
                     self._build_option_group_override(
                         active_case.option,
                         options,
-                        controller_names,
+                        controller_name,
                         next_lineage,
                     ),
                 )
@@ -389,7 +382,7 @@ class PipelineOverrideService:
                         self._build_option_group_override(
                             case.option,
                             options,
-                            controller_names,
+                            controller_name,
                             next_lineage,
                         ),
                     )
@@ -399,7 +392,7 @@ class PipelineOverrideService:
         self,
         option_names: list[str],
         options: dict[str, TaskOptionValue],
-        controller_names: set[str],
+        controller_name: str | None,
         lineage: set[str] | None = None,
     ) -> PipelineOverride:
         merged: PipelineOverride = {}
@@ -409,7 +402,7 @@ class PipelineOverrideService:
                 self._build_option_override(
                     option_name,
                     options,
-                    controller_names,
+                    controller_name,
                     lineage,
                 ),
             )
@@ -425,12 +418,12 @@ class PipelineOverrideService:
         if task_definition is None:
             return {}
 
-        controller_names = self.worker.device.get_active_controller_names()
+        controller = self.worker.device.get_active_controller()
+        controller_name = controller.name if controller is not None else None
         resource_definition = self.worker.device.get_current_resource_definition()
-        controller_option_names: list[str] = []
-        for controller in self.worker.device.get_active_controller_definitions():
-            if controller.option:
-                controller_option_names.extend(controller.option)
+        controller_option_names = (
+            list(controller.option or []) if controller is not None else []
+        )
 
         merged = copy.deepcopy(task_definition.pipeline_override) or {}
         merged = self._deep_merge(
@@ -438,7 +431,7 @@ class PipelineOverrideService:
             self._build_option_group_override(
                 self.worker.interface.global_option or [],
                 global_options or {},
-                controller_names,
+                controller_name,
             ),
         )
         option_groups = [
@@ -454,7 +447,7 @@ class PipelineOverrideService:
                 self._build_option_group_override(
                     option_names,
                     options,
-                    controller_names,
+                    controller_name,
                 ),
             )
         return merged

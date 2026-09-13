@@ -44,8 +44,6 @@ export const hostPortSchema = z
     return `${hostResult.data}:${portResult.data}`
   })
 
-const win32AddressSchema = positiveIntegerSchema
-
 const gamepadAddressSchema = z
   .string()
   .trim()
@@ -129,19 +127,6 @@ const linuxAddressObjectSchema = z
     return value
   })
 
-const linuxRuntimeAddressObjectSchema = z
-  .object(linuxAddressShape)
-  .strict()
-  .transform((value) => {
-    if (
-      !value.uinput_path &&
-      (value.uinput_screen_width !== undefined || value.uinput_screen_height !== undefined)
-    ) {
-      return { ...value, uinput_path: "/dev/uinput" }
-    }
-    return value
-  })
-
 function decodeJsonAddress(address: string): { ok: true; value: unknown } | { ok: false } {
   const [value, error] = tryCatch(() => JSON.parse(address))
   if (error) {
@@ -173,7 +158,7 @@ function canonicalizeLinuxAddress(value: object): string {
   return `{${fields.join(", ")}}`
 }
 
-const linuxCustomAddressSchema = z
+const linuxAddressSchema = z
   .string()
   .trim()
   .transform((address, ctx) => {
@@ -198,31 +183,6 @@ const linuxCustomAddressSchema = z
     return canonicalizeLinuxAddress(result.data)
   })
 
-const linuxRuntimeAddressSchema = z
-  .string()
-  .trim()
-  .transform((address, ctx) => {
-    const decoded = decodeJsonAddress(address)
-    if (!decoded.ok) {
-      ctx.issues.push({
-        code: "custom",
-        input: address,
-        message: "Linux address must be a JSON object string",
-      })
-      return z.NEVER
-    }
-    const result = linuxRuntimeAddressObjectSchema.safeParse(decoded.value)
-    if (!result.success) {
-      ctx.issues.push({
-        code: "custom",
-        input: address,
-        message: result.error.issues[0]?.message || "Invalid Linux device address",
-      })
-      return z.NEVER
-    }
-    return canonicalizeLinuxAddress(result.data)
-  })
-
 /** Custom (user-entered) device address: strict validation. */
 export const customDeviceAddressSchema = z.discriminatedUnion("type", [
   z.object({
@@ -235,7 +195,7 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("Win32"),
-    address: win32AddressSchema,
+    address: positiveIntegerSchema,
   }),
   z.object({
     type: z.literal("Gamepad"),
@@ -247,11 +207,11 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("Linux"),
-    address: linuxCustomAddressSchema,
+    address: linuxAddressSchema,
   }),
 ])
 
-/** Runtime (scanned) device address: Adb allows USB serials. */
+/** Runtime (scanned) device address: Adb allows USB serials; Linux stays strict. */
 export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("Adb"),
@@ -263,7 +223,7 @@ export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("Win32"),
-    address: win32AddressSchema,
+    address: positiveIntegerSchema,
   }),
   z.object({
     type: z.literal("Gamepad"),
@@ -275,9 +235,6 @@ export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("Linux"),
-    address: linuxRuntimeAddressSchema,
+    address: linuxAddressSchema,
   }),
 ])
-
-/** PlayCover address schema for connection store. */
-export const playCoverAddressSchema = hostPortSchema

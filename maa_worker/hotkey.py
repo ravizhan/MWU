@@ -122,8 +122,8 @@ HOTKEY_KEY_MAP: dict[str, dict[str, int]] = {
         "SPACE": 49,
         "PAGEUP": 116,
         "PAGEDOWN": 121,
-        "END": 115,  # kVK_End... 见下：HOME=115/END=119
-        "HOME": 115,
+        "END": 119,  # kVK_End
+        "HOME": 115,  # kVK_Home
         "LEFT": 123,
         "UP": 126,
         "RIGHT": 124,
@@ -169,10 +169,6 @@ HOTKEY_KEY_MAP: dict[str, dict[str, int]] = {
         **_function_key_codes([122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]),
     },
 }
-
-# 修正：kVK_Home=115、kVK_End=119（上面初始化后修正，保持表格一处可读）
-HOTKEY_KEY_MAP["MacOS"]["HOME"] = 115
-HOTKEY_KEY_MAP["MacOS"]["END"] = 119
 
 # 不受支持的 Meta 家族修饰键（Win32/Linux/Adb 无法表示；MacOS 表中已提供 CMD）
 _UNSUPPORTED_HOTKEY_KEYS = {"META", "SUPER", "WIN", "CMD", "COMMAND"}

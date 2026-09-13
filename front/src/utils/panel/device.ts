@@ -36,41 +36,24 @@ export function getDeviceIdentity(deviceInfo: ConnectableDevice): string {
   return deviceInfo.address
 }
 
-/** Stable identity for a persisted last-connected snapshot (same semantics as getDeviceIdentity). */
-export function getStoredDeviceIdentity(stored: PanelLastConnectedDevice): string {
-  if (
-    stored.type === "Adb" ||
-    stored.type === "PlayCover" ||
-    stored.type === "MacOS" ||
-    stored.type === "Linux"
-  ) {
-    return stored.address
-  }
-  if (stored.type === "Win32") {
-    return String(stored.hWnd)
-  }
-  return `${stored.hWnd}|${stored.gamepad_type}`
-}
-
-export function storedDeviceMatchesController(
-  stored: PanelLastConnectedDevice,
-  capability: Pick<DeviceControllerCapability, "name">,
-): boolean {
-  return stored.controller_name === capability.name
-}
-
-/** Match by identity first, then fingerprint (scan may enrich a saved custom device). */
-export function findDeviceByIdentityOrFingerprint(
+/**
+ * Match a device by fingerprint or by semantic identity.
+ * Fingerprints are `type|...` strings; identities are addresses/handles
+ * (Gamepad identities also contain "|", so callers must pick the field explicitly).
+ */
+export function matchDevice(
   devices: ConnectableDevice[],
-  target: ConnectableDevice,
+  key: string | null | undefined,
+  order: "fingerprint" | "identity",
 ): ConnectableDevice | undefined {
-  const targetIdentity = getDeviceIdentity(target)
-  const byIdentity = devices.find((item) => getDeviceIdentity(item) === targetIdentity)
-  if (byIdentity) {
-    return byIdentity
+  if (!key) {
+    return undefined
   }
-  const targetFingerprint = buildDeviceFingerprint(target)
-  return devices.find((item) => buildDeviceFingerprint(item) === targetFingerprint)
+  return devices.find((item) =>
+    order === "fingerprint"
+      ? buildDeviceFingerprint(item) === key
+      : getDeviceIdentity(item) === key,
+  )
 }
 
 function formatNamedLabel(name: string | undefined | null, address: string): string {
@@ -116,25 +99,71 @@ export function getPlayCoverDefaultAddress(capabilities: DeviceControllerCapabil
   return playCoverCapability?.default_address || "127.0.0.1:1717"
 }
 
+/**
+ * Expand a persisted snapshot into the ConnectableDevice shape so identity and
+ * fingerprint derivation stay shared with scanned devices. Only the fields read
+ * by getDeviceIdentity/buildDeviceFingerprint carry meaning; the rest are
+ * placeholders. MacOS stores its CGWindowID in `address`, which canonicalizes to
+ * the same `macos|<window_id>` fingerprint the scan path produces.
+ */
+function storedToDevice(stored: PanelLastConnectedDevice): ConnectableDevice {
+  if (stored.type === "Adb") {
+    return {
+      type: "Adb",
+      name: stored.window_name,
+      adb_path: stored.adb_path,
+      address: stored.address,
+      screencap_methods: 0,
+      input_methods: 0,
+      config: {},
+    }
+  }
+  if (stored.type === "Win32") {
+    return {
+      type: "Win32",
+      hWnd: stored.hWnd,
+      class_name: stored.class_name,
+      window_name: stored.window_name,
+      screencap_methods: 0,
+      input_methods: 0,
+    }
+  }
+  if (stored.type === "Gamepad") {
+    return {
+      type: "Gamepad",
+      hWnd: stored.hWnd,
+      class_name: stored.class_name,
+      window_name: stored.window_name,
+      screencap_methods: 0,
+      gamepad_type: stored.gamepad_type,
+    }
+  }
+  if (stored.type === "MacOS") {
+    return {
+      type: "MacOS",
+      window_id: Number(stored.address),
+      window_name: stored.window_name,
+    }
+  }
+  if (stored.type === "Linux") {
+    return { type: "Linux", name: stored.window_name, address: stored.address }
+  }
+  return {
+    type: "PlayCover",
+    name: stored.window_name,
+    address: stored.address,
+    uuid: stored.uuid,
+  }
+}
+
+/** Stable identity for a persisted last-connected snapshot (same semantics as getDeviceIdentity). */
+export function getStoredDeviceIdentity(stored: PanelLastConnectedDevice): string {
+  return getDeviceIdentity(storedToDevice(stored))
+}
+
 export function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): string {
   if (stored.fingerprint) {
     return stored.fingerprint
   }
-  const normalizedType = stored.type.toLowerCase()
-  if (normalizedType === "adb") {
-    return `adb|${stored.adb_path}|${stored.address}`
-  }
-  if (normalizedType === "win32") {
-    return `win32|${stored.hWnd}`
-  }
-  if (normalizedType === "gamepad") {
-    return `gamepad|${stored.hWnd}|${stored.gamepad_type}`
-  }
-  if (normalizedType === "macos") {
-    return `macos|${stored.address}`
-  }
-  if (normalizedType === "linux") {
-    return `linux|${stored.address}`
-  }
-  return `playcover|${stored.address}|${stored.uuid}`
+  return buildDeviceFingerprint(storedToDevice(stored))
 }

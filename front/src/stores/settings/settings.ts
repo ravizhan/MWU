@@ -285,12 +285,6 @@ export const useSettingsStore = defineStore("settings", {
       return this.saveSettings()
     },
 
-    removeRecentDevice(fingerprint: string) {
-      const list = this.settings.panel.recentDevices ?? []
-      this.settings.panel.recentDevices = list.filter((d) => d.fingerprint !== fingerprint)
-      return this.saveSettings()
-    },
-
     async resetSettings() {
       const resetData: SettingsModel = {
         ...deepClone(defaultSettings),

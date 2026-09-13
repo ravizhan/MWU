@@ -66,12 +66,6 @@ def is_controller_supported(controller) -> tuple[bool, str]:
             return False, "controller_not_supported"
 
 
-def _record_identity(
-    controller_name: str, device_type: str, address: str
-) -> tuple[str, str, str]:
-    return (controller_name, device_type, address)
-
-
 def _applicable_pi_pretasks(
     interface, controller_name: str, resource_name: str
 ) -> list:
@@ -223,21 +217,16 @@ class DeviceService:
             "type": payload.type,
             "address": address,
         }
-        identity = _record_identity(
-            record["controller_name"], record["type"], record["address"]
-        )
+        identity = (record["controller_name"], record["type"], record["address"])
 
         with SETTINGS_LOCK:
             records = self._load_custom_devices()
             for existing in records:
                 if (
-                    _record_identity(
-                        existing["controller_name"],
-                        existing["type"],
-                        existing["address"],
-                    )
-                    == identity
-                ):
+                    existing["controller_name"],
+                    existing["type"],
+                    existing["address"],
+                ) == identity:
                     return custom_record_to_device(existing)
             records.append(record)
             self._save_custom_devices(records)
@@ -253,7 +242,7 @@ class DeviceService:
             device_type = device.get("type")
             if address is None or not device_type:
                 continue
-            seen.add(_record_identity(controller_name, device_type, address))
+            seen.add((controller_name, device_type, address))
 
         merged = list(devices)
         with SETTINGS_LOCK:
@@ -261,9 +250,7 @@ class DeviceService:
         for record in custom_records:
             if record["controller_name"] != controller_name:
                 continue
-            identity = _record_identity(
-                record["controller_name"], record["type"], record["address"]
-            )
+            identity = (record["controller_name"], record["type"], record["address"])
             if identity in seen:
                 continue  # scan wins on duplicate identity
             merged.append(custom_record_to_device(record))
@@ -345,16 +332,9 @@ class DeviceService:
             None,
         )
 
-    def get_active_controller_definitions(self) -> list[Any]:
-        controller = self.get_controller_definition(
-            self.worker.device_state.controller_name
-        )
-        return [controller] if controller is not None else []
-
-    def get_active_controller_names(self) -> set[str]:
-        return {
-            controller.name for controller in self.get_active_controller_definitions()
-        }
+    def get_active_controller(self):
+        """当前连接使用的 PI 控制器定义；未连接时返回 None。"""
+        return self.get_controller_definition(self.worker.device_state.controller_name)
 
     def build_device_capabilities(self) -> list[dict[str, Any]]:
         capabilities: list[dict[str, Any]] = []
@@ -660,8 +640,10 @@ class DeviceService:
     ) -> DeviceModel:
         """从简化设备配置构造 DeviceModel。
 
-        由调度器使用，在执行定时任务前根据存储的设备配置构造 DeviceModel，
-        然后传递给 connect() 进行实际连接。
+        执行链路持久化只存 (controller_name, type, address) 三要素；SDK 连接
+        所需的其余字段由 connect() 按 PI 控制器定义推导。地址解析与规范化
+        委托给 DeviceModel 自身校验器（MacOS 整数化、Linux 紧凑 JSON、
+        PlayCover IPv4:port、Gamepad 类型取值）。
 
         Args:
             controller_name: 控制器名称（来自 interface.json 的 controller name）
@@ -681,18 +663,14 @@ class DeviceService:
         Raises:
             ValueError: 不支持的设备类型
         """
-        if device_type == "Adb":
+        if device_type in ("Adb", "MacOS", "PlayCover", "Linux"):
             return DeviceModel(
-                type="Adb",
+                type=device_type,
                 controller_name=controller_name,
                 name=device_address,
                 address=device_address,
-                adb_path="",
-                screencap_methods=0,
-                input_methods=0,
-                config={},
             )
-        elif device_type == "Win32":
+        if device_type == "Win32":
             try:
                 hwnd = int(device_address)
             except (ValueError, TypeError):
@@ -702,62 +680,25 @@ class DeviceService:
                 controller_name=controller_name,
                 name=device_address,
                 hWnd=hwnd,
-                screencap_methods=0,
-                input_methods=0,
             )
-        elif device_type == "MacOS":
+        if device_type == "Gamepad":
+            head, _, tail = device_address.partition("|")
             try:
-                window_id = int(device_address)
-            except (ValueError, TypeError):
-                window_id = 0
-            return DeviceModel(
-                type="MacOS",
-                controller_name=controller_name,
-                name=device_address,
-                address=str(window_id),
-                screencap_methods=1,
-                input_methods=1,
-            )
-        elif device_type == "Gamepad":
-            parts = device_address.split("|", 1)
-            try:
-                hwnd = int(parts[0]) if parts else 0
+                hwnd = int(head)
             except (ValueError, TypeError):
                 hwnd = 0
-            gamepad_type = 0
-            if len(parts) > 1:
-                try:
-                    gamepad_type = int(parts[1])
-                except (ValueError, TypeError):
-                    gamepad_type = 0
+            try:
+                gamepad_type = int(tail) if tail else 0
+            except (ValueError, TypeError):
+                gamepad_type = 0
             return DeviceModel(
                 type="Gamepad",
                 controller_name=controller_name,
                 name=device_address,
                 hWnd=hwnd,
                 gamepad_type=gamepad_type,
-                screencap_methods=0,
             )
-        elif device_type == "PlayCover":
-            return DeviceModel(
-                type="PlayCover",
-                controller_name=controller_name,
-                name=device_address,
-                address=device_address,
-                uuid="",
-            )
-        elif device_type == "Linux":
-            address = LinuxDeviceAddress.from_compact_json(
-                device_address
-            ).to_compact_json()
-            return DeviceModel(
-                type="Linux",
-                controller_name=controller_name,
-                name=address,
-                address=address,
-            )
-        else:
-            raise ValueError(f"不支持的设备类型: {device_type}")
+        raise ValueError(f"不支持的设备类型: {device_type}")
 
     # -- Linux 连接辅助 -----------------------------------------------------
 

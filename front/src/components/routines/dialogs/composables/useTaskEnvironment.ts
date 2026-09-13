@@ -3,7 +3,7 @@ import { useI18n } from "vue-i18n"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
 import { customDeviceAddressSchema } from "@/validation/device"
 import { resolveInterfaceText } from "@/utils/interface/content"
-import { getDevices, getResource, postCustomDevice } from "@/services/api"
+import { getDevices, getResource, isDeviceControllerType, postCustomDevice } from "@/services/api"
 import type { ConnectableDevice, DeviceControllerType, ResourceInfo } from "@/services/api"
 import { buildDeviceLabel, getDeviceIdentity, getStoredDeviceIdentity } from "@/utils/panel/device"
 import { showGlobalMessage } from "@/services/feedback/message"
@@ -23,17 +23,6 @@ export interface TaskEnvironment {
   resourceOptions: Ref<Array<{ label: string; value: string }>>
   selectedDeviceAddress: Ref<string | null>
   handleDeviceAddressUpdate: (value: string | null) => void
-}
-
-function isDeviceControllerType(type: string): type is DeviceControllerType {
-  return (
-    type === "Adb" ||
-    type === "Win32" ||
-    type === "Gamepad" ||
-    type === "PlayCover" ||
-    type === "MacOS" ||
-    type === "Linux"
-  )
 }
 
 function buildStoredDeviceLabel(device: PanelLastConnectedDevice): string {

@@ -5,12 +5,11 @@ import {
   isGamepadDevice,
   buildDeviceLabel,
   buildDeviceFingerprint,
-  findDeviceByIdentityOrFingerprint,
+  matchDevice,
   getDeviceIdentity,
   getPlayCoverDefaultAddress,
   getStoredDeviceFingerprint,
   getStoredDeviceIdentity,
-  storedDeviceMatchesController,
 } from "@/utils/panel/device"
 import type {
   AdbDevice,
@@ -206,44 +205,31 @@ describe("getStoredDeviceIdentity", () => {
   })
 })
 
-describe("storedDeviceMatchesController", () => {
-  it("matches by controller_name when present", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Adb",
-      controller_name: "adb",
-    } as PanelLastConnectedDevice
-    expect(storedDeviceMatchesController(stored, { name: "adb" })).toBe(true)
-    expect(storedDeviceMatchesController(stored, { name: "other" })).toBe(false)
+describe("matchDevice", () => {
+  it("matches by fingerprint", () => {
+    expect(matchDevice([adbDevice], "adb|/usr/bin/adb|127.0.0.1:5555", "fingerprint")).toEqual(
+      adbDevice,
+    )
+    expect(matchDevice([adbDevice], "adb|/other/adb|127.0.0.1:5555", "fingerprint")).toBeUndefined()
   })
 
-  it("does not match by type when controller_name is empty", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Win32",
-      controller_name: "",
-    } as PanelLastConnectedDevice
-    expect(storedDeviceMatchesController(stored, { name: "win32" })).toBe(false)
-    expect(storedDeviceMatchesController(stored, { name: "adb" })).toBe(false)
+  it("matches by identity", () => {
+    expect(matchDevice([adbDevice], "127.0.0.1:5555", "identity")).toEqual(adbDevice)
+    expect(matchDevice([adbDevice], "10.0.0.1:5555", "identity")).toBeUndefined()
   })
-})
 
-describe("findDeviceByIdentityOrFingerprint", () => {
-  it("prefers identity match when fingerprint differs", () => {
+  it("returns undefined for an empty key", () => {
+    expect(matchDevice([adbDevice], null, "fingerprint")).toBeUndefined()
+    expect(matchDevice([adbDevice], "", "identity")).toBeUndefined()
+  })
+
+  it("prefers identity when the scan enriched a saved custom device", () => {
     const custom: AdbDevice = { ...adbDevice, name: "", adb_path: "" }
     const scanned: AdbDevice = { ...adbDevice, name: "phone", adb_path: "/usr/bin/adb" }
-    expect(findDeviceByIdentityOrFingerprint([scanned], custom)).toEqual(scanned)
-  })
-
-  it("falls back to fingerprint when identity differs", () => {
-    const other: AdbDevice = { ...adbDevice, address: "10.0.0.1:5555" }
-    expect(findDeviceByIdentityOrFingerprint([adbDevice], adbDevice)).toEqual(adbDevice)
-    expect(findDeviceByIdentityOrFingerprint([other], adbDevice)).toBeUndefined()
-  })
-
-  it("returns undefined when neither matches", () => {
-    const other: AdbDevice = { ...adbDevice, address: "10.0.0.1:5555", adb_path: "/other/adb" }
-    expect(findDeviceByIdentityOrFingerprint([other], adbDevice)).toBeUndefined()
+    const matched =
+      matchDevice([scanned], getDeviceIdentity(custom), "identity") ??
+      matchDevice([scanned], buildDeviceFingerprint(custom), "fingerprint")
+    expect(matched).toEqual(scanned)
   })
 })
 

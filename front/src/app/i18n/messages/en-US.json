@@ -298,8 +298,6 @@
     "noDevice": "No available device",
     "noMatchingDevice": "No matching device",
     "useCustomValue": "Use \"{value}\"",
-    "recentDevices": "Recent",
-    "discoveredDevices": "Discovered",
     "selectTask": "Please select at least one task",
     "noCompatibleTask": "No executable tasks for current resource/controller",
     "resetConfigConfirm": "Are you sure you want to reset all task configurations? This cannot be undone.",

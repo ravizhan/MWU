@@ -16,12 +16,9 @@ class TaskService:
         self.worker = worker
 
     def _telemetry(self):
-        telemetry = getattr(self.worker, "telemetry", None)
-        if telemetry is None:
-            telemetry = getattr(
-                getattr(self.worker, "state", None), "telemetry_service", None
-            )
-        return telemetry
+        # lifespan 先建 TelemetryService 再建 MaaWorker（main.py），
+        # AppState.__init__ 保证属性存在；未配置 DSN 时服务自身为 no-op。
+        return self.worker.state.telemetry_service
 
     def _controller(self):
         return getattr(self.worker.device_state, "controller", None)
@@ -39,14 +36,14 @@ class TaskService:
     def _is_task_compatible(
         self,
         task_definition,
-        controller_names: set[str],
+        controller_name: str | None,
         resource_name: str | None,
     ) -> tuple[bool, str]:
         if task_definition is None:
             return True, ""
 
-        if task_definition.controller and not controller_names.intersection(
-            task_definition.controller
+        if task_definition.controller and (
+            controller_name is None or controller_name not in task_definition.controller
         ):
             return (
                 False,
@@ -80,7 +77,8 @@ class TaskService:
             self.worker.events.send_log(self.worker.device_state.last_resource_error)
             return False
 
-        controller_names = self.worker.device.get_active_controller_names()
+        controller = self.worker.device.get_active_controller()
+        controller_name = controller.name if controller is not None else None
         current_resource_name = self.worker.device_state.current_resource_name
 
         filtered_task_list: list[str] = []
@@ -88,7 +86,7 @@ class TaskService:
             task_definition = self._get_task_definition(candidate_name)
             compatible, reason = self._is_task_compatible(
                 task_definition,
-                controller_names,
+                controller_name,
                 current_resource_name,
             )
             if compatible:
@@ -192,6 +190,14 @@ class TaskService:
             thread.join(timeout=30)
         return True
 
+    def _abort_stopped(self, task_list: list[str]) -> None:
+        """停止终态收口：stop() 已提交 post_stop()，此处仅做终态判定与事件补发。"""
+        state = self.worker.task_state
+        state.last_status = "stopped"
+        state.last_error = "任务已终止"
+        self.worker.events.send_log("任务已终止")
+        self.worker.events.emit_task_failed(task_list, "任务已终止")
+
     def run_process(
         self,
         task_list: list[str],
@@ -202,18 +208,13 @@ class TaskService:
         state = self.worker.task_state
         state.pre_tasks = pre_tasks or []
         telemetry = self._telemetry()
-        active_run = getattr(getattr(self.worker, "state", None), "active_run", None)
+        active_run = self.worker.state.active_run
         run_id = getattr(active_run, "run_id", None)
         try:
             self.worker.events.emit_task_started(task_list)
             for task_index, task_name in enumerate(task_list):
                 if state.stop_flag:
-                    # 停止请求已由统一 stop 实现提交过 post_stop()；
-                    # 此处仅做终态判定与事件补发
-                    state.last_status = "stopped"
-                    state.last_error = "任务已终止"
-                    self.worker.events.send_log("任务已终止")
-                    self.worker.events.emit_task_failed(task_list, "任务已终止")
+                    self._abort_stopped(task_list)
                     return
 
                 task_definition = self._get_task_definition(task_name)
@@ -254,17 +255,11 @@ class TaskService:
                         time.sleep(0.5)
                         if state.stop_flag:
                             task.result = "stopped"
-                            state.last_status = "stopped"
-                            state.last_error = "任务已终止"
-                            self.worker.events.send_log("任务已终止")
-                            self.worker.events.emit_task_failed(task_list, "任务已终止")
+                            self._abort_stopped(task_list)
                             return
                     if state.stop_flag:
                         task.result = "stopped"
-                        state.last_status = "stopped"
-                        state.last_error = "任务已终止"
-                        self.worker.events.send_log("任务已终止")
-                        self.worker.events.emit_task_failed(task_list, "任务已终止")
+                        self._abort_stopped(task_list)
                         return
                     # 真实任务终态：首个非成功立即终止批次
                     if not bool(getattr(task_result, "succeeded", False)):

@@ -99,9 +99,7 @@ class TestPipelineOverrideHotkey:
         worker = SimpleNamespace(
             interface=SimpleNamespace(option={"K": option}),
             device=SimpleNamespace(
-                get_active_controller_definitions=lambda: [
-                    Controller(name="win", type="Win32")
-                ]
+                get_active_controller=lambda: Controller(name="win", type="Win32")
             ),
             device_state=SimpleNamespace(current_resource_name=None),
         )
@@ -110,7 +108,7 @@ class TestPipelineOverrideHotkey:
         override = service._build_option_override(
             "K",
             {"K": {"FightCombo": "ALT+A"}},
-            set(),
+            None,
         )
 
         assert override == {"key": [0x12, 0x41]}
@@ -124,9 +122,7 @@ class TestPipelineOverrideHotkey:
         worker = SimpleNamespace(
             interface=SimpleNamespace(option={"K": option}),
             device=SimpleNamespace(
-                get_active_controller_definitions=lambda: [
-                    Controller(name="win", type="Win32")
-                ]
+                get_active_controller=lambda: Controller(name="win", type="Win32")
             ),
             device_state=SimpleNamespace(current_resource_name=None),
         )
@@ -134,7 +130,7 @@ class TestPipelineOverrideHotkey:
         override = PipelineOverrideService(worker)._build_option_override(
             "K",
             {"K": {"FightCombo": "A"}},
-            set(),
+            None,
         )
 
         assert override == {"key": 0x41}
@@ -148,13 +144,11 @@ class TestPipelineOverrideHotkey:
         worker = SimpleNamespace(
             interface=SimpleNamespace(option={"K": option}),
             device=SimpleNamespace(
-                get_active_controller_definitions=lambda: [
-                    Controller(
-                        name="linux",
-                        type="Linux",
-                        linux=LinuxControllerConfig(use_win32_vk_code=True),
-                    )
-                ]
+                get_active_controller=lambda: Controller(
+                    name="linux",
+                    type="Linux",
+                    linux=LinuxControllerConfig(use_win32_vk_code=True),
+                )
             ),
             device_state=SimpleNamespace(current_resource_name=None),
         )
@@ -162,7 +156,7 @@ class TestPipelineOverrideHotkey:
         override = PipelineOverrideService(worker)._build_option_override(
             "K",
             {"K": {"FightCombo": "A"}},
-            set(),
+            None,
         )
 
         assert override == {"key": 0x41}
@@ -176,9 +170,7 @@ class TestPipelineOverrideHotkey:
         worker = SimpleNamespace(
             interface=SimpleNamespace(option={"K": option}),
             device=SimpleNamespace(
-                get_active_controller_definitions=lambda: [
-                    Controller(name="mac", type="MacOS")
-                ]
+                get_active_controller=lambda: Controller(name="mac", type="MacOS")
             ),
             device_state=SimpleNamespace(current_resource_name=None),
         )
@@ -186,7 +178,7 @@ class TestPipelineOverrideHotkey:
         override = PipelineOverrideService(worker)._build_option_override(
             "K",
             {"K": {"Combo": "A"}},
-            set(),
+            None,
         )
 
         assert override == {"key": 0}
@@ -200,9 +192,7 @@ class TestPipelineOverrideHotkey:
         worker = SimpleNamespace(
             interface=SimpleNamespace(option={"K": option}),
             device=SimpleNamespace(
-                get_active_controller_definitions=lambda: [
-                    Controller(name="win", type="Win32")
-                ]
+                get_active_controller=lambda: Controller(name="win", type="Win32")
             ),
             device_state=SimpleNamespace(current_resource_name=None),
         )
@@ -211,7 +201,7 @@ class TestPipelineOverrideHotkey:
             PipelineOverrideService(worker)._build_option_override(
                 "K",
                 {"K": {"Combo": "NoSuchKey"}},
-                set(),
+                None,
             )
 
 
@@ -238,8 +228,7 @@ def test_saved_global_value_is_not_shadowed_by_task_default():
             ],
         ),
         device=SimpleNamespace(
-            get_active_controller_names=lambda: set(),
-            get_active_controller_definitions=lambda: [],
+            get_active_controller=lambda: None,
             get_current_resource_definition=lambda: None,
         ),
         device_state=SimpleNamespace(current_resource_name=None),

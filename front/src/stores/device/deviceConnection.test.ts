@@ -497,7 +497,7 @@ describe("useDeviceConnectionStore", () => {
         const pending = store.stopActiveAndRestart()
         await vi.advanceTimersByTimeAsync(0)
         indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(500)
+        await vi.advanceTimersByTimeAsync(1_000)
         const result = await pending
         vi.useRealTimers()
 
@@ -546,7 +546,7 @@ describe("useDeviceConnectionStore", () => {
         const pending = store.stopActiveAndRestart()
         await vi.advanceTimersByTimeAsync(0)
         indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
+        await vi.advanceTimersByTimeAsync(11_000)
         const result = await pending
         vi.useRealTimers()
 
@@ -554,7 +554,7 @@ describe("useDeviceConnectionStore", () => {
         expect(store.startConflict?.code).toBe("busy_manual")
         const calls = vi.mocked(api.startTask).mock.calls.length
         expect(calls).toBeGreaterThan(1)
-        expect(calls).toBeLessThanOrEqual(121)
+        expect(calls).toBeLessThanOrEqual(8)
       })
 
       it("stops retrying and clears stale conflict when a later attempt fails without conflict", async () => {
@@ -579,12 +579,12 @@ describe("useDeviceConnectionStore", () => {
         const pending = store.stopActiveAndRestart()
         await vi.advanceTimersByTimeAsync(0)
         indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
+        await vi.advanceTimersByTimeAsync(1_000)
         const result = await pending
         vi.useRealTimers()
 
         expect(result).toBe(false)
-        // 修复前：旧 busy_manual 滞留 → 重试跑满 60s（约 121 次）；修复后：第二次失败即停
+        // 修复前：旧 busy_manual 滞留 → 重试跑满上限；修复后：第二次失败即停
         expect(api.startTask).toHaveBeenCalledTimes(2)
         expect(store.startConflict).toBeNull()
       })
@@ -636,7 +636,7 @@ describe("useDeviceConnectionStore", () => {
         expect(api.startTask).toHaveBeenCalledTimes(1)
       })
 
-      it("never fires a start attempt at or past the 60s retry deadline", async () => {
+      it("never fires a start attempt at or past the retry deadline", async () => {
         vi.useFakeTimers()
         const startedAt = Date.now()
         const { store, indexStore } = primeRunningStore()
@@ -659,14 +659,14 @@ describe("useDeviceConnectionStore", () => {
         const pending = store.stopActiveAndRestart()
         await vi.advanceTimersByTimeAsync(0)
         indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
+        await vi.advanceTimersByTimeAsync(11_000)
         const result = await pending
         vi.useRealTimers()
 
-        const deadline = startedAt + 60_000
+        const deadline = startedAt + 10_000
         expect(result).toBe(false)
         expect(callTimes.length).toBeGreaterThan(1)
-        // 睡后重新检查 deadline：任何启动尝试都必须发生在 60s 上限之前
+        // 睡后重新检查 deadline：任何启动尝试都必须发生在重试上限之前
         expect(callTimes.every((t) => t < deadline)).toBe(true)
       })
     })

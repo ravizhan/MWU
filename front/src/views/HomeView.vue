@@ -85,19 +85,11 @@
           </h2>
           <PanelConnectionTabs
             mode="resource"
-            :selected-controller="deviceStore.selectedController"
-            :selected-device-key="deviceStore.selectedDeviceKey"
-            :play-cover-address="deviceStore.playCoverAddress"
-            :controller-options="deviceStore.controllerOptions"
-            :device-options="deviceStore.deviceOptions"
-            :device-disabled="deviceStore.isDeviceResourceLocked"
+            :resource="deviceStore.resource"
+            :resources-list="deviceStore.resourcesList"
             :resource-disabled="
               !deviceStore.selectedController || deviceStore.isDeviceResourceLocked
             "
-            :selected-controller-disabled="deviceStore.selectedControllerDisabled"
-            :is-play-cover="deviceStore.selectedControllerCapability?.type === 'PlayCover'"
-            :resource="deviceStore.resource"
-            :resources-list="deviceStore.resourcesList"
             @update:resource="deviceStore.resource = $event"
           />
         </NCard>

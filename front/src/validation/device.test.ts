@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  customDeviceAddressSchema,
-  hostPortSchema,
-  playCoverAddressSchema,
-  runtimeDeviceAddressSchema,
-} from "./device"
+import { customDeviceAddressSchema, hostPortSchema, runtimeDeviceAddressSchema } from "./device"
 
 describe("hostPortSchema", () => {
   it("accepts valid IPv4:port", () => {
@@ -245,22 +240,5 @@ describe("runtimeDeviceAddressSchema", () => {
       type: "Linux",
       address: '{"display_no": 0, "kind": "gamescope"}',
     })
-  })
-
-  it("accepts a lenient scanned Linux address before connection details are filled", () => {
-    expect(runtimeDeviceAddressSchema.parse({ type: "Linux", address: '{"kind":"wlr"}' })).toEqual({
-      type: "Linux",
-      address: '{"kind": "wlr"}',
-    })
-  })
-})
-
-describe("playCoverAddressSchema", () => {
-  it("accepts valid", () => {
-    expect(playCoverAddressSchema.parse("127.0.0.1:1717")).toBe("127.0.0.1:1717")
-  })
-
-  it("rejects invalid", () => {
-    expect(playCoverAddressSchema.safeParse("not-an-ip").success).toBe(false)
   })
 })
