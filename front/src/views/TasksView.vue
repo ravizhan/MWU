@@ -230,16 +230,20 @@ function handleTasksUpdate(tasks: QueuedTaskItem[]) {
 const showAddTask = ref(false)
 
 function handleAddTask(entry: string) {
-  const task = interfaceStore.getTaskList.find((item) => item.id === entry)
-  if (!task) return
-  configStore.taskList = [
-    ...configStore.taskList,
-    { uid: crypto.randomUUID(), id: task.id, name: task.name, order: task.order },
-  ]
+  configStore.addTaskToQueue(entry)
 }
 
 function handleRemoveTask(uid: string) {
   configStore.taskList = configStore.taskList.filter((task) => task.uid !== uid)
+  if (clickedTaskUid.value === uid) {
+    clickedTaskUid.value = null
+  }
+  if (configStore.taskList.length === 0) {
+    // 队列为空时清空选中任务并关闭设置抽屉，避免对已删任务的选项
+    // 进行静默丢弃的编辑（序列化只覆盖在队任务）
+    indexStore.SelectTask("")
+    indexStore.closeTaskSettingsDrawer()
+  }
 }
 
 function handleConfigTask(uid: string, entry: string) {

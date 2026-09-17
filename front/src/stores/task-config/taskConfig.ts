@@ -170,6 +170,22 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       })
     },
 
+    addTaskToQueue(entry: string): QueuedTaskItem | null {
+      const interfaceStore = useInterfaceStore()
+      const task = interfaceStore.getTaskList.find((item) => item.id === entry)
+      if (!task) {
+        return null
+      }
+      const queuedItem = createQueuedTaskItem(task)
+      this.taskList = [...this.taskList, queuedItem]
+      // 首次入队时填充默认选项，保证选项面板直接显示 interface 默认值
+      // （含默认 case 下的嵌套选项），而不是空白控件
+      if (this.options[task.id] === undefined) {
+        this.options[task.id] = this.buildDefaultOptionsForTask(task.id)
+      }
+      return queuedItem
+    },
+
     buildDefaultOptionsForTask(taskId: string): Record<string, TaskOptionValue> {
       const interfaceStore = useInterfaceStore()
       const optionMap = interfaceStore.getOptionList(taskId)

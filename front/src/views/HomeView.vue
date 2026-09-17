@@ -21,7 +21,7 @@
       <NCard :bordered="false" content-style="padding: 16px">
         <div class="text-sm opacity-70">{{ t("panel.taskList") }}</div>
         <div class="text-2xl font-bold">
-          {{ selectedTaskCount }} {{ t("common.slash") }} {{ interfaceStore.getTaskList.length }}
+          {{ selectedTaskCount }}
         </div>
       </NCard>
       <NCard :bordered="false" content-style="padding: 16px">
