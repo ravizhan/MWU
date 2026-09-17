@@ -5,7 +5,7 @@ export interface PostDeviceResult {
   message: string
 }
 
-export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "WlRoots"
+export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "Linux"
 
 export interface AdbDevice {
   type: "Adb"
@@ -42,8 +42,8 @@ export interface PlayCoverDevice {
   uuid?: string
 }
 
-export interface WlRootsDevice {
-  type: "WlRoots"
+export interface LinuxDevice {
+  type: "Linux"
   name?: string
   address: string
 }
@@ -53,7 +53,7 @@ export type ConnectableDevice =
   | Win32Device
   | GamepadDevice
   | PlayCoverDevice
-  | WlRootsDevice
+  | LinuxDevice
 
 export interface ConnectDevicePayload {
   controller_name: string

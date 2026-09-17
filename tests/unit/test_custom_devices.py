@@ -29,7 +29,7 @@ def _controller(name: str, type_: str) -> SimpleNamespace:
         label=name,
         win32=None,
         gamepad=None,
-        wlroots=None,
+        linux=None,
     )
 
 
@@ -93,13 +93,13 @@ class TestCanonicalizeCustomAddress:
             == "127.0.0.1:1717"
         )
 
-    def test_wlroots_socket_path_trimmed(self):
+    def test_linux_address_trimmed(self):
         assert (
-            canonicalize_custom_device_address("WlRoots", " /run/user/1000/wayland-1 ")
+            canonicalize_custom_device_address("Linux", " /run/user/1000/wayland-1 ")
             == "/run/user/1000/wayland-1"
         )
         with pytest.raises(ValueError):
-            canonicalize_custom_device_address("WlRoots", "   ")
+            canonicalize_custom_device_address("Linux", "   ")
 
     def test_adb_empty_rejected(self):
         with pytest.raises(ValueError):
@@ -182,23 +182,23 @@ class TestCustomRecordToDevice:
         )
         assert device == {"type": "PlayCover", "address": "127.0.0.1:1717"}
 
-    def test_wlroots_address(self):
+    def test_linux_address(self):
         device = custom_record_to_device(
             {
-                "controller_name": "WlRootsController",
-                "type": "WlRoots",
+                "controller_name": "LinuxController",
+                "type": "Linux",
                 "address": "/run/user/1000/wayland-1",
             }
         )
         assert device == {
-            "type": "WlRoots",
+            "type": "Linux",
             "address": "/run/user/1000/wayland-1",
         }
 
 
-class TestWlRootsSupport:
+class TestLinuxSupport:
     def test_platform_capability(self):
-        controller = _controller("WlRootsController", "WlRoots")
+        controller = _controller("LinuxController", "Linux")
         with patch("maa_worker.device_service.sys.platform", "linux"):
             assert is_controller_supported(controller) == (True, "")
         with patch("maa_worker.device_service.sys.platform", "win32"):
@@ -208,7 +208,7 @@ class TestWlRootsSupport:
             )
 
     def test_scans_wayland_socket_paths(self, app_root: Path):
-        controller = _controller("WlRootsController", "WlRoots")
+        controller = _controller("LinuxController", "Linux")
         service = DeviceService(_FakeWorker(app_root, [controller]))  # type: ignore[arg-type]
         scanned = [
             SimpleNamespace(
@@ -229,39 +229,55 @@ class TestWlRootsSupport:
 
         assert devices == [
             {
-                "type": "WlRoots",
+                "type": "Linux",
                 "name": "Wayland compositor",
                 "address": "/run/user/1000/wayland-1",
             }
         ]
 
-    def test_builds_wlroots_device_model(self):
+    def test_scans_gamescope_instances(self, app_root: Path):
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap="PipeWire",
+            input="Libei",
+            pipewire_source="Gamescope",
+        )
+        service = DeviceService(_FakeWorker(app_root, [controller]))  # type: ignore[arg-type]
+        instances = [
+            SimpleNamespace(display_no=1, pipewire_node_id=0, eis_socket_path=""),
+            SimpleNamespace(
+                display_no=0,
+                pipewire_node_id=70,
+                eis_socket_path="/run/user/1000/gamescope-0-ei",
+            ),
+        ]
+
+        with (
+            patch("maa_worker.device_service.sys.platform", "linux"),
+            patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
+        ):
+            devices = service._find_devices_for_controller(controller)
+
+        assert devices == [
+            {
+                "type": "Linux",
+                "name": "Gamescope (display 0)",
+                "address": "gamescope-0",
+            }
+        ]
+
+    def test_builds_linux_device_model(self):
         model = DeviceService.build_device_model_from_config(
-            "WlRootsController",
-            "WlRoots",
+            "LinuxController",
+            "Linux",
             "/run/user/1000/wayland-1",
         )
 
-        assert model.type == "WlRoots"
+        assert model.type == "Linux"
         assert model.address == "/run/user/1000/wayland-1"
 
-    def test_connect_uses_socket_path_and_keycode_mode(self, app_root: Path):
-        captured: dict[str, Any] = {}
-
-        class _FakeWlRootsController:
-            connected = True
-
-            def __init__(self, **kwargs):
-                captured.update(kwargs)
-
-            @staticmethod
-            def post_connection():
-                return SimpleNamespace(
-                    wait=lambda: SimpleNamespace(succeeded=True),
-                )
-
-        controller = _controller("WlRootsController", "WlRoots")
-        controller.wlroots = SimpleNamespace(use_win32_vk_code=True)
+    @staticmethod
+    def _linux_worker(app_root: Path, controller: SimpleNamespace):
         worker = _FakeWorker(app_root, [controller])
         worker.device_state = SimpleNamespace(
             configuration_locked=False,
@@ -279,16 +295,41 @@ class TestWlRootsSupport:
         worker.tasker = SimpleNamespace(bind=lambda _resource, _controller: True)
         worker.resource = object()
         worker.interface.title = "MWU"
+        return worker
+
+    def test_connect_uses_socket_path_and_keycode_mode(self, app_root: Path):
+        captured: dict[str, Any] = {}
+
+        class _FakeLinuxController:
+            connected = True
+
+            def __init__(self, config):
+                captured.update(config)
+
+            @staticmethod
+            def post_connection():
+                return SimpleNamespace(
+                    wait=lambda: SimpleNamespace(succeeded=True),
+                )
+
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap=None,
+            input=None,
+            pipewire_source=None,
+            use_win32_vk_code=True,
+        )
+        worker = self._linux_worker(app_root, controller)
 
         model = DeviceService.build_device_model_from_config(
-            "WlRootsController",
-            "WlRoots",
+            "LinuxController",
+            "Linux",
             "/run/user/1000/wayland-1",
         )
         with (
             patch(
-                "maa_worker.device_service.WlRootsController",
-                _FakeWlRootsController,
+                "maa_worker.device_service.LinuxController",
+                _FakeLinuxController,
             ),
             patch("maa_worker.device_service.time.sleep"),
         ):
@@ -296,9 +337,87 @@ class TestWlRootsSupport:
 
         assert connected is True
         assert captured == {
-            "wlr_socket_path": "/run/user/1000/wayland-1",
+            "screencap_method": 1,
+            "input_method": 1,
             "use_win32_vk_code": True,
+            "wlr_socket_path": "/run/user/1000/wayland-1",
         }
+
+    def test_connect_uses_gamescope_pipewire_and_libei(self, app_root: Path):
+        captured: dict[str, Any] = {}
+
+        class _FakeLinuxController:
+            connected = True
+
+            def __init__(self, config):
+                captured.update(config)
+
+            @staticmethod
+            def post_connection():
+                return SimpleNamespace(
+                    wait=lambda: SimpleNamespace(succeeded=True),
+                )
+
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap="PipeWire",
+            input="Libei",
+            pipewire_source="Gamescope",
+            use_win32_vk_code=False,
+        )
+        worker = self._linux_worker(app_root, controller)
+        instances = [
+            SimpleNamespace(
+                display_no=0,
+                pipewire_node_id=70,
+                eis_socket_path="/run/user/1000/gamescope-0-ei",
+            ),
+        ]
+
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController",
+            "Linux",
+            "gamescope-0",
+        )
+        with (
+            patch(
+                "maa_worker.device_service.LinuxController",
+                _FakeLinuxController,
+            ),
+            patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
+            patch("maa_worker.device_service.time.sleep"),
+        ):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is True
+        assert captured == {
+            "screencap_method": 4,
+            "input_method": 4,
+            "use_win32_vk_code": False,
+            "pw_node_id": 70,
+            "eis_socket_path": "/run/user/1000/gamescope-0-ei",
+        }
+        assert "wlr_socket_path" not in captured
+
+    def test_connect_rejects_uinput(self, app_root: Path):
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap=None,
+            input="UInput",
+            pipewire_source=None,
+            use_win32_vk_code=False,
+        )
+        worker = self._linux_worker(app_root, controller)
+
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController",
+            "Linux",
+            "/run/user/1000/wayland-1",
+        )
+        connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is False
+        assert "UInput" in worker.device_state.last_device_error
 
 
 class TestCustomDevicePersistence:

@@ -188,10 +188,10 @@ class TestScheduledTaskDeviceConfig:
         )
         assert d.device_address == "12345|1"
 
-    def test_wlroots_socket_path(self):
+    def test_linux_device_address(self):
         d = ScheduledTaskDeviceConfig(
             controller_name="c",
-            device_type="WlRoots",
+            device_type="Linux",
             device_address=" /run/user/1000/wayland-1 ",
         )
         assert d.device_address == "/run/user/1000/wayland-1"

@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 from maa.controller import (
     AdbController,
     GamepadController,
+    LinuxController,
     PlayCoverController,
     Win32Controller,
-    WlRootsController,
 )
 from maa.toolkit import Toolkit
 
@@ -23,6 +23,9 @@ from settings_io import SETTINGS_LOCK, atomic_write_settings, read_settings_raw
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
+
+_LINUX_SCREENCAP_METHODS = {"Wlr": 1, "PipeWire": 4}
+_LINUX_INPUT_METHODS = {"Wlr": 1, "UInput": 2, "Libei": 4}
 
 
 def is_controller_supported(controller) -> tuple[bool, str]:
@@ -39,7 +42,7 @@ def is_controller_supported(controller) -> tuple[bool, str]:
             if sys.platform != "darwin":
                 return False, "platform_not_supported"
             return True, ""
-        case "WlRoots":
+        case "Linux":
             if not sys.platform.startswith("linux"):
                 return False, "platform_not_supported"
             return True, ""
@@ -61,7 +64,7 @@ def _record_identity(
 
 def _scan_device_address(device: dict[str, Any]) -> str | None:
     device_type = device.get("type")
-    if device_type in ("Adb", "PlayCover", "WlRoots"):
+    if device_type in ("Adb", "PlayCover", "Linux"):
         return try_canonicalize_runtime_device_address(
             device_type, str(device.get("address", ""))
         )
@@ -145,7 +148,7 @@ class DeviceService:
                     "Win32",
                     "Gamepad",
                     "PlayCover",
-                    "WlRoots",
+                    "Linux",
                 ):
                     continue
                 address = try_canonicalize_runtime_device_address(
@@ -326,7 +329,7 @@ class DeviceService:
                 }
             )
 
-        controller_order = ["Adb", "Win32", "Gamepad", "PlayCover", "WlRoots"]
+        controller_order = ["Adb", "Win32", "Gamepad", "PlayCover", "Linux"]
         return sorted(
             capabilities,
             key=lambda item: (
@@ -341,7 +344,7 @@ class DeviceService:
         devices: list[dict[str, Any]] = []
         win32_seen: set[int] = set()
         gamepad_seen: set[int] = set()
-        wlroots_seen: set[str] = set()
+        linux_seen: set[str] = set()
 
         supported, _ = is_controller_supported(controller)
         if not supported:
@@ -394,19 +397,41 @@ class DeviceService:
                     )
             case "PlayCover":
                 return devices
-            case "WlRoots":
-                for device in Toolkit.find_desktop_windows():
-                    socket_path = device.class_name.strip()
-                    if not socket_path or socket_path in wlroots_seen:
-                        continue
-                    wlroots_seen.add(socket_path)
-                    devices.append(
-                        {
-                            "type": "WlRoots",
-                            "name": device.window_name,
-                            "address": socket_path,
-                        }
-                    )
+            case "Linux":
+                linux_config = controller.linux
+                screencap = (linux_config.screencap if linux_config else None) or "Wlr"
+                input_method = (linux_config.input if linux_config else None) or "Wlr"
+                pipewire_source = (
+                    linux_config.pipewire_source if linux_config else None
+                ) or "Gamescope"
+                if screencap == "Wlr" or input_method == "Wlr":
+                    for device in Toolkit.find_desktop_windows():
+                        socket_path = device.class_name.strip()
+                        if not socket_path or socket_path in linux_seen:
+                            continue
+                        linux_seen.add(socket_path)
+                        devices.append(
+                            {
+                                "type": "Linux",
+                                "name": device.window_name,
+                                "address": socket_path,
+                            }
+                        )
+                if screencap == "PipeWire" and pipewire_source == "Gamescope":
+                    for instance in Toolkit.find_gamescope_instances():
+                        if instance.pipewire_node_id == 0:
+                            continue
+                        address = f"gamescope-{instance.display_no}"
+                        if address in linux_seen:
+                            continue
+                        linux_seen.add(address)
+                        devices.append(
+                            {
+                                "type": "Linux",
+                                "name": f"Gamescope (display {instance.display_no})",
+                                "address": address,
+                            }
+                        )
             case "Gamepad":
                 assert controller.gamepad is not None
                 for device in Toolkit.find_desktop_windows():
@@ -516,13 +541,13 @@ class DeviceService:
 
         Args:
             controller_name: 控制器名称（来自 interface.json 的 controller name）
-            device_type: 设备类型 ("Adb", "Win32", "Gamepad", "PlayCover", "WlRoots")
+            device_type: 设备类型 ("Adb", "Win32", "Gamepad", "PlayCover", "Linux")
             device_address: 设备地址（格式因类型而异）
                 - Adb: IP:PORT 地址，如 "127.0.0.1:5555"
                 - Win32: hWnd 的字符串形式，如 "123456"
                 - Gamepad: "hWnd|gamepad_type" 格式，如 "123456|1"
                 - PlayCover: IP:PORT 地址，如 "127.0.0.1:1717"
-                - WlRoots: Wayland socket 路径
+                - Linux: Wayland socket 路径或 gamescope 标识
 
         Returns:
             构造好的 DeviceModel 实例
@@ -582,9 +607,9 @@ class DeviceService:
                 address=device_address,
                 uuid="",
             )
-        elif device_type == "WlRoots":
+        elif device_type == "Linux":
             return DeviceModel(
-                type="WlRoots",
+                type="Linux",
                 controller_name=controller_name,
                 name=device_address,
                 address=device_address,
@@ -649,15 +674,12 @@ class DeviceService:
                     uuid=device_config.uuid,
                 )
                 status = controller.post_connection().wait().succeeded
-            case "WlRoots":
-                use_win32_vk_code = bool(
-                    selected_controller.wlroots
-                    and selected_controller.wlroots.use_win32_vk_code
+            case "Linux":
+                controller = self._create_linux_controller(
+                    selected_controller, device_config
                 )
-                controller = WlRootsController(
-                    wlr_socket_path=device_config.address,
-                    use_win32_vk_code=use_win32_vk_code,
-                )
+                if controller is None:
+                    return False
                 status = controller.post_connection().wait().succeeded
 
         conn_fail_msg = "设备连接失败，请检查终端日志"
@@ -692,6 +714,109 @@ class DeviceService:
         state.last_device_error = conn_fail_msg
         self.worker.events.send_log(state.last_device_error)
         return False
+
+    def _find_gamescope_instance(self, address: str):
+        """按地址或可用性选择 gamescope 实例。
+
+        优先匹配 "gamescope-<display_no>" 形式的地址；无匹配时返回第一个
+        带 PipeWire 节点（pipewire_node_id != 0）的实例；都没有返回 None。
+        """
+        instances = Toolkit.find_gamescope_instances()
+        display_no: int | None = None
+        if address.startswith("gamescope-"):
+            try:
+                display_no = int(address.removeprefix("gamescope-"))
+            except ValueError:
+                display_no = None
+        if display_no is not None:
+            for instance in instances:
+                if instance.display_no == display_no and instance.pipewire_node_id != 0:
+                    return instance
+        for instance in instances:
+            if instance.pipewire_node_id != 0:
+                return instance
+        return None
+
+    def _create_linux_controller(
+        self, selected_controller, device_config: DeviceModel
+    ) -> LinuxController | None:
+        """根据控制器 linux 配置与设备地址构造 LinuxController。
+
+        失败时写入 last_device_error、记录日志并发送系统通知，返回 None。
+        """
+
+        def fail(reason: str) -> None:
+            self.worker.device_state.last_device_error = reason
+            self.worker.events.send_log(reason)
+            self.worker.events.show_system_notification(
+                self.worker.interface.title or self.worker.interface.label or "MWU",
+                reason,
+            )
+
+        linux_config = selected_controller.linux
+        screencap = (
+            linux_config.screencap if linux_config and linux_config.screencap else "Wlr"
+        )
+        input_method = (
+            linux_config.input if linux_config and linux_config.input else "Wlr"
+        )
+        pipewire_source = (
+            linux_config.pipewire_source
+            if linux_config and linux_config.pipewire_source
+            else "Gamescope"
+        )
+        config: dict[str, Any] = {
+            "screencap_method": _LINUX_SCREENCAP_METHODS[screencap],
+            "input_method": _LINUX_INPUT_METHODS[input_method],
+            "use_win32_vk_code": bool(linux_config and linux_config.use_win32_vk_code),
+        }
+        gamescope_instance = None
+        # 1) PipeWire 截图
+        if screencap == "PipeWire" and pipewire_source == "Gamescope":
+            gamescope_instance = self._find_gamescope_instance(device_config.address)
+            if gamescope_instance is None:
+                fail(
+                    "未找到可用的 gamescope 实例（需要运行中的 gamescope 且带 PipeWire 截图节点）"
+                )
+                return None
+            config["pw_node_id"] = gamescope_instance.pipewire_node_id
+        elif screencap == "PipeWire":  # Portal
+            helper = Toolkit.portal_helper_create()
+            if not helper.open_stream():
+                fail("无法通过 xdg-desktop-portal 打开 PipeWire 流")
+                return None
+            config["pw_socket_fd"] = helper.get_pipewire_fd()
+            config["pw_node_id"] = helper.get_pipewire_node_id()
+            del helper  # 与 MaaPiCli 一致：读完 fd/node 即销毁 helper
+        # 2) Wlr socket
+        if screencap == "Wlr" or input_method == "Wlr":
+            socket_path = device_config.address
+            if socket_path.startswith("gamescope-"):
+                socket_path = next(
+                    (
+                        d.class_name.strip()
+                        for d in Toolkit.find_desktop_windows()
+                        if d.class_name.strip()
+                    ),
+                    "",
+                )
+            if not socket_path:
+                fail("未找到可用的 Wayland socket")
+                return None
+            config["wlr_socket_path"] = socket_path
+        # 3) 输入方式附加参数
+        if input_method == "Libei":
+            if gamescope_instance is not None and gamescope_instance.eis_socket_path:
+                config["eis_socket_path"] = gamescope_instance.eis_socket_path
+            else:
+                fail(
+                    "Linux 控制器 input=Libei 需要 gamescope 实例提供 EIS socket，当前组合不支持"
+                )
+                return None
+        if input_method == "UInput":
+            fail("Linux 控制器 input=UInput 需要屏幕宽高参数，当前版本不支持该组合")
+            return None
+        return LinuxController(config)
 
     def set_resource(self, resource_name: str) -> bool:
         state = self.worker.device_state

@@ -54,7 +54,7 @@ HOTKEY_KEY_MAP: dict[str, dict[str, int]] = {
         **_letter_codes(list(range(29, 55))),
         **_function_key_codes(list(range(131, 143))),
     },
-    "WlRoots": {
+    "Linux": {
         "BACKSPACE": 14,
         "TAB": 15,
         "ENTER": 28,

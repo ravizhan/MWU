@@ -112,17 +112,17 @@ describe("customDeviceAddressSchema", () => {
     ).toBe(false)
   })
 
-  it("accepts and trims a WlRoots socket path", () => {
+  it("accepts and trims a Linux device address", () => {
     expect(
       customDeviceAddressSchema.parse({
-        type: "WlRoots",
+        type: "Linux",
         address: " /run/user/1000/wayland-1 ",
       }),
-    ).toEqual({ type: "WlRoots", address: "/run/user/1000/wayland-1" })
+    ).toEqual({ type: "Linux", address: "/run/user/1000/wayland-1" })
   })
 
-  it("rejects an empty WlRoots socket path", () => {
-    expect(customDeviceAddressSchema.safeParse({ type: "WlRoots", address: "   " }).success).toBe(
+  it("rejects an empty Linux device address", () => {
+    expect(customDeviceAddressSchema.safeParse({ type: "Linux", address: "   " }).success).toBe(
       false,
     )
   })
@@ -151,9 +151,9 @@ describe("runtimeDeviceAddressSchema", () => {
     ).toBe(false)
   })
 
-  it("accepts a scanned WlRoots socket path", () => {
-    expect(runtimeDeviceAddressSchema.parse({ type: "WlRoots", address: " wayland-1 " })).toEqual({
-      type: "WlRoots",
+  it("accepts a scanned Linux device address", () => {
+    expect(runtimeDeviceAddressSchema.parse({ type: "Linux", address: " wayland-1 " })).toEqual({
+      type: "Linux",
       address: "wayland-1",
     })
   })

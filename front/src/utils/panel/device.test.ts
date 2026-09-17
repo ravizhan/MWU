@@ -15,9 +15,9 @@ import {
 import type {
   AdbDevice,
   GamepadDevice,
+  LinuxDevice,
   PlayCoverDevice,
   Win32Device,
-  WlRootsDevice,
 } from "@/services/api"
 import type { PanelLastConnectedDevice } from "@/types/settingsModel"
 
@@ -56,8 +56,8 @@ const playCoverDevice: PlayCoverDevice = {
   uuid: "uuid-001",
 }
 
-const wlRootsDevice: WlRootsDevice = {
-  type: "WlRoots",
+const linuxDevice: LinuxDevice = {
+  type: "Linux",
   name: "Wayland compositor",
   address: "/run/user/1000/wayland-1",
 }
@@ -133,8 +133,8 @@ describe("getDeviceIdentity", () => {
     expect(getDeviceIdentity(playCoverDevice)).toBe("127.0.0.1:1717")
   })
 
-  it("returns socket path for WlRoots device", () => {
-    expect(getDeviceIdentity(wlRootsDevice)).toBe("/run/user/1000/wayland-1")
+  it("returns socket path for Linux device", () => {
+    expect(getDeviceIdentity(linuxDevice)).toBe("/run/user/1000/wayland-1")
   })
 })
 
@@ -278,8 +278,8 @@ describe("buildDeviceFingerprint", () => {
     expect(buildDeviceFingerprint(device)).toBe("playcover|127.0.0.1:1717|")
   })
 
-  it("builds wlroots|socket-path for WlRoots device", () => {
-    expect(buildDeviceFingerprint(wlRootsDevice)).toBe("wlroots|/run/user/1000/wayland-1")
+  it("builds linux|socket-path for Linux device", () => {
+    expect(buildDeviceFingerprint(linuxDevice)).toBe("linux|/run/user/1000/wayland-1")
   })
 })
 

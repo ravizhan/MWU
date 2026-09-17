@@ -35,7 +35,7 @@ export function getDeviceIdentity(deviceInfo: ConnectableDevice): string {
 
 /** Stable identity for a persisted last-connected snapshot (same semantics as getDeviceIdentity). */
 export function getStoredDeviceIdentity(stored: PanelLastConnectedDevice): string {
-  if (stored.type === "Adb" || stored.type === "PlayCover" || stored.type === "WlRoots") {
+  if (stored.type === "Adb" || stored.type === "PlayCover" || stored.type === "Linux") {
     return stored.address
   }
   if (stored.type === "Win32") {
@@ -91,8 +91,8 @@ export function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
   if (isGamepadDevice(deviceInfo)) {
     return `gamepad|${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
   }
-  if (deviceInfo.type === "WlRoots") {
-    return `wlroots|${deviceInfo.address}`
+  if (deviceInfo.type === "Linux") {
+    return `linux|${deviceInfo.address}`
   }
   return `playcover|${deviceInfo.address}|${deviceInfo.uuid || ""}`
 }
@@ -116,8 +116,8 @@ export function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): st
   if (normalizedType === "gamepad") {
     return `gamepad|${stored.hWnd}|${stored.gamepad_type}`
   }
-  if (normalizedType === "wlroots") {
-    return `wlroots|${stored.address}`
+  if (normalizedType === "linux") {
+    return `linux|${stored.address}`
   }
   return `playcover|${stored.address}|${stored.uuid}`
 }
