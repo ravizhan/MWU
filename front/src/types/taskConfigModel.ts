@@ -9,6 +9,10 @@ export interface TaskListItem {
   checked?: boolean
 }
 
+export interface QueuedTaskItem extends TaskListItem {
+  uid: string
+}
+
 export interface PreTaskCommand {
   id: string
   command: string
@@ -17,8 +21,7 @@ export interface PreTaskCommand {
 }
 
 export interface TaskPresetSnapshot {
-  taskOrder: string[]
-  taskChecked: Record<string, boolean>
+  tasks: string[]
   taskOptions: TaskOptionsByTask
   preTasks: PreTaskCommand[]
 }

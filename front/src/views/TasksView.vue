@@ -8,12 +8,28 @@
       header-style="padding-bottom: 0.5rem"
     >
       <template #header>
-        <h2 class="text-base shrink-0 flex items-center gap-2">
-          <NIcon size="24">
-            <ListOutline />
-          </NIcon>
-          {{ t("panel.taskList") }}
-        </h2>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-base shrink-0 flex items-center gap-2">
+            <NIcon size="24">
+              <ListOutline />
+            </NIcon>
+            {{ t("panel.taskList") }}
+          </h2>
+          <NSelect
+            v-if="interfaceStore.getPresetList.length > 0"
+            :value="configStore.selectedPresetName"
+            :options="presetOptions"
+            size="small"
+            class="ml-auto w-36 max-w-[40vw]"
+            @update:value="handlePresetChange"
+          />
+          <NButton secondary size="small" @click="showAddTask = true">
+            <template #icon>
+              <NIcon><AddOutline /></NIcon>
+            </template>
+            {{ t("panel.addTask.button") }}
+          </NButton>
+        </div>
       </template>
       <PreTaskList
         ref="preTaskList"
@@ -24,14 +40,14 @@
       />
       <TaskSelectList
         :tasks="configStore.taskList"
-        :selected-tasks="configStore.selectedTaskIds"
         :controller-name="deviceStore.selectedControllerName"
         :resource-name="deviceStore.resource"
         :hide-incompatible="true"
         :max-height="taskListMaxHeight"
+        :selected-uid="selectedTaskUid"
         @update:tasks="handleTasksUpdate"
-        @update:selected-tasks="handleSelectedTasksUpdate"
         @config="handleConfigTask"
+        @remove="handleRemoveTask"
       />
       <div class="flex justify-center gap-2 pt-4 shrink-0">
         <NButton
@@ -78,29 +94,62 @@
   </div>
 
   <StartConflictDialog />
+  <AddTaskDialog
+    v-model:show="showAddTask"
+    :controller-name="deviceStore.selectedControllerName"
+    :resource-name="deviceStore.resource"
+    @add="handleAddTask"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue"
 import { useI18n } from "vue-i18n"
 import { useRouter } from "vue-router"
-import { ListOutline, PlayOutline, StopOutline } from "@vicons/ionicons5"
+import { AddOutline, ListOutline, PlayOutline, StopOutline } from "@vicons/ionicons5"
 import PanelTaskColumn from "@/components/panel/PanelTaskColumn.vue"
+import AddTaskDialog from "@/components/panel/task/AddTaskDialog.vue"
 import TaskSettingsDrawer from "@/components/panel/task/TaskSettingsDrawer.vue"
 import PreTaskList from "@/components/panel/task/PreTaskList.vue"
 import TaskSelectList from "@/components/panel/task/TaskSelectList.vue"
 import StartConflictDialog from "@/components/tasks/StartConflictDialog.vue"
 import { stopTask } from "@/services/api"
-import { useIndexStore, useTaskConfigStore, useDeviceConnectionStore } from "@/stores"
-import type { TaskListItem } from "@/types/taskConfigModel"
+import {
+  useIndexStore,
+  useInterfaceStore,
+  useTaskConfigStore,
+  useDeviceConnectionStore,
+} from "@/stores"
+import { CUSTOM_PRESET_NAME, type QueuedTaskItem } from "@/types/taskConfigModel"
+import { resolveInterfaceText } from "@/utils/interface/content"
 import { useViewport } from "@/utils/viewport/useViewport"
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const indexStore = useIndexStore()
+const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const deviceStore = useDeviceConnectionStore()
 const { isMobile } = useViewport()
+
+const clickedTaskUid = ref<string | null>(null)
+const selectedTaskUid = computed(() => {
+  if (
+    clickedTaskUid.value &&
+    configStore.taskList.some((task) => task.uid === clickedTaskUid.value)
+  ) {
+    return clickedTaskUid.value
+  }
+  return configStore.taskList.find((task) => task.id === indexStore.SelectedTaskID)?.uid ?? null
+})
+
+const presetOptions = computed(() => [
+  { label: t("panel.preset.custom"), value: CUSTOM_PRESET_NAME },
+  ...interfaceStore.getPresetList.map((preset) => ({
+    label: resolveInterfaceText(interfaceStore.interface, locale.value, preset.label, preset.name),
+    value: preset.name,
+  })),
+])
 
 /* Left column must fit under the sticky navbar without page overflow. The
    task list is the only flexible region, so its max-height = viewport minus
@@ -174,22 +223,41 @@ onUnmounted(() => {
   resizeObserver = null
 })
 
-function handleTasksUpdate(tasks: TaskListItem[]) {
+function handleTasksUpdate(tasks: QueuedTaskItem[]) {
   configStore.taskList = tasks
 }
 
-function handleSelectedTasksUpdate(selectedIds: string[]) {
-  configStore.taskList = configStore.taskList.map((task) => ({
-    ...task,
-    checked: selectedIds.includes(task.id),
-  }))
+const showAddTask = ref(false)
+
+function handleAddTask(entry: string) {
+  configStore.addTaskToQueue(entry)
 }
 
-function handleConfigTask(taskId: string) {
-  indexStore.SelectTask(taskId)
-  if (isMobile.value) {
-    indexStore.openTaskSettingsDrawer(taskId)
+function handleRemoveTask(uid: string) {
+  configStore.taskList = configStore.taskList.filter((task) => task.uid !== uid)
+  if (clickedTaskUid.value === uid) {
+    clickedTaskUid.value = null
   }
+  if (configStore.taskList.length === 0) {
+    // 队列为空时清空选中任务并关闭设置抽屉，避免对已删任务的选项
+    // 进行静默丢弃的编辑（序列化只覆盖在队任务）
+    indexStore.SelectTask("")
+    indexStore.closeTaskSettingsDrawer()
+  }
+}
+
+function handleConfigTask(uid: string, entry: string) {
+  clickedTaskUid.value = uid
+  indexStore.SelectTask(entry)
+  if (isMobile.value) {
+    indexStore.openTaskSettingsDrawer(entry)
+  }
+}
+
+function handlePresetChange(name: string) {
+  if (!configStore.selectPreset(name)) return
+  clickedTaskUid.value = null
+  indexStore.SelectTask(configStore.taskList[0]?.id ?? "")
 }
 
 async function handleStart() {
