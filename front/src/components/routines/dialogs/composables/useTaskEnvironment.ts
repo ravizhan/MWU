@@ -31,7 +31,7 @@ function isDeviceControllerType(type: string): type is DeviceControllerType {
     type === "Win32" ||
     type === "Gamepad" ||
     type === "PlayCover" ||
-    type === "WlRoots"
+    type === "Linux"
   )
 }
 

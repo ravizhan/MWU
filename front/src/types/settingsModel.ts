@@ -51,7 +51,7 @@ export interface AboutInfo {
 
 // 面板持久化设备信息
 export interface PanelLastConnectedDevice {
-  type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "WlRoots"
+  type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "Linux"
   controller_name: string
   fingerprint: string
   adb_path: string

@@ -52,7 +52,14 @@ export interface PlayCoverController {
   uuid?: string
 }
 
-export interface WlRootsController {
+export type LinuxInput = "Wlr" | "Libei"
+export type LinuxScreencap = "Wlr" | "PipeWire"
+export type LinuxPipewireSource = "Gamescope" | "Portal"
+
+export interface LinuxController {
+  input?: LinuxInput
+  screencap?: LinuxScreencap
+  pipewire_source?: LinuxPipewireSource
   use_win32_vk_code?: boolean
 }
 
@@ -65,7 +72,7 @@ export interface GamepadController {
   screencap?: GamepadScreencap
 }
 
-export type ControllerType = "Adb" | "Win32" | "MacOS" | "PlayCover" | "WlRoots" | "Gamepad"
+export type ControllerType = "Adb" | "Win32" | "MacOS" | "PlayCover" | "Linux" | "Gamepad"
 
 export interface Controller {
   name: string
@@ -77,7 +84,7 @@ export interface Controller {
   win32?: Win32Controller
   macos?: MacOSController
   playcover?: PlayCoverController
-  wlroots?: WlRootsController
+  linux?: LinuxController
   gamepad?: GamepadController
   display_short_side?: number
   display_long_side?: number

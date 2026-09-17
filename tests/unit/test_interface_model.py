@@ -10,13 +10,13 @@ from models.interface import (
     GamepadController,
     HotkeyCase,
     InterfaceModel,
+    LinuxController,
     MacOSController,
     Option,
     OptionCase,
     Resource,
     SettingSection,
     Win32Controller,
-    WlRootsController,
     _pipeline_override_contains_attach_option,
     validate_regex,
 )
@@ -125,13 +125,46 @@ class TestMacOSController:
             MacOSController.model_validate({"input": "Invalid"})
 
 
-class TestWlRootsController:
-    def test_win32_keycode_mode(self):
-        config = WlRootsController(use_win32_vk_code=True)
-        controller = Controller(name="wayland", type="WlRoots", wlroots=config)
+class TestLinuxController:
+    def test_full_config_fields(self):
+        config = LinuxController(
+            input="Wlr",
+            screencap="PipeWire",
+            pipewire_source="Portal",
+            use_win32_vk_code=True,
+        )
+        controller = Controller(name="linux", type="Linux", linux=config)
 
-        assert controller.wlroots is not None
-        assert controller.wlroots.use_win32_vk_code is True
+        assert controller.linux is not None
+        assert controller.linux.input == "Wlr"
+        assert controller.linux.screencap == "PipeWire"
+        assert controller.linux.pipewire_source == "Portal"
+        assert controller.linux.use_win32_vk_code is True
+
+    def test_defaults(self):
+        config = LinuxController()
+
+        assert config.input is None
+        assert config.screencap is None
+        assert config.pipewire_source == "Gamescope"
+        assert config.use_win32_vk_code is False
+
+    def test_libei_accepts_gamescope_pipewire(self):
+        config = LinuxController(
+            input="Libei", screencap="PipeWire", pipewire_source="Gamescope"
+        )
+
+        assert config.input == "Libei"
+
+    def test_libei_rejects_wlr_screencap(self):
+        with pytest.raises(ValidationError, match="Libei"):
+            LinuxController(input="Libei", screencap="Wlr")
+
+    def test_libei_rejects_portal_pipewire_source(self):
+        with pytest.raises(ValidationError, match="Libei"):
+            LinuxController(
+                input="Libei", screencap="PipeWire", pipewire_source="Portal"
+            )
 
 
 # ---------------------------------------------------------------------------
