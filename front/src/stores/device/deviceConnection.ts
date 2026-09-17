@@ -645,7 +645,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         interfaceStore.isTaskCompatibleByEntry(taskId, this.selectedControllerName, this.resource)
 
       const selectedTaskIds = configStore.selectedTaskIds
-      const allCompatibleTaskIds = configStore.taskList
+      const allCompatibleTaskIds = interfaceStore.getTaskList
         .map((task) => task.id)
         .filter((taskId) => isTaskCompatibleInCurrentContext(taskId))
 

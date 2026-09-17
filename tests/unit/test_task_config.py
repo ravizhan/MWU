@@ -87,13 +87,13 @@ class TestNormalizePresetName:
         assert _normalize_preset_name("  QuickRun  ") == "QuickRun"
 
     def test_empty_string_falls_back(self):
-        assert _normalize_preset_name("") == CUSTOM_PRESET_NAME
+        assert _normalize_preset_name("") == ""
 
     def test_none_falls_back(self):
-        assert _normalize_preset_name(None) == CUSTOM_PRESET_NAME
+        assert _normalize_preset_name(None) == ""
 
     def test_non_string_falls_back(self):
-        assert _normalize_preset_name(42) == CUSTOM_PRESET_NAME
+        assert _normalize_preset_name(42) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -137,26 +137,29 @@ class TestNormalizeOptionValueForStorage:
 class TestNormalizeRawSnapshot:
     def test_none(self):
         assert _normalize_raw_snapshot(None) == {
-            "taskOrder": [],
-            "taskChecked": {},
+            "tasks": [],
             "taskOptions": {},
             "preTasks": [],
         }
 
-    def test_task_order_filters_non_strings(self):
-        result = _normalize_raw_snapshot({"taskOrder": ["a", 1, "b"]})
-        assert result["taskOrder"] == ["a", "b"]
+    def test_tasks_filters_non_strings(self):
+        result = _normalize_raw_snapshot({"tasks": ["a", 1, "b"]})
+        assert result["tasks"] == ["a", "b"]
+
+    def test_legacy_snapshot_fields_are_not_migrated(self):
+        result = _normalize_raw_snapshot(
+            {"taskOrder": ["a", "b"], "taskChecked": {"a": True}}
+        )
+        assert result["tasks"] == []
 
     def test_model_instance(self):
         model = TaskPresetSnapshotModel(
-            taskOrder=["a", "b"],
-            taskChecked={"a": True},
+            tasks=["a", "b"],
             taskOptions={},
             preTasks=[],
         )
         result = _normalize_raw_snapshot(model)
-        assert result["taskOrder"] == ["a", "b"]
-        assert result["taskChecked"]["a"] is True
+        assert result["tasks"] == ["a", "b"]
 
     def test_legacy_pre_tasks_key_is_ignored(self):
         result = _normalize_raw_snapshot({"pre_tasks": [{"command": "echo hi"}]})
@@ -456,7 +459,7 @@ class TestNormalizeTaskOptionsByTask:
 
 
 class TestNormalizeTaskExecutionPayload:
-    def test_dedups_and_filters(self):
+    def test_preserves_duplicates_and_filters(self):
         iface = _make_interface(
             tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")],
         )
@@ -465,7 +468,7 @@ class TestNormalizeTaskExecutionPayload:
             {},
             iface,
         )
-        assert task_list == ["TaskA", "TaskB"]
+        assert task_list == ["TaskA", "TaskB", "TaskA"]
 
     def test_orders_by_input_order(self):
         iface = _make_interface(
@@ -515,50 +518,33 @@ class TestNormalizeSnapshot:
     def test_empty_snapshot(self):
         iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
         result = normalize_snapshot(None, iface)
-        assert "TaskA" in result.taskOrder
-        assert result.taskChecked["TaskA"] is False
+        assert result.tasks == []
 
     def test_removes_invalid_task_ids(self):
         iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
         result = normalize_snapshot(
             {
-                "taskOrder": ["TaskA", "InvalidTask"],
-                "taskChecked": {},
+                "tasks": ["TaskA", "InvalidTask"],
                 "taskOptions": {},
             },
             iface,
         )
-        assert "InvalidTask" not in result.taskOrder
-        assert "TaskA" in result.taskOrder
+        assert result.tasks == ["TaskA"]
 
-    def test_merges_default_tasks(self):
-        iface = _make_interface(
-            tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")],
-        )
-        result = normalize_snapshot(
-            {"taskOrder": ["TaskB"], "taskChecked": {"TaskB": True}, "taskOptions": {}},
-            iface,
-        )
-        assert result.taskOrder == ["TaskB", "TaskA"]
-        assert result.taskChecked["TaskB"] is True
-        assert result.taskChecked["TaskA"] is False
-
-    def test_deduplicates_duplicate_ids(self):
-        """Duplicate task IDs in input are silently de-duped."""
+    def test_preserves_duplicate_ids(self):
+        """Duplicate task IDs in input remain separate queue instances."""
         iface = _make_interface(tasks=[Task(name="A", entry="A")])
         result = normalize_snapshot(
-            {"taskOrder": ["A", "A"], "taskChecked": {"A": True}, "taskOptions": {}},
+            {"tasks": ["A", "A"], "taskOptions": {}},
             iface,
         )
-        assert result.taskOrder == ["A"]
-        assert result.taskOrder.count("A") == 1
+        assert result.tasks == ["A", "A"]
 
     def test_preserves_normalized_pre_tasks(self):
         iface = _make_interface(tasks=[])
         result = normalize_snapshot(
             {
-                "taskOrder": [],
-                "taskChecked": {},
+                "tasks": [],
                 "taskOptions": {},
                 "preTasks": [{"command": "echo hello"}],
             },
@@ -649,17 +635,17 @@ class TestBuildInterfacePresetSnapshot:
         assert combo["attack"] == "Alt+A"
         assert combo["defend"] == ""
 
-    def test_enabled_false_stays_unchecked(self):
-        """Preset task with enabled=False is unchecked."""
+    def test_enabled_false_is_omitted(self):
+        """Preset task with enabled=False is omitted from the queue."""
         iface = _make_interface(
             tasks=[Task(name="T", entry="T")],
             presets=[Preset(name="P", task=[PresetTask(name="T", enabled=False)])],
         )
         snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        assert snapshot.taskChecked["T"] is False
+        assert snapshot.tasks == []
 
-    def test_duplicate_preset_tasks_deduped(self):
-        """Duplicate task names in a preset are silently deduplicated (defensive)."""
+    def test_duplicate_preset_tasks_preserved(self):
+        """Duplicate task names in a preset remain ordered queue instances."""
         iface = _make_interface(
             tasks=[Task(name="A", entry="A")],
             presets=[
@@ -667,7 +653,7 @@ class TestBuildInterfacePresetSnapshot:
             ],
         )
         snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        assert snapshot.taskOrder.count("A") == 1
+        assert snapshot.tasks == ["A", "A"]
 
 
 # ---------------------------------------------------------------------------
@@ -682,12 +668,23 @@ class TestNormalizeTaskConfig:
         assert CUSTOM_PRESET_NAME in result.presets
         assert result.selectedPreset == CUSTOM_PRESET_NAME
 
-    def test_falls_back_to_custom_when_selected_missing(self):
-        iface = _make_interface(tasks=[Task(name="A", entry="A")])
+    def test_falls_back_to_first_interface_preset_when_selected_missing(self):
+        iface = _make_interface(
+            tasks=[Task(name="A", entry="A")],
+            presets=[Preset(name="QuickRun"), Preset(name="Other")],
+        )
         result = normalize_task_config(
             TaskConfigModel(selectedPreset="NonExistent"), iface
         )
-        assert result.selectedPreset == CUSTOM_PRESET_NAME
+        assert result.selectedPreset == "QuickRun"
+
+    def test_empty_config_selects_first_interface_preset(self):
+        iface = _make_interface(
+            tasks=[Task(name="A", entry="A")],
+            presets=[Preset(name="QuickRun"), Preset(name="Other")],
+        )
+        result = normalize_task_config(TaskConfigModel(), iface)
+        assert result.selectedPreset == "QuickRun"
 
     def test_preserves_valid_selected_preset(self):
         iface = _make_interface(
@@ -707,7 +704,7 @@ class TestNormalizeTaskConfig:
         config = TaskConfigModel(selectedPreset="QuickRun")
         result = normalize_task_config(config, iface)
         assert "QuickRun" in result.presets
-        assert "A" in result.presets["QuickRun"].taskOrder
+        assert result.presets["QuickRun"].tasks == ["A"]
 
 
 # ---------------------------------------------------------------------------
@@ -718,8 +715,8 @@ class TestNormalizeTaskConfig:
 class TestTaskConfigModel:
     def test_normalize_raw_config_strips_blank_selected_preset(self):
         model = TaskConfigModel.model_validate({"selectedPreset": "  "})
-        assert model.selectedPreset == CUSTOM_PRESET_NAME
+        assert model.selectedPreset == ""
 
     def test_normalize_raw_config_ignores_non_string_preset_names(self):
-        model = TaskConfigModel.model_validate({"presets": {1: {"taskOrder": []}}})
+        model = TaskConfigModel.model_validate({"presets": {1: {"tasks": []}}})
         assert model.presets == {}

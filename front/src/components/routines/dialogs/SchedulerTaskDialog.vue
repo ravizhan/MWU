@@ -320,14 +320,15 @@
             v-model:active-tab="activeTab"
             v-model:pre-tasks="formData.preTasks"
             :task-list-data="taskListData"
-            :selected-tasks="formData.task_list"
+            :selected-uid="currentSettingTaskUid"
             :controller-name="formData.controller_name"
             :resource-name="formData.resource_name"
             :task-options="formData.task_options"
             :current-setting-task-id="currentSettingTaskId"
             @update:tasks="handleTasksUpdate"
-            @update:selected-tasks="handleSelectedTasksUpdate"
-            @config="openTaskSettings"
+            @config="handleConfigTask"
+            @remove="handleRemoveTask"
+            @add="handleAddTask"
           />
         </div>
       </div>
@@ -367,7 +368,7 @@ import {
   TimerOutline,
 } from "@vicons/ionicons5"
 import { useInterfaceStore, useTaskConfigStore } from "@/stores"
-import type { TaskListItem } from "@/types/taskConfigModel"
+import type { QueuedTaskItem } from "@/types/taskConfigModel"
 import SchedulerTaskDialogContentTabs from "./SchedulerTaskDialogContentTabs.vue"
 import SchedulerTaskDialogSectionNav from "./SchedulerTaskDialogSectionNav.vue"
 import SchedulerTaskDialogTriggerType from "./SchedulerTaskDialogTriggerType.vue"
@@ -416,6 +417,7 @@ const dialogBoxStyle = computed(() => {
 const activeSection = ref<DialogSection>("basic")
 const activeTab = ref<ContentTab>("task-list")
 const currentSettingTaskId = ref<string | null>(null)
+const currentSettingTaskUid = ref<string | null>(null)
 const suppressFormInit = ref(false)
 
 const {
@@ -449,13 +451,13 @@ const showDialog = computed({
 })
 
 const isEditMode = computed(() => !!task)
-const availableTasks = computed(() => configStore.taskList)
+const availableTasks = computed(() => interfaceStore.getTaskList)
 
 const dateConfigLocal = computed(() => toDatetimeLocalValue(dateConfig.value.run_date))
 const intervalStartLocal = computed(() => toDatetimeLocalValue(intervalConfig.value.start_date))
 const intervalEndLocal = computed(() => toDatetimeLocalValue(intervalConfig.value.end_date))
 
-const taskListData = ref<TaskListItem[]>([])
+const taskListData = ref<QueuedTaskItem[]>([])
 
 const sections = computed(() => [
   {
@@ -501,34 +503,23 @@ const triggerOptions = computed(() => [
 function syncTaskListData(preferredOrder: string[]) {
   const allTasks = availableTasks.value
   const taskMap = new Map(allTasks.map((task) => [task.id, task]))
-  const orderedTasks: TaskListItem[] = []
+  const orderedTasks: QueuedTaskItem[] = []
 
   for (const taskId of preferredOrder) {
     const task = taskMap.get(taskId)
     if (task) {
-      orderedTasks.push(task)
-      taskMap.delete(taskId)
-    }
-  }
-
-  for (const task of allTasks) {
-    if (taskMap.has(task.id)) {
-      orderedTasks.push(task)
+      orderedTasks.push({ ...task, uid: crypto.randomUUID() })
     }
   }
 
   taskListData.value = orderedTasks
 }
 
-function buildOrderedTaskList(selectedTasks: string[], tasks: TaskListItem[] = taskListData.value) {
-  const selectedSet = new Set(configStore.normalizeTaskIds(selectedTasks))
-  return tasks.filter((task) => selectedSet.has(task.id)).map((task) => task.id)
-}
-
 function resetForm() {
   formData.value = initFormData()
   syncTaskListData(formData.value.task_list)
   currentSettingTaskId.value = null
+  currentSettingTaskUid.value = null
   activeTab.value = "task-list"
   activeSection.value = "basic"
 }
@@ -600,6 +591,7 @@ watch(
 
     if (currentSettingTaskId.value && !compatibleTaskIds.includes(currentSettingTaskId.value)) {
       currentSettingTaskId.value = null
+      currentSettingTaskUid.value = null
       activeTab.value = "task-list"
     }
 
@@ -621,9 +613,9 @@ watch(
   { immediate: true },
 )
 
-function handleTasksUpdate(tasks: TaskListItem[]) {
+function handleTasksUpdate(tasks: QueuedTaskItem[]) {
   taskListData.value = tasks
-  formData.value.task_list = buildOrderedTaskList(formData.value.task_list, tasks)
+  formData.value.task_list = tasks.map((taskItem) => taskItem.id)
 }
 
 function handleTriggerTypeChange(value: string | number) {
@@ -632,31 +624,47 @@ function handleTriggerTypeChange(value: string | number) {
   }
 }
 
-function handleSelectedTasksUpdate(newSelectedTasks: string[]) {
-  const task_list = buildOrderedTaskList(newSelectedTasks)
+function handleAddTask(entry: string) {
+  const task = availableTasks.value.find((item) => item.id === entry)
+  if (!task) return
+  const task_list = [...formData.value.task_list, entry]
   formData.value.task_list = task_list
   formData.value.task_options = configStore.buildOptionsForTasks(
     task_list,
     formData.value.task_options,
   )
-  if (currentSettingTaskId.value && !task_list.includes(currentSettingTaskId.value)) {
+  taskListData.value = [...taskListData.value, { ...task, uid: crypto.randomUUID() }]
+}
+
+function handleRemoveTask(uid: string) {
+  taskListData.value = taskListData.value.filter((taskItem) => taskItem.uid !== uid)
+  const task_list = taskListData.value.map((taskItem) => taskItem.id)
+  formData.value.task_list = task_list
+  formData.value.task_options = configStore.buildOptionsForTasks(
+    task_list,
+    formData.value.task_options,
+  )
+  if (currentSettingTaskUid.value === uid) {
     currentSettingTaskId.value = null
+    currentSettingTaskUid.value = null
     activeTab.value = "task-list"
   }
 }
 
-function openTaskSettings(taskId: string) {
-  if (!formData.value.task_list.includes(taskId)) {
-    const task_list = buildOrderedTaskList([...formData.value.task_list, taskId])
-    formData.value.task_list = task_list
-    formData.value.task_options = configStore.buildOptionsForTasks(
-      task_list,
-      formData.value.task_options,
-    )
+function openTaskSettings(entry: string) {
+  if (!formData.value.task_list.includes(entry)) {
+    handleAddTask(entry)
   }
-  currentSettingTaskId.value = taskId
+  currentSettingTaskUid.value =
+    [...taskListData.value].reverse().find((taskItem) => taskItem.id === entry)?.uid ?? null
+  currentSettingTaskId.value = entry
   activeSection.value = "content"
   activeTab.value = "task-settings"
+}
+
+function handleConfigTask(uid: string, entry: string) {
+  openTaskSettings(entry)
+  currentSettingTaskUid.value = uid
 }
 
 function handleCancel() {

@@ -14,12 +14,9 @@ CUSTOM_PRESET_NAME = "__mwu_reserved_custom_preset__"
 
 
 class TaskPresetSnapshotModel(BaseModel):
-    taskOrder: list[str] = Field(
-        default_factory=list, description="任务ID列表（有序，表示执行顺序）"
-    )
-    taskChecked: dict[str, bool] = Field(
-        default_factory=dict,
-        description="任务选中状态映射，key为任务ID，value为是否选中",
+    tasks: list[str] = Field(
+        default_factory=list,
+        description="队列任务ID列表（有序，允许重复，表示执行顺序）",
     )
     taskOptions: TaskOptionsByTask = Field(
         default_factory=dict,
@@ -33,9 +30,7 @@ class TaskPresetSnapshotModel(BaseModel):
 class TaskConfigModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    selectedPreset: str = Field(
-        default=CUSTOM_PRESET_NAME, description="当前选中的预设名称"
-    )
+    selectedPreset: str = Field(default="", description="当前选中的预设名称")
     presets: dict[str, TaskPresetSnapshotModel] = Field(
         default_factory=dict, description="所有预设对应的任务快照"
     )
@@ -80,7 +75,10 @@ def normalize_task_config(
 
     selected_preset = _normalize_preset_name(config.selectedPreset)
     if selected_preset not in preset_snapshots:
-        selected_preset = CUSTOM_PRESET_NAME
+        interface_presets = interface_model.preset or []
+        selected_preset = (
+            interface_presets[0].name if interface_presets else CUSTOM_PRESET_NAME
+        )
 
     return TaskConfigModel(
         selectedPreset=selected_preset,
@@ -92,34 +90,18 @@ def normalize_snapshot(
     snapshot: TaskPresetSnapshotModel | dict[str, Any] | None,
     interface_model: InterfaceModel,
 ) -> TaskPresetSnapshotModel:
-    default_task_order = _build_default_task_order(interface_model)
-    valid_task_ids = set(default_task_order)
-    normalized_order: list[str] = []
-    seen_task_ids: set[str] = set()
+    valid_task_ids = {task.entry for task in (interface_model.task or [])}
 
     raw_snapshot = _normalize_raw_snapshot(snapshot)
-    raw_task_order = raw_snapshot["taskOrder"]
-    raw_task_checked = raw_snapshot["taskChecked"]
+    normalized_tasks = [
+        task_id for task_id in raw_snapshot["tasks"] if task_id in valid_task_ids
+    ]
     raw_task_options = raw_snapshot["taskOptions"]
     raw_pre_tasks = raw_snapshot.get("preTasks", [])
 
-    for task_id in raw_task_order:
-        if task_id in valid_task_ids and task_id not in seen_task_ids:
-            normalized_order.append(task_id)
-            seen_task_ids.add(task_id)
-
-    for task_id in default_task_order:
-        if task_id not in seen_task_ids:
-            normalized_order.append(task_id)
-
-    normalized_checked = {task_id: False for task_id in default_task_order}
-    for task_id, checked in raw_task_checked.items():
-        if task_id in valid_task_ids:
-            normalized_checked[task_id] = bool(checked)
-
     normalized_options = normalize_task_options_by_task(
         raw_task_options,
-        normalized_order,
+        list(dict.fromkeys(normalized_tasks)),
         interface_model,
     )
 
@@ -139,8 +121,7 @@ def normalize_snapshot(
             continue
 
     return TaskPresetSnapshotModel(
-        taskOrder=normalized_order,
-        taskChecked=normalized_checked,
+        tasks=normalized_tasks,
         taskOptions=normalized_options,
         preTasks=parsed_pre_tasks,
     )
@@ -204,16 +185,14 @@ def normalize_task_execution_payload(
 ) -> tuple[list[str], TaskOptionsByTask, list[PreTaskCommand]]:
     valid_task_ids = {task.entry for task in (interface_model.task or [])}
     normalized_task_list: list[str] = []
-    seen_task_ids: set[str] = set()
 
     if isinstance(raw_task_list, list):
         for task_id in raw_task_list:
             if not isinstance(task_id, str):
                 continue
-            if task_id not in valid_task_ids or task_id in seen_task_ids:
+            if task_id not in valid_task_ids:
                 continue
             normalized_task_list.append(task_id)
-            seen_task_ids.add(task_id)
 
     normalized_task_options = normalize_task_options_by_task(
         raw_task_options if isinstance(raw_task_options, dict) else None,
@@ -254,34 +233,24 @@ def normalize_task_execution_payload(
 def build_interface_preset_snapshot(
     interface_model: InterfaceModel, preset: Preset
 ) -> TaskPresetSnapshotModel:
-    task_order = _build_default_task_order(interface_model)
-    task_checked = {task_id: False for task_id in task_order}
     task_name_to_entry = {
         task.name: task.entry for task in (interface_model.task or [])
     }
     task_option_maps = _build_task_option_maps(interface_model)
 
     task_options_by_task: TaskOptionsByTask = {}
-    for task_id in task_order:
-        defaults, _ = _build_option_defaults(task_option_maps.get(task_id, {}))
-        task_options_by_task[task_id] = defaults
-
-    ordered_preset_tasks: list[str] = []
-    seen_task_ids: set[str] = set()
+    tasks: list[str] = []
 
     for preset_task in preset.task or []:
         task_entry = task_name_to_entry.get(preset_task.name)
-        if not task_entry or task_entry in seen_task_ids:
+        if task_entry is None or preset_task.enabled is False:
             continue
 
-        ordered_preset_tasks.append(task_entry)
-        seen_task_ids.add(task_entry)
-        task_checked[task_entry] = bool(
-            True if preset_task.enabled is None else preset_task.enabled
-        )
+        tasks.append(task_entry)
 
         option_map = task_option_maps.get(task_entry, {})
-        target_options = task_options_by_task.setdefault(task_entry, {})
+        defaults, _ = _build_option_defaults(option_map)
+        target_options = task_options_by_task.setdefault(task_entry, defaults)
         for option_name, option_value in (preset_task.option or {}).items():
             if option_name not in option_map:
                 continue
@@ -292,13 +261,8 @@ def build_interface_preset_snapshot(
                 target_options,
             )
 
-    normalized_order = ordered_preset_tasks + [
-        task_id for task_id in task_order if task_id not in seen_task_ids
-    ]
-
     return TaskPresetSnapshotModel(
-        taskOrder=normalized_order,
-        taskChecked=task_checked,
+        tasks=tasks,
         taskOptions=task_options_by_task,
     )
 
@@ -306,47 +270,29 @@ def build_interface_preset_snapshot(
 def _normalize_raw_snapshot(snapshot: Any) -> dict[str, Any]:
     if isinstance(snapshot, TaskPresetSnapshotModel):
         return {
-            "taskOrder": [
-                task_id for task_id in snapshot.taskOrder if isinstance(task_id, str)
+            "tasks": [
+                task_id for task_id in snapshot.tasks if isinstance(task_id, str)
             ],
-            "taskChecked": {
-                task_id: bool(checked)
-                for task_id, checked in snapshot.taskChecked.items()
-                if isinstance(task_id, str)
-            },
             "taskOptions": _normalize_raw_task_options(snapshot.taskOptions),
             "preTasks": _normalize_raw_pre_tasks(snapshot.preTasks),
         }
 
     if not isinstance(snapshot, dict):
         return {
-            "taskOrder": [],
-            "taskChecked": {},
+            "tasks": [],
             "taskOptions": {},
             "preTasks": [],
         }
 
-    task_order = snapshot.get("taskOrder")
-    raw_task_order = (
-        [item for item in task_order if isinstance(item, str)]
-        if isinstance(task_order, list)
+    tasks = snapshot.get("tasks")
+    raw_tasks = (
+        [item for item in tasks if isinstance(item, str)]
+        if isinstance(tasks, list)
         else []
     )
 
-    task_checked = snapshot.get("taskChecked")
-    raw_task_checked = (
-        {
-            task_id: bool(checked)
-            for task_id, checked in task_checked.items()
-            if isinstance(task_id, str)
-        }
-        if isinstance(task_checked, dict)
-        else {}
-    )
-
     return {
-        "taskOrder": raw_task_order,
-        "taskChecked": raw_task_checked,
+        "tasks": raw_tasks,
         "taskOptions": _normalize_raw_task_options(snapshot.get("taskOptions")),
         "preTasks": _normalize_raw_pre_tasks(snapshot.get("preTasks")),
     }
@@ -429,11 +375,7 @@ def _normalize_option_value_for_storage(value: Any) -> TaskOptionValue | None:
 def _normalize_preset_name(value: Any) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
-    return CUSTOM_PRESET_NAME
-
-
-def _build_default_task_order(interface_model: InterfaceModel) -> list[str]:
-    return [task.entry for task in (interface_model.task or [])]
+    return ""
 
 
 def _build_task_option_maps(

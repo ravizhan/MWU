@@ -341,6 +341,19 @@
       "fps15": "15 FPS",
       "fps30": "30 FPS",
       "fps60": "60 FPS"
+    },
+    "taskQueue": {
+      "empty": "暂无任务，点击“添加任务”开始",
+      "incompatible": "与当前控制器或资源不兼容"
+    },
+    "addTask": {
+      "button": "添加任务",
+      "title": "添加任务",
+      "searchPlaceholder": "搜索任务",
+      "ungrouped": "未分组",
+      "incompatibleController": "与当前控制器不兼容",
+      "incompatibleResource": "与当前资源不兼容",
+      "incompatibleBoth": "与当前控制器和资源不兼容"
     }
   },
   "taskConfig": {

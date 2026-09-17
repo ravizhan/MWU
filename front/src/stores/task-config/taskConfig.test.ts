@@ -10,7 +10,7 @@ vi.mock("@/services/api", () => ({
 import { useTaskConfigStore } from "@/stores/task-config/taskConfig"
 import { useInterfaceStore } from "@/stores/interface/interface"
 import * as api from "@/services/api"
-import { CUSTOM_PRESET_NAME } from "@/types/taskConfigModel"
+import { CUSTOM_PRESET_NAME, type TaskPresetSnapshot } from "@/types/taskConfigModel"
 import type { InterfaceModel } from "@/types/interfaceModel"
 
 function buildTestInterface(): InterfaceModel {
@@ -69,7 +69,10 @@ function buildTestInterface(): InterfaceModel {
       },
       {
         name: "preset2",
-        task: [{ name: "Task B", enabled: true, option: { mode: ["manual"] } }],
+        task: [
+          { name: "Task B", enabled: true, option: { mode: ["manual"] } },
+          { name: "Task B", enabled: true, option: { mode: ["manual"] } },
+        ],
       },
     ],
   }
@@ -91,7 +94,10 @@ function initTaskConfigStore() {
 describe("useTaskConfigStore", () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.stubGlobal("crypto", { randomUUID: vi.fn<() => string>(() => "mock-uuid") })
+    let uuidCounter = 0
+    vi.stubGlobal("crypto", {
+      randomUUID: vi.fn<() => string>(() => `mock-uuid-${++uuidCounter}`),
+    })
     vi.clearAllMocks()
     setupInterface()
   })
@@ -111,45 +117,36 @@ describe("useTaskConfigStore", () => {
     expect(store.preTasks).toEqual([])
   })
 
-  it("按任务列表顺序派生已勾选任务 ID", () => {
-    const store = useTaskConfigStore()
-    store.taskList = [
-      { id: "first", name: "First", order: 0, checked: true },
-      { id: "middle", name: "Middle", order: 1, checked: false },
-      { id: "last", name: "Last", order: 2, checked: true },
-    ]
+  it("derives task IDs in queue order and keeps duplicate instances", () => {
+    const store = initTaskConfigStore()
+    store.taskList = store.buildQueueFromIds(["task-a", "task-a", "task-c"])
 
-    expect(store.selectedTaskIds).toEqual(["first", "last"])
-  })
-
-  describe("buildDefaultTaskList", () => {
-    it("returns tasks from interface with checked=false", () => {
-      const store = useTaskConfigStore()
-      const list = store.buildDefaultTaskList()
-      expect(list).toHaveLength(3)
-      expect(list.map((t) => ({ id: t.id, name: t.name, checked: t.checked }))).toEqual([
-        { id: "task-a", name: "Task A", checked: false },
-        { id: "task-b", name: "Task B", checked: false },
-        { id: "task-c", name: "Task C", checked: false },
-      ])
-    })
+    expect(store.selectedTaskIds).toEqual(["task-a", "task-a", "task-c"])
   })
 
   describe("selectPreset", () => {
-    it("selects a preset, hydrates its snapshot and returns true", () => {
+    it("hydrates only enabled preset tasks in declaration order", () => {
       const store = initTaskConfigStore()
       const result = store.selectPreset("preset1")
 
       expect(result).toBe(true)
       expect(store.selectedPresetName).toBe("preset1")
-      expect(store.taskList.map((t) => t.id)).toEqual(["task-a", "task-b", "task-c"])
-      expect(store.taskList.find((t) => t.id === "task-a")?.checked).toBe(true)
-      expect(store.taskList.find((t) => t.id === "task-b")?.checked).toBe(false)
-      expect(store.taskList.find((t) => t.id === "task-c")?.checked).toBe(false)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-a"])
+      expect(store.taskList[0]?.uid).toBeTruthy()
       expect(store.options["task-a"]).toEqual({
         difficulty: "hard",
         params: { host: "preset-host", port: "" },
       })
+    })
+
+    it("hydrates repeated preset entries as distinct queue instances", () => {
+      const store = initTaskConfigStore()
+      const result = store.selectPreset("preset2")
+
+      expect(result).toBe(true)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-b", "task-b"])
+      expect(new Set(store.taskList.map((task) => task.uid)).size).toBe(2)
+      expect(store.options["task-b"]).toEqual({ mode: ["manual"] })
     })
 
     it("returns false and leaves state unchanged for unknown presets", () => {
@@ -176,94 +173,122 @@ describe("useTaskConfigStore", () => {
       const store = initTaskConfigStore()
       store.selectPreset("preset1")
 
-      store.taskList.find((t) => t.id === "task-b")!.checked = true
+      store.taskList = store.buildQueueFromIds(["task-a", "task-b"])
       store.options["task-a"] = { ...store.options["task-a"], difficulty: "easy" }
       store.preTasks.push({ id: "pt1", command: "echo preset1", enabled: true, timeout: 30 })
 
       store.selectPreset(CUSTOM_PRESET_NAME)
 
       const preset1Snapshot = store.presetSnapshots["preset1"]
-      expect(preset1Snapshot.taskChecked["task-b"]).toBe(true)
+      expect(preset1Snapshot.tasks).toEqual(["task-a", "task-b"])
       expect(preset1Snapshot.taskOptions["task-a"]).toMatchObject({ difficulty: "easy" })
       expect(preset1Snapshot.preTasks).toHaveLength(1)
-      expect(preset1Snapshot.preTasks[0].command).toBe("echo preset1")
+      expect(preset1Snapshot.preTasks[0]?.command).toBe("echo preset1")
     })
 
     it("syncs current state before switching between two real presets", () => {
       const store = initTaskConfigStore()
       store.selectPreset("preset1")
 
-      store.taskList.find((t) => t.id === "task-c")!.checked = true
+      store.taskList = store.buildQueueFromIds(["task-b", "task-c"])
       store.options["task-b"] = { ...store.options["task-b"], mode: ["auto", "manual"] }
 
       const result = store.selectPreset("preset2")
 
       expect(result).toBe(true)
       const preset1Snapshot = store.presetSnapshots["preset1"]
-      expect(preset1Snapshot.taskChecked["task-c"]).toBe(true)
+      expect(preset1Snapshot.tasks).toEqual(["task-b", "task-c"])
       expect(preset1Snapshot.taskOptions["task-b"]).toMatchObject({ mode: ["auto", "manual"] })
 
       expect(store.selectedPresetName).toBe("preset2")
-      expect(store.taskList.map((t) => t.id)).toEqual(["task-b", "task-a", "task-c"])
-      expect(store.taskList.find((t) => t.id === "task-b")?.checked).toBe(true)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-b", "task-b"])
       expect(store.options["task-b"]).toEqual({ mode: ["manual"] })
     })
   })
 
   describe("serializeCurrentSnapshot", () => {
-    it("serializes task order, checked state, merged options and a copy of preTasks", () => {
+    it("serializes ordered duplicate task IDs, merged options and copied preTasks", () => {
       const store = initTaskConfigStore()
-      store.taskList = [store.taskList[2], store.taskList[0], store.taskList[1]]
-      store.taskList[0].checked = true
-      store.taskList[1].checked = true
+      store.taskList = store.buildQueueFromIds(["task-c", "task-a", "task-a", "task-b"])
       store.options["task-a"] = { ...store.options["task-a"], difficulty: "hard" }
       store.preTasks = [{ id: "pt1", command: "echo hello", enabled: true, timeout: 30 }]
 
       const snapshot = store.serializeCurrentSnapshot()
 
-      expect(snapshot.taskOrder).toEqual(["task-c", "task-a", "task-b"])
-      expect(snapshot.taskChecked).toEqual({
-        "task-c": true,
-        "task-a": true,
-        "task-b": false,
-      })
+      expect(snapshot.tasks).toEqual(["task-c", "task-a", "task-a", "task-b"])
       expect(snapshot.taskOptions["task-a"]).toEqual({
         difficulty: "hard",
         params: { host: "localhost", port: "" },
       })
       expect(snapshot.preTasks).toEqual(store.preTasks)
       expect(snapshot.preTasks).not.toBe(store.preTasks)
+
+      store.taskList = []
+      store.hydrateSnapshot(snapshot)
+      expect(store.taskList.map((task) => task.id)).toEqual([
+        "task-c",
+        "task-a",
+        "task-a",
+        "task-b",
+      ])
+      expect(new Set(store.taskList.map((task) => task.uid)).size).toBe(4)
     })
   })
 
   describe("normalizeSnapshot", () => {
-    it("returns a valid default snapshot when given undefined", () => {
+    it("returns an empty queue when no tasks are provided", () => {
       const store = initTaskConfigStore()
       const normalized = store.normalizeSnapshot(undefined)
 
-      expect(normalized.taskOrder).toEqual(["task-a", "task-b", "task-c"])
-      expect(normalized.taskChecked).toEqual({
-        "task-a": false,
-        "task-b": false,
-        "task-c": false,
+      expect(normalized.tasks).toEqual([])
+      expect(normalized.taskOptions).toEqual({})
+      expect(normalized.preTasks).toEqual([])
+    })
+
+    it("filters unknown IDs while preserving duplicate order", () => {
+      const store = initTaskConfigStore()
+      const normalized = store.normalizeSnapshot({
+        tasks: ["task-b", "task-a", "task-b", "task-zzz"],
+        taskOptions: {
+          "task-a": { difficulty: "hard" },
+          "task-b": { mode: ["manual"] },
+        },
+        preTasks: [],
       })
+
+      expect(normalized.tasks).toEqual(["task-b", "task-a", "task-b"])
       expect(normalized.taskOptions).toEqual({
+        "task-b": { mode: ["manual"] },
         "task-a": {
-          difficulty: "normal",
+          difficulty: "hard",
           params: { host: "localhost", port: "" },
         },
-        "task-b": { mode: ["auto"] },
-        "task-c": {},
       })
-      expect(normalized.preTasks).toEqual([])
+    })
+
+    it("ignores snapshots without tasks instead of migrating their fields", () => {
+      const store = initTaskConfigStore()
+      const oldSnapshot: TaskPresetSnapshot = JSON.parse(
+        JSON.stringify({
+          taskOrder: ["task-a", "task-b"],
+          taskChecked: { "task-a": true, "task-b": false },
+          taskOptions: { "task-a": { difficulty: "hard" } },
+          preTasks: [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }],
+        }),
+      )
+
+      const normalized = store.normalizeSnapshot(oldSnapshot)
+
+      expect(normalized.tasks).toEqual([])
+      expect(normalized.taskOptions).toEqual({})
+      expect(normalized.preTasks).toEqual(oldSnapshot.preTasks)
     })
 
     it("filters invalid preTasks and fills in missing defaults", () => {
       const store = initTaskConfigStore()
       const normalized = store.normalizeSnapshot({
-        taskOrder: ["task-b"],
-        taskChecked: { "task-b": true },
-        taskOptions: { "task-b": { mode: ["manual"] } },
+        tasks: [],
+        taskOptions: {},
         preTasks: [
           { id: "", command: "", enabled: true, timeout: 30 },
           { id: "", command: "valid-command", enabled: false, timeout: 10 },
@@ -274,7 +299,7 @@ describe("useTaskConfigStore", () => {
 
       expect(normalized.preTasks).toHaveLength(2)
       expect(normalized.preTasks[0]).toEqual({
-        id: "mock-uuid",
+        id: "mock-uuid-1",
         command: "valid-command",
         enabled: false,
         timeout: 10,
@@ -291,8 +316,7 @@ describe("useTaskConfigStore", () => {
       const store = initTaskConfigStore()
       const original = [{ id: "pt1", command: "echo ok", enabled: true, timeout: 30 }]
       const normalized = store.normalizeSnapshot({
-        taskOrder: [],
-        taskChecked: {},
+        tasks: [],
         taskOptions: {},
         preTasks: original,
       })
@@ -304,44 +328,38 @@ describe("useTaskConfigStore", () => {
   })
 
   describe("hydrateSnapshot", () => {
-    it("restores task list, options and preTasks from the snapshot", () => {
+    it("restores ordered duplicate instances, options and preTasks", () => {
       const store = initTaskConfigStore()
       const snapshot = {
-        taskOrder: ["task-c", "task-a", "task-b"],
-        taskChecked: { "task-c": true, "task-a": true, "task-b": false },
+        tasks: ["task-c", "task-a", "task-a", "invalid-task"],
         taskOptions: {
           "task-a": { difficulty: "hard", params: { host: "remote", port: "8080" } },
-          "task-b": { mode: ["manual"] },
         },
         preTasks: [{ id: "pt1", command: "echo hydrate", enabled: true, timeout: 30 }],
       }
 
       store.hydrateSnapshot(snapshot)
 
-      expect(store.taskList.map((t) => ({ id: t.id, checked: t.checked }))).toEqual([
-        { id: "task-c", checked: true },
-        { id: "task-a", checked: true },
-        { id: "task-b", checked: false },
-      ])
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-c", "task-a", "task-a"])
+      expect(new Set(store.taskList.map((task) => task.uid)).size).toBe(3)
       expect(store.options["task-a"]).toEqual({
         difficulty: "hard",
         params: { host: "remote", port: "8080" },
       })
-      expect(store.options["task-b"]).toEqual({ mode: ["manual"] })
       expect(store.preTasks).toEqual(snapshot.preTasks)
       expect(store.preTasks).not.toBe(snapshot.preTasks)
     })
   })
 
   describe("buildExecutionPayload", () => {
-    it("returns normalized task list, merged options and a copy of preTasks", () => {
+    it("returns normalized duplicate task IDs, merged options and copied preTasks", () => {
       const store = initTaskConfigStore()
       store.options["task-a"] = { ...store.options["task-a"], difficulty: "hard" }
       store.preTasks = [{ id: "pt1", command: "echo run", enabled: true, timeout: 30 }]
 
       const payload = store.buildExecutionPayload(["task-a", "invalid-task", "task-b", "task-a"])
 
-      expect(payload.task_list).toEqual(["task-a", "task-b"])
+      expect(payload.task_list).toEqual(["task-a", "task-b", "task-a"])
       expect(payload.task_options).toEqual({
         "task-a": {
           difficulty: "hard",
@@ -443,8 +461,7 @@ describe("useTaskConfigStore", () => {
         selectedPreset: "preset2",
         presets: {
           preset2: {
-            taskOrder: ["task-b"],
-            taskChecked: { "task-b": true },
+            tasks: ["task-b"],
             taskOptions: { "task-b": { mode: ["manual"] } },
             preTasks: [],
           },
@@ -456,12 +473,11 @@ describe("useTaskConfigStore", () => {
       expect(api.getTaskConfig).toHaveBeenCalledTimes(1)
       expect(store.selectedPresetName).toBe("preset2")
       expect(store.configLoaded).toBe(true)
-      expect(store.taskList.map((t) => t.id)).toEqual(["task-b", "task-a", "task-c"])
-      expect(store.taskList.find((t) => t.id === "task-b")?.checked).toBe(true)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-b"])
       expect(store.options["task-b"]).toEqual({ mode: ["manual"] })
     })
 
-    it("falls back to custom preset when the API returns an empty config", async () => {
+    it("falls back to the first interface preset when the API returns an empty config", async () => {
       const store = useTaskConfigStore()
       vi.mocked(api.getTaskConfig).mockResolvedValue({
         selectedPreset: "",
@@ -470,41 +486,70 @@ describe("useTaskConfigStore", () => {
 
       await store.loadConfig()
 
-      expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
+      expect(store.selectedPresetName).toBe("preset1")
       expect(store.configLoaded).toBe(true)
-      expect(store.taskList.map((t) => t.id)).toEqual(["task-a", "task-b", "task-c"])
-      expect(store.taskList.every((t) => !t.checked)).toBe(true)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-a"])
+      expect(store.options["task-a"]).toEqual({
+        difficulty: "hard",
+        params: { host: "preset-host", port: "" },
+      })
+    })
+
+    it("loads an old-format persisted snapshot as an empty queue", async () => {
+      const store = useTaskConfigStore()
+      vi.mocked(api.getTaskConfig).mockResolvedValue({
+        selectedPreset: "preset1",
+        presets: {
+          preset1: JSON.parse(
+            JSON.stringify({
+              taskOrder: ["task-a", "task-b"],
+              taskChecked: { "task-a": true, "task-b": false },
+              taskOptions: { "task-a": { difficulty: "hard" } },
+              preTasks: [],
+            }),
+          ),
+        },
+      })
+
+      await store.loadConfig()
+
+      expect(store.selectedPresetName).toBe("preset1")
+      expect(store.taskList).toEqual([])
+      expect(store.options).toEqual({})
     })
   })
 
   describe("resetConfig", () => {
-    it("calls resetTaskConfig API and resets to custom preset with empty preTasks", async () => {
+    it("resets to the first interface preset with empty preTasks", async () => {
       const store = initTaskConfigStore()
-      store.selectPreset("preset1")
+      store.selectPreset("preset2")
       store.preTasks = [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }]
       vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
 
       await store.resetConfig()
 
       expect(api.resetTaskConfig).toHaveBeenCalledTimes(1)
-      expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
+      expect(store.selectedPresetName).toBe("preset1")
       expect(store.preTasks).toEqual([])
-      expect(store.taskList.map((t) => t.id)).toEqual(["task-a", "task-b", "task-c"])
-      expect(store.taskList.every((t) => !t.checked)).toBe(true)
+      expect(store.taskList.map((task) => task.id)).toEqual(["task-a"])
+      expect(store.options["task-a"]).toEqual({
+        difficulty: "hard",
+        params: { host: "preset-host", port: "" },
+      })
     })
   })
 
   describe("syncCurrentPresetSnapshot", () => {
     it("updates the snapshot for the currently selected preset", () => {
       const store = initTaskConfigStore()
-      store.taskList.find((t) => t.id === "task-a")!.checked = true
+      store.taskList = store.buildQueueFromIds(["task-a"])
       store.options["task-a"] = { ...store.options["task-a"], difficulty: "hard" }
       store.preTasks = [{ id: "pt1", command: "echo sync", enabled: true, timeout: 30 }]
 
       store.syncCurrentPresetSnapshot()
 
       const snapshot = store.presetSnapshots[CUSTOM_PRESET_NAME]
-      expect(snapshot.taskChecked["task-a"]).toBe(true)
+      expect(snapshot.tasks).toEqual(["task-a"])
       expect(snapshot.taskOptions["task-a"]).toMatchObject({ difficulty: "hard" })
       expect(snapshot.preTasks).toEqual(store.preTasks)
     })

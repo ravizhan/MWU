@@ -21,7 +21,7 @@
       <NCard :bordered="false" content-style="padding: 16px">
         <div class="text-sm opacity-70">{{ t("panel.taskList") }}</div>
         <div class="text-2xl font-bold">
-          {{ selectedTaskCount }} {{ t("common.slash") }} {{ configStore.taskList.length }}
+          {{ selectedTaskCount }} {{ t("common.slash") }} {{ interfaceStore.getTaskList.length }}
         </div>
       </NCard>
       <NCard :bordered="false" content-style="padding: 16px">
@@ -169,7 +169,7 @@ const schedulerStore = useSchedulerStore()
 const settingsStore = useSettingsStore()
 const deviceStore = useDeviceConnectionStore()
 
-const selectedTaskCount = computed(() => configStore.taskList.filter((task) => task.checked).length)
+const selectedTaskCount = computed(() => configStore.taskList.length)
 
 const recipeCards = computed(() => {
   return interfaceStore.getPresetList.map((preset) => {
