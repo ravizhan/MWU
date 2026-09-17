@@ -5,20 +5,9 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
-    "success": "Success",
-    "fail": "Failed",
-    "error": "Error",
-    "title": "Notice",
     "unknown": "Unknown",
-    "loading": "Loading",
-    "none": "None",
     "copy": "Copy",
-    "start": "Start",
-    "pause": "Pause",
-    "darkMode": "Dark Mode",
-    "lightMode": "Light Mode",
-    "colon": ":",
-    "slash": "/"
+    "colon": ":"
   },
   "nav": {
     "home": "Home",
@@ -27,14 +16,7 @@
     "logs": "Logs",
     "settings": "Settings"
   },
-  "menu": {
-    "home": "Home",
-    "settings": "Settings"
-  },
   "settings": {
-    "title": "Settings",
-    "theme": "Theme",
-    "general": "General",
     "saveSuccess": "Settings saved",
     "saveFailed": "Save failed",
     "networkError": "Network error, please try again later",
@@ -42,7 +24,6 @@
       "update": "Update Settings",
       "taskSettings": "Task Settings",
       "runtime": "Runtime Settings",
-      "scheduler": "Scheduler",
       "ui": "UI Settings",
       "notification": "Notification",
       "about": "About"
@@ -53,7 +34,6 @@
       "auto": "Auto Update",
       "channel": "Update Channel",
       "proxy": "Proxy Address",
-      "checking": "Checking...",
       "latest": "You are using the latest version",
       "failed": "Failed to check for updates",
       "newVersion": "New version found",
@@ -74,12 +54,7 @@
       },
       "mirrorchyanCdk": "MirrorChyan CDK",
       "mirrorchyanCdkPlaceholder": "Enter CDK to enable MirrorChyan accelerated download",
-      "mirrorchyanCdkHint": "Get CDK",
-      "mirrorchyanCdkUrl": "https://mirrorchyan.com",
-      "downloadSource": {
-        "mirrorchyan": "MirrorChyan",
-        "github": "GitHub"
-      }
+      "mirrorchyanCdkHint": "Get CDK"
     },
     "taskSettings": {
       "empty": "No configurable options"
@@ -106,7 +81,6 @@
       "historyTitle": "Execution History",
       "noHistory": "No execution records",
       "deleteConfirm": "Are you sure you want to delete this task?",
-      "deleted": "Task deleted",
       "history": {
         "skippedBy": "Skipped by {name}"
       },
@@ -155,18 +129,13 @@
           "hourly": "Hourly"
         },
         "executionTime": "Time",
-        "selectTime": "Select Time",
         "intervalTime": "Interval",
         "startTime": "Start Time",
-        "selectStartTime": "Select Start Time",
         "endTime": "End Time",
-        "selectEndTime": "Select End Time",
         "currentSetting": "Current Setting: ",
         "selectTaskTip": "Please select a task from the list and click settings button first",
         "removedIncompatibleTasks": "Removed {count} incompatible task(s) after filter change",
-        "saveSuccess": "Saved successfully",
         "saveFail": "Save failed",
-        "taskRequired": "Please select at least one task",
         "taskUpdated": "Task Updated",
         "taskCreated": "Task Created",
         "tab": {
@@ -175,7 +144,6 @@
           "preTasks": "Pre-Task"
         },
         "noOptions": "Nothing here",
-        "deviceAndResource": "Device & Resource",
         "controller": "Controller",
         "deviceAddress": "Device Address",
         "resource": "Resource",
@@ -198,13 +166,10 @@
       },
       "rules": {
         "nameRequired": "Please enter task name",
-        "nameLength": "Task name length must be 1-100 characters",
-        "cronRequired": "Please enter Cron expression",
         "cronInvalid": "Invalid Cron expression format",
         "dateRequired": "Please select execution time",
         "dateInPast": "Execution time cannot be in the past",
         "intervalRequired": "Interval must be greater than 0",
-        "endBeforeStart": "End time cannot be earlier than start time",
         "taskListRequired": "Please select at least one task",
         "invalidAddress": "Invalid device address format"
       }
@@ -226,14 +191,12 @@
     "notification": {
       "title": "Notification",
       "test": "Test Notification",
-      "enable": "Enable Notification",
       "system": "System",
       "browser": "Browser",
       "external": "External",
       "onComplete": "Notify on Complete",
       "onError": "Notify on Error",
       "testSending": "Sending test notification...",
-      "testSuccess": "Test notification sent",
       "testResult": "Send failed: {message}",
       "testError": "Error sending test notification",
       "browserUnsupported": "Browser notifications are not supported in this environment",
@@ -287,43 +250,27 @@
     "invalidPlaycoverAddress": "PlayCover Address Invalid",
     "selectResource": "Please select a resource",
     "connect": "Connect",
-    "confirm": "Confirm",
-    "refresh": "Refresh",
     "taskList": "Task List",
     "start": "Start Task",
     "stop": "Stop Task",
     "resetConfig": "Reset Config",
     "noDevice": "No available device",
-    "noMatchingDevice": "No matching device",
-    "useCustomValue": "Use \"{value}\"",
     "recentDevices": "Recent",
-    "discoveredDevices": "Discovered",
     "selectTask": "Please select at least one task",
     "noCompatibleTask": "No executable tasks for current resource/controller",
     "resetConfigConfirm": "Are you sure you want to reset all task configurations? This cannot be undone.",
     "configReset": "Configuration reset",
     "taskSettings": "Task Settings",
-    "taskDescription": "Task Description",
     "empty": "Empty",
     "preview": "Live Preview",
-    "selectFPS": "Select FPS",
-    "startStream": "Start Preview",
-    "stopStream": "Pause Preview",
     "previewHint": "Click start to view live stream",
     "connectFirstHint": "Please connect device in left panel first",
     "log": "Live Log",
-    "copySuccess": "Copied successfully",
     "preset": {
       "title": "Preset",
       "custom": "Custom",
-      "empty": "No presets available",
-      "name": "Preset",
-      "status": "Status",
       "taskCount": "Tasks",
-      "applied": "Applied",
-      "modified": "Modified",
-      "noDescription": "No preset description",
-      "customDescription": "You are using a custom task snapshot and can continue editing it manually."
+      "noDescription": "No preset description"
     },
     "health": {
       "paused": "Paused"
@@ -362,16 +309,10 @@
       "description": "Shell commands executed before the main task starts",
       "add": "Add Task",
       "command": "Command",
-      "timeout": "Timeout (seconds)",
-      "enabled": "Enabled",
       "empty": "No pre-task",
       "warnTitle": "Advanced feature warning",
       "warnContent": "Pre-tasks run arbitrary shell commands before each run. Misconfiguration may cause failures or security risks. Only continue if you understand what this does.",
-      "dontRemind": "Don't remind me again",
-      "errors": {
-        "timeout": "Timeout must be between 1 and 3600 seconds",
-        "commandRequired": "Please enter a command"
-      }
+      "dontRemind": "Don't remind me again"
     }
   }
 }
