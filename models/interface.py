@@ -163,10 +163,23 @@ class MacOSController(BaseModel):
 class LinuxController(BaseModel):
     """Linux 控制器配置（仅 Linux）"""
 
-    input: Literal["Wlr", "UInput", "Libei"] | None = None
+    input: Literal["Wlr", "Libei"] | None = None
     screencap: Literal["Wlr", "PipeWire"] | None = None
     pipewire_source: Literal["Gamescope", "Portal"] | None = "Gamescope"
     use_win32_vk_code: bool | None = False
+
+    @model_validator(mode="after")
+    def check_supported_combination(self):
+        input_method = self.input or "Wlr"
+        screencap = self.screencap or "Wlr"
+        pipewire_source = self.pipewire_source or "Gamescope"
+        if input_method == "Libei" and (
+            screencap != "PipeWire" or pipewire_source != "Gamescope"
+        ):
+            raise ValueError(
+                "input=Libei 需要 screencap=PipeWire 且 pipewire_source=Gamescope"
+            )
+        return self
 
 
 class GamepadController(BaseModel):

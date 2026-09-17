@@ -149,6 +149,23 @@ class TestLinuxController:
         assert config.pipewire_source == "Gamescope"
         assert config.use_win32_vk_code is False
 
+    def test_libei_accepts_gamescope_pipewire(self):
+        config = LinuxController(
+            input="Libei", screencap="PipeWire", pipewire_source="Gamescope"
+        )
+
+        assert config.input == "Libei"
+
+    def test_libei_rejects_wlr_screencap(self):
+        with pytest.raises(ValidationError, match="Libei"):
+            LinuxController(input="Libei", screencap="Wlr")
+
+    def test_libei_rejects_portal_pipewire_source(self):
+        with pytest.raises(ValidationError, match="Libei"):
+            LinuxController(
+                input="Libei", screencap="PipeWire", pipewire_source="Portal"
+            )
+
 
 # ---------------------------------------------------------------------------
 # GamepadController — method→int coercion & defaults

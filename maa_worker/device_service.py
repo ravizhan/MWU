@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from maa_utils import MaaWorker
 
 _LINUX_SCREENCAP_METHODS = {"Wlr": 1, "PipeWire": 4}
-_LINUX_INPUT_METHODS = {"Wlr": 1, "UInput": 2, "Libei": 4}
+_LINUX_INPUT_METHODS = {"Wlr": 1, "Libei": 4}
 
 
 def is_controller_supported(controller) -> tuple[bool, str]:
@@ -718,7 +718,8 @@ class DeviceService:
     def _find_gamescope_instance(self, address: str):
         """按地址或可用性选择 gamescope 实例。
 
-        优先匹配 "gamescope-<display_no>" 形式的地址；无匹配时返回第一个
+        显式指定 "gamescope-<display_no>" 时只返回匹配的实例，找不到返回 None，
+        避免静默连接到另一个 gamescope 实例；未指定 display 号时返回第一个
         带 PipeWire 节点（pipewire_node_id != 0）的实例；都没有返回 None。
         """
         instances = Toolkit.find_gamescope_instances()
@@ -727,11 +728,12 @@ class DeviceService:
             try:
                 display_no = int(address.removeprefix("gamescope-"))
             except ValueError:
-                display_no = None
+                return None
         if display_no is not None:
             for instance in instances:
                 if instance.display_no == display_no and instance.pipewire_node_id != 0:
                     return instance
+            return None
         for instance in instances:
             if instance.pipewire_node_id != 0:
                 return instance
@@ -792,14 +794,12 @@ class DeviceService:
         if screencap == "Wlr" or input_method == "Wlr":
             socket_path = device_config.address
             if socket_path.startswith("gamescope-"):
-                socket_path = next(
-                    (
-                        d.class_name.strip()
-                        for d in Toolkit.find_desktop_windows()
-                        if d.class_name.strip()
-                    ),
-                    "",
+                fail(
+                    "gamescope 设备不支持 Wlr 输入/截图（gamescope 未暴露 wlr 协议），"
+                    "请使用 screencap=PipeWire + pipewire_source=Gamescope，"
+                    "input=Wlr 时请选择 Wayland socket 设备"
                 )
+                return None
             if not socket_path:
                 fail("未找到可用的 Wayland socket")
                 return None
@@ -813,9 +813,6 @@ class DeviceService:
                     "Linux 控制器 input=Libei 需要 gamescope 实例提供 EIS socket，当前组合不支持"
                 )
                 return None
-        if input_method == "UInput":
-            fail("Linux 控制器 input=UInput 需要屏幕宽高参数，当前版本不支持该组合")
-            return None
         return LinuxController(config)
 
     def set_resource(self, resource_name: str) -> bool:

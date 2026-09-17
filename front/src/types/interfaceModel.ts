@@ -52,7 +52,7 @@ export interface PlayCoverController {
   uuid?: string
 }
 
-export type LinuxInput = "Wlr" | "UInput" | "Libei"
+export type LinuxInput = "Wlr" | "Libei"
 export type LinuxScreencap = "Wlr" | "PipeWire"
 export type LinuxPipewireSource = "Gamescope" | "Portal"
 

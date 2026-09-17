@@ -399,25 +399,61 @@ class TestLinuxSupport:
         }
         assert "wlr_socket_path" not in captured
 
-    def test_connect_rejects_uinput(self, app_root: Path):
+    def test_connect_explicit_gamescope_address_never_falls_back(self, app_root: Path):
         controller = _controller("LinuxController", "Linux")
         controller.linux = SimpleNamespace(
-            screencap=None,
-            input="UInput",
-            pipewire_source=None,
+            screencap="PipeWire",
+            input=None,
+            pipewire_source="Gamescope",
             use_win32_vk_code=False,
         )
         worker = self._linux_worker(app_root, controller)
+        instances = [
+            SimpleNamespace(
+                display_no=1,
+                pipewire_node_id=70,
+                eis_socket_path="/run/user/1000/gamescope-1-ei",
+            ),
+        ]
 
         model = DeviceService.build_device_model_from_config(
             "LinuxController",
             "Linux",
-            "/run/user/1000/wayland-1",
+            "gamescope-2",
         )
-        connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+        with patch.object(Toolkit, "find_gamescope_instances", return_value=instances):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
         assert connected is False
-        assert "UInput" in worker.device_state.last_device_error
+        assert "gamescope" in worker.device_state.last_device_error
+
+    def test_connect_rejects_gamescope_address_with_wlr_input(self, app_root: Path):
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap="PipeWire",
+            input=None,  # 默认 Wlr
+            pipewire_source="Gamescope",
+            use_win32_vk_code=False,
+        )
+        worker = self._linux_worker(app_root, controller)
+        instances = [
+            SimpleNamespace(
+                display_no=0,
+                pipewire_node_id=70,
+                eis_socket_path="/run/user/1000/gamescope-0-ei",
+            ),
+        ]
+
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController",
+            "Linux",
+            "gamescope-0",
+        )
+        with patch.object(Toolkit, "find_gamescope_instances", return_value=instances):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is False
+        assert "Wlr" in worker.device_state.last_device_error
 
 
 class TestCustomDevicePersistence:
