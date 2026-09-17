@@ -284,15 +284,13 @@ class SchedulerManager:
         if not worker or not getattr(worker, "interface", None):
             normalized_task_list: list[str] = []
             if isinstance(task_list, list):
-                seen_task_ids: set[str] = set()
-                for task_id in task_list:
-                    if not isinstance(task_id, str) or task_id in seen_task_ids:
+                for task_name in task_list:
+                    if not isinstance(task_name, str):
                         continue
-                    normalized_task_list.append(task_id)
-                    seen_task_ids.add(task_id)
+                    normalized_task_list.append(task_name)
             return (
                 normalized_task_list,
-                {task_id: {} for task_id in normalized_task_list},
+                {task_name: {} for task_name in normalized_task_list},
                 [],
             )
 

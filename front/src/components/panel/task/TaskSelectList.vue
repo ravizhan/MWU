@@ -85,7 +85,7 @@ interface Props {
 
 interface Emits {
   (e: "update:tasks", value: QueuedTaskItem[]): void
-  (e: "config", uid: string, entry: string): void
+  (e: "config", uid: string, name: string): void
   (e: "remove", uid: string): void
 }
 
@@ -104,8 +104,7 @@ const interfaceStore = useInterfaceStore()
 
 function isIncompatible(taskId: string): boolean {
   return (
-    hideIncompatible &&
-    !interfaceStore.isTaskCompatibleByEntry(taskId, controllerName, resourceName)
+    hideIncompatible && !interfaceStore.isTaskCompatibleByName(taskId, controllerName, resourceName)
   )
 }
 
@@ -115,7 +114,7 @@ const taskListData = computed({
 })
 
 function resolveTaskLabel(taskId: string, fallback: string) {
-  const task = interfaceStore.getTaskByEntry(taskId)
+  const task = interfaceStore.getTaskByName(taskId)
   return resolveInterfaceText(interfaceStore.interface, locale.value, task?.label, fallback)
 }
 
@@ -135,7 +134,7 @@ function taskHasContent(task: Task | null): boolean {
 }
 
 function handleRowClick(item: QueuedTaskItem) {
-  const task = interfaceStore.getTaskByEntry(item.id)
+  const task = interfaceStore.getTaskByName(item.id)
   if (taskHasContent(task)) {
     emit("config", item.uid, item.id)
   }

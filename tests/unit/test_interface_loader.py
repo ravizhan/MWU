@@ -220,11 +220,14 @@ class TestRegisterTasks:
         with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
             _register_tasks([{"name": "A", "entry": ""}], Path(), _MergeState())
 
-    def test_entry_conflict(self):
+    def test_duplicate_entry_allowed(self):
         state = _MergeState()
-        _register_tasks([{"name": "A", "entry": "E"}], Path("/a.json"), state)
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            _register_tasks([{"name": "B", "entry": "E"}], Path("/b.json"), state)
+        _register_tasks([{"name": "A", "entry": "SharedEntry"}], Path("/a.json"), state)
+        _register_tasks([{"name": "B", "entry": "SharedEntry"}], Path("/b.json"), state)
+        assert state.task_names == {
+            "A": Path("/a.json"),
+            "B": Path("/b.json"),
+        }
 
     def test_name_conflict(self):
         state = _MergeState()
@@ -444,7 +447,7 @@ class TestLoadInterfaceModel:
 
     def test_import_file_loaded(self, tmp_path):
         (tmp_path / "tasks.json5").write_text(
-            '{task: [{name: "Extra", entry: "Extra"}]}'
+            '{task: [{name: "Extra", entry: "EntryExtra"}]}'
         )
         _write_interface(
             tmp_path,
@@ -685,7 +688,9 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "T", "entry": "T", "resource": ["bad_resource"]}],
+                "task": [
+                    {"name": "T", "entry": "EntryT", "resource": ["bad_resource"]}
+                ],
             },
         )
         with pytest.raises(InterfaceLoadError, match="引用了不存在的 resource"):
@@ -699,7 +704,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "T", "entry": "T", "controller": ["bad_ctrl"]}],
+                "task": [{"name": "T", "entry": "EntryT", "controller": ["bad_ctrl"]}],
             },
         )
         with pytest.raises(InterfaceLoadError, match="引用了不存在的 controller"):
@@ -849,10 +854,10 @@ class TestLoadInterfaceModel:
         assert model.option["skin"].cases is not None
         assert len(model.option["skin"].cases) == 2
 
-    def test_import_conflict_entry(self, tmp_path):
-        """Importing an entry defined in root raises conflict."""
+    def test_import_duplicate_entry_keeps_both_tasks(self, tmp_path):
+        """Importing a task whose entry repeats a root entry is allowed."""
         (tmp_path / "extra.json5").write_text(
-            '{task: [{name: "X", entry: "RootTask"}]}'
+            '{task: [{name: "ExtraTask", entry: "RootTaskEntry"}]}'
         )
         _write_interface(
             tmp_path,
@@ -861,12 +866,18 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "RootTask", "entry": "RootTask"}],
+                "task": [{"name": "RootTask", "entry": "RootTaskEntry"}],
                 "import": ["extra.json5"],
             },
         )
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            load_interface_model(tmp_path)
+
+        model = load_interface_model(tmp_path)
+
+        assert model.task is not None
+        assert {(task.name, task.entry) for task in model.task} == {
+            ("RootTask", "RootTaskEntry"),
+            ("ExtraTask", "RootTaskEntry"),
+        }
 
     def test_import_fragment_with_illegal_key(self, tmp_path):
         """Import file with key outside the allowed sections is rejected."""
@@ -896,7 +907,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A"}],
+                "task": [{"name": "A", "entry": "EntryA"}],
                 "preset": [{"name": "P", "task": [{"name": "A"}, {"name": "A"}]}],
             },
         )
@@ -911,7 +922,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A"}],
+                "task": [{"name": "A", "entry": "EntryA"}],
                 "preset": [{"name": "P", "task": [{"name": "NoSuchTask"}]}],
             },
         )
@@ -926,7 +937,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A"}],
+                "task": [{"name": "A", "entry": "EntryA"}],
                 "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
                 "preset": [
                     {"name": "P", "task": [{"name": "A", "option": {"diff": "easy"}}]}
@@ -945,7 +956,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["diff"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["diff"]}],
                 "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
                 "preset": [
                     {"name": "P", "task": [{"name": "A", "option": {"diff": "hard"}}]}
@@ -963,7 +974,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["mods"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["mods"]}],
                 "option": {
                     "mods": {
                         "type": "checkbox",
@@ -989,7 +1000,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["cfg"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
                 "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
                 "preset": [
                     {
@@ -1012,7 +1023,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["cfg"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
                 "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
                 "preset": [
                     {
@@ -1033,7 +1044,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["hotkeys"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
                 "option": {
                     "hotkeys": {
                         "type": "hotkey",
@@ -1063,7 +1074,7 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "A", "option": ["hotkeys"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
                 "option": {
                     "hotkeys": {
                         "type": "hotkey",

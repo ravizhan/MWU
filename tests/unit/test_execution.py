@@ -83,8 +83,10 @@ class _FakeEvents:
 
 
 class _FakeInterface:
-    def __init__(self, entries: list[str]):
-        self.task = [SimpleNamespace(entry=e, option=[]) for e in entries]
+    def __init__(self, names: list[str]):
+        self.task = [
+            SimpleNamespace(name=n, entry=f"Entry{n}", option=[]) for n in names
+        ]
         self.option = {}
         self.global_option = []
         self.pretask = []
@@ -677,8 +679,8 @@ class TestPretaskAdmission:
             result=True, task_state=worker.task_state
         )
         worker.interface.task = [
-            SimpleNamespace(entry="Startup", option=[]),
-            SimpleNamespace(entry="Second", option=[]),
+            SimpleNamespace(name="Startup", entry="EntryStartup", option=[]),
+            SimpleNamespace(name="Second", entry="EntrySecond", option=[]),
         ]
         worker.interface.option = {
             "global_setting": Option(

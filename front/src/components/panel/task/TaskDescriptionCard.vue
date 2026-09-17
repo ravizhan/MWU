@@ -44,7 +44,7 @@ function getTaskDocumentSource(task: Task | null): string {
 watch(
   [selectedTaskId, () => interfaceStore.interface],
   async () => {
-    const task = interfaceStore.getTaskByEntry(selectedTaskId.value)
+    const task = interfaceStore.getTaskByName(selectedTaskId.value)
     documentContent.value = await resolveInterfaceDocumentContent(
       interfaceStore.interface,
       "",

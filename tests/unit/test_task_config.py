@@ -339,7 +339,7 @@ class TestBuildTaskOptionMaps:
             cases=[OptionCase(name="sub", option=["sub_opt"])],
         )
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T", option=["parent_opt"])],
+            tasks=[Task(name="T", entry="EntryT", option=["parent_opt"])],
             options={"parent_opt": parent_opt, "sub_opt": sub_opt},
         )
         maps = _build_task_option_maps(iface)
@@ -446,7 +446,7 @@ class TestNormalizeOptionsForTask:
 class TestNormalizeTaskOptionsByTask:
     def test_basic(self):
         iface = _make_interface(
-            tasks=[Task(name="T1", entry="T1", option=["diff"])],
+            tasks=[Task(name="T1", entry="EntryT1", option=["diff"])],
             options={"diff": _make_option("select", cases=["a", "b"])},
         )
         result = normalize_task_options_by_task({"T1": {"diff": "b"}}, ["T1"], iface)
@@ -464,26 +464,26 @@ class TestNormalizeTaskExecutionPayload:
             tasks=[Task(name="A", entry="TaskA"), Task(name="B", entry="TaskB")],
         )
         task_list, _, _ = normalize_task_execution_payload(
-            ["TaskA", "TaskB", "TaskA", "InvalidTask"],
+            ["A", "B", "A", "InvalidTask"],
             {},
             iface,
         )
-        assert task_list == ["TaskA", "TaskB", "TaskA"]
+        assert task_list == ["A", "B", "A"]
 
     def test_orders_by_input_order(self):
         iface = _make_interface(
             tasks=[Task(name="B", entry="TaskB"), Task(name="A", entry="TaskA")],
         )
         task_list, _, _ = normalize_task_execution_payload(
-            ["TaskB", "TaskA"],
+            ["B", "A"],
             {},
             iface,
         )
-        assert task_list == ["TaskB", "TaskA"]
+        assert task_list == ["B", "A"]
 
     def test_normalizes_task_options(self):
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A", option=["diff"])],
+            tasks=[Task(name="A", entry="EntryA", option=["diff"])],
             options={"diff": _make_option("select", cases=["easy", "hard"])},
         )
         _, options, _ = normalize_task_execution_payload(
@@ -520,20 +520,20 @@ class TestNormalizeSnapshot:
         result = normalize_snapshot(None, iface)
         assert result.tasks == []
 
-    def test_removes_invalid_task_ids(self):
+    def test_removes_unknown_task_names(self):
         iface = _make_interface(tasks=[Task(name="A", entry="TaskA")])
         result = normalize_snapshot(
             {
-                "tasks": ["TaskA", "InvalidTask"],
+                "tasks": ["A", "InvalidTask"],
                 "taskOptions": {},
             },
             iface,
         )
-        assert result.tasks == ["TaskA"]
+        assert result.tasks == ["A"]
 
-    def test_preserves_duplicate_ids(self):
-        """Duplicate task IDs in input remain separate queue instances."""
-        iface = _make_interface(tasks=[Task(name="A", entry="A")])
+    def test_preserves_duplicate_names(self):
+        """Duplicate task names in input remain separate queue instances."""
+        iface = _make_interface(tasks=[Task(name="A", entry="EntryA")])
         result = normalize_snapshot(
             {"tasks": ["A", "A"], "taskOptions": {}},
             iface,
@@ -563,7 +563,7 @@ class TestBuildInterfacePresetSnapshot:
     def test_select_option_applied(self):
         """Preset applies a select option value."""
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T", option=["diff"])],
+            tasks=[Task(name="T", entry="EntryT", option=["diff"])],
             options={"diff": _make_option("select", cases=["easy", "hard"])},
             presets=[
                 Preset(name="P", task=[PresetTask(name="T", option={"diff": "hard"})])
@@ -575,7 +575,7 @@ class TestBuildInterfacePresetSnapshot:
     def test_checkbox_option_applied(self):
         """Preset applies a checkbox option value."""
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T", option=["mods"])],
+            tasks=[Task(name="T", entry="EntryT", option=["mods"])],
             options={"mods": _make_option("checkbox", cases=["a", "b", "c"])},
             presets=[
                 Preset(
@@ -589,7 +589,7 @@ class TestBuildInterfacePresetSnapshot:
     def test_input_option_applied(self):
         """Preset applies an input option value."""
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T", option=["cfg"])],
+            tasks=[Task(name="T", entry="EntryT", option=["cfg"])],
             options={
                 "cfg": _make_option(
                     "input", inputs=[InputCase(name="host"), InputCase(name="port")]
@@ -615,7 +615,7 @@ class TestBuildInterfacePresetSnapshot:
             hotkeys=[HotkeyCase(name="attack"), HotkeyCase(name="defend")],
         )
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T", option=["combo"])],
+            tasks=[Task(name="T", entry="EntryT", option=["combo"])],
             options={"combo": opt},
             presets=[
                 Preset(
@@ -638,7 +638,7 @@ class TestBuildInterfacePresetSnapshot:
     def test_enabled_false_is_omitted(self):
         """Preset task with enabled=False is omitted from the queue."""
         iface = _make_interface(
-            tasks=[Task(name="T", entry="T")],
+            tasks=[Task(name="T", entry="EntryT")],
             presets=[Preset(name="P", task=[PresetTask(name="T", enabled=False)])],
         )
         snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
@@ -647,7 +647,7 @@ class TestBuildInterfacePresetSnapshot:
     def test_duplicate_preset_tasks_preserved(self):
         """Duplicate task names in a preset remain ordered queue instances."""
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A")],
+            tasks=[Task(name="A", entry="EntryA")],
             presets=[
                 Preset(name="P", task=[PresetTask(name="A"), PresetTask(name="A")])
             ],
@@ -663,14 +663,14 @@ class TestBuildInterfacePresetSnapshot:
 
 class TestNormalizeTaskConfig:
     def test_empty_config(self):
-        iface = _make_interface(tasks=[Task(name="A", entry="A")])
+        iface = _make_interface(tasks=[Task(name="A", entry="EntryA")])
         result = normalize_task_config(TaskConfigModel(), iface)
         assert CUSTOM_PRESET_NAME in result.presets
         assert result.selectedPreset == CUSTOM_PRESET_NAME
 
     def test_falls_back_to_first_interface_preset_when_selected_missing(self):
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A")],
+            tasks=[Task(name="A", entry="EntryA")],
             presets=[Preset(name="QuickRun"), Preset(name="Other")],
         )
         result = normalize_task_config(
@@ -680,7 +680,7 @@ class TestNormalizeTaskConfig:
 
     def test_empty_config_selects_first_interface_preset(self):
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A")],
+            tasks=[Task(name="A", entry="EntryA")],
             presets=[Preset(name="QuickRun"), Preset(name="Other")],
         )
         result = normalize_task_config(TaskConfigModel(), iface)
@@ -688,7 +688,7 @@ class TestNormalizeTaskConfig:
 
     def test_preserves_valid_selected_preset(self):
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A")],
+            tasks=[Task(name="A", entry="EntryA")],
             presets=[Preset(name="QuickRun")],
         )
         config = TaskConfigModel(selectedPreset="QuickRun")
@@ -698,7 +698,7 @@ class TestNormalizeTaskConfig:
     def test_includes_interface_preset_when_absent_from_config(self):
         """Interface presets missing from saved config are built from scratch."""
         iface = _make_interface(
-            tasks=[Task(name="A", entry="A")],
+            tasks=[Task(name="A", entry="EntryA")],
             presets=[Preset(name="QuickRun", task=[PresetTask(name="A")])],
         )
         config = TaskConfigModel(selectedPreset="QuickRun")

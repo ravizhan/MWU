@@ -170,9 +170,9 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       })
     },
 
-    addTaskToQueue(entry: string): QueuedTaskItem | null {
+    addTaskToQueue(taskName: string): QueuedTaskItem | null {
       const interfaceStore = useInterfaceStore()
-      const task = interfaceStore.getTaskList.find((item) => item.id === entry)
+      const task = interfaceStore.getTaskList.find((item) => item.id === taskName)
       if (!task) {
         return null
       }
@@ -333,12 +333,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
           continue
         }
 
-        const interfaceTask = interfaceStore.getTaskByName(presetTask.name)
-        if (!interfaceTask) {
-          continue
-        }
-
-        const taskItem = taskMap.get(interfaceTask.entry)
+        const taskItem = taskMap.get(presetTask.name)
         if (taskItem === undefined) {
           continue
         }

@@ -110,15 +110,15 @@ const preTasks = defineModel<PreTaskCommand[]>("preTasks", { required: true })
 
 const emit = defineEmits<{
   (e: "update:tasks", value: QueuedTaskItem[]): void
-  (e: "config", uid: string, entry: string): void
+  (e: "config", uid: string, name: string): void
   (e: "remove", uid: string): void
-  (e: "add", entry: string): void
+  (e: "add", name: string): void
 }>()
 
 const { t } = useI18n()
 const showAddTask = ref(false)
 
-function handleConfig(uid: string, entry: string) {
-  emit("config", uid, entry)
+function handleConfig(uid: string, name: string) {
+  emit("config", uid, name)
 }
 </script>

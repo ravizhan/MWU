@@ -32,7 +32,7 @@ interface Props {
 }
 
 interface Emits {
-  (e: "add", entry: string): void
+  (e: "add", name: string): void
 }
 
 const { task, controllerName = null, resourceName = null } = defineProps<Props>()
@@ -69,7 +69,7 @@ const rowClass = computed(() => {
 
 function handleClick() {
   if (!compatible.value) return
-  emit("add", task.entry)
+  emit("add", task.name)
 }
 </script>
 
