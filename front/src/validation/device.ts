@@ -78,8 +78,8 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
     address: gamepadAddressSchema,
   }),
   z.object({
-    type: z.literal("WlRoots"),
-    address: z.string().trim().min(1, "WlRoots socket path must not be empty"),
+    type: z.literal("Linux"),
+    address: z.string().trim().min(1, "Linux device address must not be empty"),
   }),
 ])
 
@@ -102,8 +102,8 @@ export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
     address: gamepadAddressSchema,
   }),
   z.object({
-    type: z.literal("WlRoots"),
-    address: z.string().trim().min(1, "WlRoots socket path must not be empty"),
+    type: z.literal("Linux"),
+    address: z.string().trim().min(1, "Linux device address must not be empty"),
   }),
 ])
 

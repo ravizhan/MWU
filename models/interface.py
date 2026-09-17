@@ -160,10 +160,26 @@ class MacOSController(BaseModel):
         return validate_regex(v, info)
 
 
-class WlRootsController(BaseModel):
-    """WlRoots 控制器配置（仅 Linux）"""
+class LinuxController(BaseModel):
+    """Linux 控制器配置（仅 Linux）"""
 
+    input: Literal["Wlr", "Libei"] | None = None
+    screencap: Literal["Wlr", "PipeWire"] | None = None
+    pipewire_source: Literal["Gamescope", "Portal"] | None = "Gamescope"
     use_win32_vk_code: bool | None = False
+
+    @model_validator(mode="after")
+    def check_supported_combination(self):
+        input_method = self.input or "Wlr"
+        screencap = self.screencap or "Wlr"
+        pipewire_source = self.pipewire_source or "Gamescope"
+        if input_method == "Libei" and (
+            screencap != "PipeWire" or pipewire_source != "Gamescope"
+        ):
+            raise ValueError(
+                "input=Libei 需要 screencap=PipeWire 且 pipewire_source=Gamescope"
+            )
+        return self
 
 
 class GamepadController(BaseModel):
@@ -218,7 +234,7 @@ class Controller(BaseModel):
     label: str | None = None
     description: str | None = None
     icon: str | None = None
-    type: Literal["Adb", "Win32", "MacOS", "PlayCover", "WlRoots", "Gamepad"]
+    type: Literal["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
     display_short_side: int | None = 720
     display_long_side: int | None = None
     display_raw: bool | None = False
@@ -229,7 +245,7 @@ class Controller(BaseModel):
     win32: Win32Controller | None = None
     macos: MacOSController | None = None
     playcover: PlayCoverController | None = None
-    wlroots: WlRootsController | None = None
+    linux: LinuxController | None = None
     gamepad: GamepadController | None = None
 
     @model_validator(mode="after")

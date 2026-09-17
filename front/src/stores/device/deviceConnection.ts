@@ -962,9 +962,9 @@ function buildStoredLastConnectedDevice(
       uuid: "",
     }
   }
-  if (deviceInfo.type === "WlRoots") {
+  if (deviceInfo.type === "Linux") {
     return {
-      type: "WlRoots",
+      type: "Linux",
       controller_name: controllerName,
       fingerprint: buildDeviceFingerprint(deviceInfo),
       adb_path: "",

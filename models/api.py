@@ -39,10 +39,10 @@ class DeviceModel(BaseModel):
                 raise ValueError("Adb address must not be empty")
         elif self.type == "PlayCover":
             self.address = canonicalize_ipv4_port(self.address)
-        elif self.type == "WlRoots":
+        elif self.type == "Linux":
             self.address = self.address.strip()
             if not self.address:
-                raise ValueError("WlRoots socket path must not be empty")
+                raise ValueError("Linux device address must not be empty")
         elif self.type == "Win32":
             if self.hWnd <= 0:
                 raise ValueError("Win32 hWnd must be positive")

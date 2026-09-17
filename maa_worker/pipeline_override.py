@@ -310,9 +310,9 @@ class PipelineOverrideService:
             )
             if (
                 controller_definitions
-                and controller_type == "WlRoots"
-                and controller_definitions[0].wlroots
-                and controller_definitions[0].wlroots.use_win32_vk_code
+                and controller_type == "Linux"
+                and controller_definitions[0].linux
+                and controller_definitions[0].linux.use_win32_vk_code
             ):
                 controller_type = "Win32"
             return self._deep_merge(

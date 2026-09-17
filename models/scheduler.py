@@ -133,7 +133,7 @@ class ScheduledTaskDeviceConfig(BaseModel):
     """定时任务设备配置"""
 
     controller_name: str = Field(..., description="控制器名称")
-    device_type: Literal["Adb", "Win32", "Gamepad", "PlayCover", "WlRoots"] = Field(
+    device_type: Literal["Adb", "Win32", "Gamepad", "PlayCover", "Linux"] = Field(
         ..., description="设备类型"
     )
     device_address: str = Field(..., description="设备地址")

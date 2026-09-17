@@ -9,9 +9,9 @@ from maa_worker.pipeline_override import PipelineOverrideService
 from models.interface import (
     Controller,
     HotkeyCase,
+    LinuxController,
     Option,
     OptionCase,
-    WlRootsController,
 )
 
 
@@ -35,7 +35,7 @@ class TestHotkeyValueToCodes:
         [
             ("Win32", (0x41, 0x12, 0)),
             ("Adb", (29, 57, 0)),
-            ("WlRoots", (30, 56, 0)),
+            ("Linux", (30, 56, 0)),
             (None, (0x41, 0x12, 0)),
             ("UnknownController", (0x41, 0x12, 0)),
         ],
@@ -88,7 +88,7 @@ class TestPipelineOverrideHotkey:
 
         assert override == {"key": [0x12, 0x41]}
 
-    def test_wlroots_can_emit_win32_virtual_key_codes(self):
+    def test_linux_can_emit_win32_virtual_key_codes(self):
         option = Option(
             type="hotkey",
             hotkeys=[HotkeyCase(name="FightCombo")],
@@ -100,8 +100,8 @@ class TestPipelineOverrideHotkey:
                 get_active_controller_definitions=lambda: [
                     Controller(
                         name="wlr",
-                        type="WlRoots",
-                        wlroots=WlRootsController(use_win32_vk_code=True),
+                        type="Linux",
+                        linux=LinuxController(use_win32_vk_code=True),
                     )
                 ]
             ),
