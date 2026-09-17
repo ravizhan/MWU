@@ -9,7 +9,7 @@ dependencies = [
     "cron-converter>=2.0.1",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
-    "maafw>=5.12.3",
+    "maafw>=5.13.1",
     "numpy>=2.3.5",
     "pillow>=12.3.0",
     "plyer>=2.1.0",
@@ -17,6 +17,7 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "uvicorn>=0.52.4",
     "json5>=0.15.0",
+    "sentry-sdk>=2.68.1"
 ]
 
 [dependency-groups]
@@ -27,7 +28,7 @@ dev = [
     "ty>=0.0.75",
 ]
 build = [
-    "nuitka[all]>=4.2",
+    "nuitka[all]>=4.2.1",
 ]
 
 [tool.pytest.ini_options]
