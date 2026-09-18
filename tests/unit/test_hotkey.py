@@ -36,6 +36,7 @@ class TestHotkeyValueToCodes:
             ("Win32", (0x41, 0x12, 0)),
             ("Adb", (29, 57, 0)),
             ("Linux", (30, 56, 0)),
+            ("MacOS", (0x00, 0x3A, 0)),
             (None, (0x41, 0x12, 0)),
             ("UnknownController", (0x41, 0x12, 0)),
         ],
@@ -43,18 +44,60 @@ class TestHotkeyValueToCodes:
     def test_alt_a_uses_controller_key_map(self, controller_type, expected):
         assert hotkey_value_to_codes("ALT+A", controller_type) == expected
 
-    def test_unknown_key_and_empty_value_use_zero_codes(self):
-        assert hotkey_value_to_codes("ALT+Unknown", "Win32") == (0, 0x12, 0)
+    def test_empty_value_uses_zero_codes(self):
         assert hotkey_value_to_codes("", "Win32") == (0, 0, 0)
+
+    @pytest.mark.parametrize("value", ["ALT+Unknown", ";", "F13"])
+    def test_unsupported_key_is_rejected(self, value):
+        with pytest.raises(ValueError, match="未知快捷键"):
+            hotkey_value_to_codes(value, "Win32")
 
     def test_rejects_more_than_two_modifiers(self):
         with pytest.raises(ValueError, match="最多支持两个修饰键"):
             hotkey_value_to_codes("Ctrl+Alt+Shift+A", "Win32")
 
     @pytest.mark.parametrize("value", ["Meta+A", "Command+A", "Win+A", "Super+A"])
-    def test_rejects_meta_aliases(self, value):
-        with pytest.raises(ValueError, match="不支持 Meta/Command/Win"):
-            hotkey_value_to_codes(value, "Win32")
+    def test_meta_aliases_use_controller_meta_code(self, value):
+        assert hotkey_value_to_codes(value, "Win32") == (0x41, 0x5B, 0)
+        assert hotkey_value_to_codes(value, "Adb") == (29, 117, 0)
+        assert hotkey_value_to_codes(value, "Linux") == (30, 125, 0)
+        assert hotkey_value_to_codes(value, "MacOS") == (0x00, 0x37, 0)
+
+    @pytest.mark.parametrize(
+        ("controller_type", "expected"),
+        [
+            ("Win32", (0xBA, 0, 0)),
+            ("Adb", (74, 0, 0)),
+            ("Linux", (39, 0, 0)),
+            ("MacOS", (0x29, 0, 0)),
+        ],
+    )
+    def test_symbol_keys_use_controller_key_map(self, controller_type, expected):
+        assert hotkey_value_to_codes("SEMICOLON", controller_type) == expected
+
+    @pytest.mark.parametrize(
+        ("controller_type", "expected"),
+        [
+            ("Win32", (0x65, 0, 0)),
+            ("Adb", (149, 0, 0)),
+            ("Linux", (76, 0, 0)),
+            ("MacOS", (0x57, 0, 0)),
+        ],
+    )
+    def test_numpad_keys_use_controller_key_map(self, controller_type, expected):
+        assert hotkey_value_to_codes("NUMPAD5", controller_type) == expected
+
+    def test_playcover_rejects_key_operations(self):
+        with pytest.raises(ValueError, match="PlayCover 控制器不支持按键操作"):
+            hotkey_value_to_codes("A", "PlayCover")
+
+    def test_gamepad_uses_button_codes(self):
+        assert hotkey_value_to_codes("A", "Gamepad") == (0x1000, 0, 0)
+        assert hotkey_value_to_codes("UP", "Gamepad") == (0x0001, 0, 0)
+
+    def test_gamepad_rejects_modifiers(self):
+        with pytest.raises(ValueError, match="Gamepad 控制器不支持组合键"):
+            hotkey_value_to_codes("Ctrl+A", "Gamepad")
 
 
 class TestPipelineOverrideHotkey:

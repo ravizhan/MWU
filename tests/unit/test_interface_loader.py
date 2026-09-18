@@ -1103,3 +1103,38 @@ class TestLoadInterfaceModel:
             ),
         ):
             load_interface_model(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("option_payload", "expected_message"),
+        [
+            (
+                {"type": "select", "cases": [{"name": "a"}, {"name": "a"}]},
+                r"option\[dup\]\.cases 中存在重复名称: a",
+            ),
+            (
+                {"type": "input", "inputs": [{"name": "h"}, {"name": "h"}]},
+                r"option\[dup\]\.inputs 中存在重复名称: h",
+            ),
+            (
+                {"type": "hotkey", "hotkeys": [{"name": "k"}, {"name": "k"}]},
+                r"option\[dup\]\.hotkeys 中存在重复名称: k",
+            ),
+        ],
+    )
+    def test_duplicate_option_field_names_are_rejected(
+        self, tmp_path, option_payload, expected_message
+    ):
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "task": [{"name": "A", "entry": "EntryA", "option": ["dup"]}],
+                "option": {"dup": option_payload},
+            },
+        )
+
+        with pytest.raises(InterfaceLoadError, match=expected_message):
+            load_interface_model(tmp_path)

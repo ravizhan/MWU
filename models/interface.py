@@ -13,7 +13,6 @@ from pydantic import (
 DocumentContent = str | list[str]
 PipelineOverride = dict[str, Any]
 PresetOptionValue = str | list[str] | dict[str, str]
-_UNSUPPORTED_HOTKEY_KEYS = {"META", "SUPER", "WIN", "CMD", "COMMAND"}
 
 
 def validate_regex(v: Any, info: ValidationInfo) -> Any:
@@ -352,16 +351,6 @@ class HotkeyCase(BaseModel):
     label: str | None = None
     description: str | None = None
     default: str | None = None
-
-    @field_validator("default")
-    @classmethod
-    def check_modifier_count(cls, value: str | None):
-        parts = [part.strip() for part in (value or "").split("+") if part.strip()]
-        if len(parts) > 3:
-            raise ValueError("快捷键最多支持两个修饰键")
-        if any(part.upper() in _UNSUPPORTED_HOTKEY_KEYS for part in parts):
-            raise ValueError("快捷键不支持 Meta/Command/Win 键")
-        return value
 
 
 class Option(BaseModel):

@@ -7,7 +7,7 @@ import pytest
 
 import maa_worker.pretask_service as pretask_module
 from maa_worker.pretask_service import PretaskError, PretaskService
-from models.interface import InputCase, Option, OptionCase, Pretask
+from models.interface import HotkeyCase, InputCase, Option, OptionCase, Pretask
 from models.scheduler import PreTaskCommand
 
 
@@ -189,7 +189,7 @@ def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
     monkeypatch,
 ):
     """task_options 以任务名为键；pretask 选项跨任务聚合查找用户值，
-    缺失时回退到接口声明的 default_case/inputs 默认值。"""
+    缺失时回退到接口声明的 default_case/inputs/hotkeys 默认值。"""
     options = {
         "mode": Option(
             type="select",
@@ -205,15 +205,22 @@ def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
             type="input",
             inputs=[InputCase(name="text", default="hello"), InputCase(name="num")],
         ),
+        "combo": Option(
+            type="hotkey",
+            hotkeys=[
+                HotkeyCase(name="attack", default="Alt+A"),
+                HotkeyCase(name="defend"),
+            ],
+        ),
     }
     worker = _make_worker(
         pretasks=[
             Pretask(
                 exec="resource-values",
                 resource=["main", "fallback"],
-                option=["mode", "tags", "prompt"],
+                option=["mode", "tags", "prompt", "combo"],
             ),
-            Pretask(exec="defaults", option=["mode", "tags", "prompt"]),
+            Pretask(exec="defaults", option=["mode", "tags", "prompt", "combo"]),
         ],
         options=options,
     )
@@ -231,12 +238,14 @@ def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
 
     assert (
         recorder.calls[0][0][-1]
-        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""}}'
+        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""},'
+        '"combo":{"attack":"Alt+A","defend":""}}'
     )
     # 第二个 pretask 无 resource，聚合查找同样命中用户值
     assert (
         recorder.calls[1][0][-1]
-        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""}}'
+        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""},'
+        '"combo":{"attack":"Alt+A","defend":""}}'
     )
 
 

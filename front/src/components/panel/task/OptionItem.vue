@@ -7,7 +7,10 @@
         borderBottomColor: 'var(--divider-color)',
       }"
     >
-      <div class="min-w-0 flex-1 text-sm">{{ resolvedLabel }}</div>
+      <div class="min-w-0 flex-1">
+        <div class="text-sm">{{ resolvedLabel }}</div>
+        <InterfaceDescription :text="option.description" />
+      </div>
       <div class="flex flex-1 justify-end">
         <OptionSwitchControl
           v-if="option.type === 'switch'"
@@ -71,6 +74,7 @@ import type {
 import type { NullableTaskOptionValue } from "@/types/schedulerModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { tryCatch } from "@/utils/tryCatch"
+import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
 import OptionCheckboxControl from "@/components/common/controls/OptionCheckboxControl.vue"
 import OptionHotkeyControl from "@/components/common/controls/OptionHotkeyControl.vue"
 import OptionInputControl from "@/components/common/controls/OptionInputControl.vue"

@@ -238,8 +238,8 @@
   },
   "option": {
     "hotkeyCapturing": "请按下快捷键…",
-    "hotkeyMetaUnsupported": "不支持 Meta、Command 或 Win 组合键",
-    "hotkeyTooManyModifiers": "快捷键最多支持两个修饰键"
+    "hotkeyTooManyModifiers": "快捷键最多支持两个修饰键",
+    "hotkeyUnsupportedKey": "该按键不受支持，请换一个键"
   },
   "panel": {
     "device": "设备连接",
