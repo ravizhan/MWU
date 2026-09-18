@@ -18,12 +18,15 @@ const documentContent = ref("")
 
 watch(
   () => text,
-  async (value) => {
-    documentContent.value = await resolveInterfaceDocumentContent(
-      interfaceStore.interface,
-      "",
-      value,
-    )
+  async (value, _previous, onCleanup) => {
+    let stale = false
+    onCleanup(() => {
+      stale = true
+    })
+    const content = await resolveInterfaceDocumentContent(interfaceStore.interface, "", value)
+    if (!stale) {
+      documentContent.value = content
+    }
   },
   { immediate: true },
 )

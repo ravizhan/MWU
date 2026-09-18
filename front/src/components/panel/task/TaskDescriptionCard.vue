@@ -43,13 +43,20 @@ function getTaskDocumentSource(task: Task | null): string {
 
 watch(
   [selectedTaskId, () => interfaceStore.interface],
-  async () => {
+  async (_value, _previous, onCleanup) => {
+    let stale = false
+    onCleanup(() => {
+      stale = true
+    })
     const task = interfaceStore.getTaskByName(selectedTaskId.value)
-    documentContent.value = await resolveInterfaceDocumentContent(
+    const content = await resolveInterfaceDocumentContent(
       interfaceStore.interface,
       "",
       getTaskDocumentSource(task),
     )
+    if (!stale) {
+      documentContent.value = content
+    }
   },
   { immediate: true },
 )
