@@ -9,6 +9,7 @@ from pydantic_extra_types.cron import CronStr
 from models.device_address import canonicalize_runtime_device_address
 
 TaskOptionValue = str | list[str] | dict[str, str]
+# key 为 interface.json 中 task.name；元素为该任务可执行选项的取值
 TaskOptionsByTask = dict[str, dict[str, TaskOptionValue]]
 
 ExecutionOrigin = Literal["manual", "in_app", "native"]
@@ -214,9 +215,13 @@ TriggerConfig = Annotated[
 class TaskExecutionPayload(BaseModel):
     """任务执行载荷"""
 
-    task_list: list[str] = Field(default_factory=list, description="要执行的任务列表")
+    task_list: list[str] = Field(
+        default_factory=list,
+        description="要执行的任务名列表（interface.json 的 task.name）",
+    )
     task_options: TaskOptionsByTask = Field(
-        default_factory=dict, description="任务选项"
+        default_factory=dict,
+        description="任务选项，key 为任务名（interface.json 的 task.name）",
     )
     preTasks: list[PreTaskCommand] = Field(
         default_factory=list, description="前置 shell 命令列表"
@@ -226,7 +231,11 @@ class TaskExecutionPayload(BaseModel):
 class ManualStartPayload(TaskExecutionPayload):
     """手动启动载荷（含设备与资源信息）"""
 
-    task_list: list[str] = Field(..., min_length=1, description="要执行的任务列表")
+    task_list: list[str] = Field(
+        ...,
+        min_length=1,
+        description="要执行的任务名列表（interface.json 的 task.name）",
+    )
     controller_name: _RequiredText = Field(..., min_length=1, description="控制器名称")
     device: ScheduledTaskDeviceConfig = Field(..., description="设备配置")
     resource_name: _RequiredText = Field(..., min_length=1, description="资源包名称")

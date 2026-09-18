@@ -576,7 +576,7 @@ watch(
     }
 
     const compatibleTaskIds = formData.value.task_list.filter((taskId) =>
-      interfaceStore.isTaskCompatibleByEntry(taskId, controllerName, resourceName),
+      interfaceStore.isTaskCompatibleByName(taskId, controllerName, resourceName),
     )
     const removedCount = formData.value.task_list.length - compatibleTaskIds.length
     if (removedCount <= 0) {
@@ -624,10 +624,10 @@ function handleTriggerTypeChange(value: string | number) {
   }
 }
 
-function handleAddTask(entry: string) {
-  const task = availableTasks.value.find((item) => item.id === entry)
+function handleAddTask(name: string) {
+  const task = availableTasks.value.find((item) => item.id === name)
   if (!task) return
-  const task_list = [...formData.value.task_list, entry]
+  const task_list = [...formData.value.task_list, name]
   formData.value.task_list = task_list
   formData.value.task_options = configStore.buildOptionsForTasks(
     task_list,
@@ -651,19 +651,19 @@ function handleRemoveTask(uid: string) {
   }
 }
 
-function openTaskSettings(entry: string) {
-  if (!formData.value.task_list.includes(entry)) {
-    handleAddTask(entry)
+function openTaskSettings(name: string) {
+  if (!formData.value.task_list.includes(name)) {
+    handleAddTask(name)
   }
   currentSettingTaskUid.value =
-    [...taskListData.value].reverse().find((taskItem) => taskItem.id === entry)?.uid ?? null
-  currentSettingTaskId.value = entry
+    [...taskListData.value].reverse().find((taskItem) => taskItem.id === name)?.uid ?? null
+  currentSettingTaskId.value = name
   activeSection.value = "content"
   activeTab.value = "task-settings"
 }
 
-function handleConfigTask(uid: string, entry: string) {
-  openTaskSettings(entry)
+function handleConfigTask(uid: string, name: string) {
+  openTaskSettings(name)
   currentSettingTaskUid.value = uid
 }
 

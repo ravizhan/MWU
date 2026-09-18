@@ -16,11 +16,11 @@ CUSTOM_PRESET_NAME = "__mwu_reserved_custom_preset__"
 class TaskPresetSnapshotModel(BaseModel):
     tasks: list[str] = Field(
         default_factory=list,
-        description="队列任务ID列表（有序，允许重复，表示执行顺序）",
+        description="队列任务名列表（有序，允许重复，表示执行顺序）",
     )
     taskOptions: TaskOptionsByTask = Field(
         default_factory=dict,
-        description="任务选项配置，key为任务ID，value为该任务的选项映射",
+        description="任务选项配置，key为任务名，value为该任务的选项映射",
     )
     preTasks: list[PreTaskCommand] = Field(
         default_factory=list, description="前置 shell 命令列表"
@@ -90,11 +90,13 @@ def normalize_snapshot(
     snapshot: TaskPresetSnapshotModel | dict[str, Any] | None,
     interface_model: InterfaceModel,
 ) -> TaskPresetSnapshotModel:
-    valid_task_ids = {task.entry for task in (interface_model.task or [])}
+    valid_task_names = {task.name for task in (interface_model.task or [])}
 
     raw_snapshot = _normalize_raw_snapshot(snapshot)
     normalized_tasks = [
-        task_id for task_id in raw_snapshot["tasks"] if task_id in valid_task_ids
+        task_name
+        for task_name in raw_snapshot["tasks"]
+        if task_name in valid_task_names
     ]
     raw_task_options = raw_snapshot["taskOptions"]
     raw_pre_tasks = raw_snapshot.get("preTasks", [])
@@ -129,23 +131,25 @@ def normalize_snapshot(
 
 def normalize_task_options_by_task(
     raw_task_options: dict[str, Any] | None,
-    task_ids: list[str],
+    task_names: list[str],
     interface_model: InterfaceModel,
 ) -> TaskOptionsByTask:
     task_option_maps = _build_task_option_maps(interface_model)
     normalized: TaskOptionsByTask = {}
-    normalized_task_ids = [task_id for task_id in task_ids if isinstance(task_id, str)]
+    normalized_task_names = [
+        task_name for task_name in task_names if isinstance(task_name, str)
+    ]
 
-    for task_id in normalized_task_ids:
-        option_map = task_option_maps.get(task_id, {})
+    for task_name in normalized_task_names:
+        option_map = task_option_maps.get(task_name, {})
         defaults, value_types = _build_option_defaults(option_map)
         case_name_sets = _build_option_case_name_sets(option_map)
 
         raw_options_for_task = None
         if isinstance(raw_task_options, dict):
-            raw_options_for_task = raw_task_options.get(task_id)
+            raw_options_for_task = raw_task_options.get(task_name)
 
-        normalized[task_id] = _normalize_options_for_task(
+        normalized[task_name] = _normalize_options_for_task(
             raw_options_for_task,
             option_map,
             defaults,
@@ -183,16 +187,16 @@ def normalize_task_execution_payload(
     interface_model: InterfaceModel,
     raw_pre_tasks: Any = None,
 ) -> tuple[list[str], TaskOptionsByTask, list[PreTaskCommand]]:
-    valid_task_ids = {task.entry for task in (interface_model.task or [])}
+    valid_task_names = {task.name for task in (interface_model.task or [])}
     normalized_task_list: list[str] = []
 
     if isinstance(raw_task_list, list):
-        for task_id in raw_task_list:
-            if not isinstance(task_id, str):
+        for task_name in raw_task_list:
+            if not isinstance(task_name, str):
                 continue
-            if task_id not in valid_task_ids:
+            if task_name not in valid_task_names:
                 continue
-            normalized_task_list.append(task_id)
+            normalized_task_list.append(task_name)
 
     normalized_task_options = normalize_task_options_by_task(
         raw_task_options if isinstance(raw_task_options, dict) else None,
@@ -233,24 +237,21 @@ def normalize_task_execution_payload(
 def build_interface_preset_snapshot(
     interface_model: InterfaceModel, preset: Preset
 ) -> TaskPresetSnapshotModel:
-    task_name_to_entry = {
-        task.name: task.entry for task in (interface_model.task or [])
-    }
+    task_names = {task.name for task in (interface_model.task or [])}
     task_option_maps = _build_task_option_maps(interface_model)
 
     task_options_by_task: TaskOptionsByTask = {}
     tasks: list[str] = []
 
     for preset_task in preset.task or []:
-        task_entry = task_name_to_entry.get(preset_task.name)
-        if task_entry is None or preset_task.enabled is False:
+        if preset_task.name not in task_names or preset_task.enabled is False:
             continue
 
-        tasks.append(task_entry)
+        tasks.append(preset_task.name)
 
-        option_map = task_option_maps.get(task_entry, {})
+        option_map = task_option_maps.get(preset_task.name, {})
         defaults, _ = _build_option_defaults(option_map)
-        target_options = task_options_by_task.setdefault(task_entry, defaults)
+        target_options = task_options_by_task.setdefault(preset_task.name, defaults)
         for option_name, option_value in (preset_task.option or {}).items():
             if option_name not in option_map:
                 continue
@@ -271,7 +272,7 @@ def _normalize_raw_snapshot(snapshot: Any) -> dict[str, Any]:
     if isinstance(snapshot, TaskPresetSnapshotModel):
         return {
             "tasks": [
-                task_id for task_id in snapshot.tasks if isinstance(task_id, str)
+                task_name for task_name in snapshot.tasks if isinstance(task_name, str)
             ],
             "taskOptions": _normalize_raw_task_options(snapshot.taskOptions),
             "preTasks": _normalize_raw_pre_tasks(snapshot.preTasks),
@@ -303,8 +304,8 @@ def _normalize_raw_task_options(value: Any) -> dict[str, dict[str, TaskOptionVal
     if not isinstance(value, dict):
         return normalized
 
-    for task_id, option_map in value.items():
-        if not isinstance(task_id, str) or not isinstance(option_map, dict):
+    for task_name, option_map in value.items():
+        if not isinstance(task_name, str) or not isinstance(option_map, dict):
             continue
 
         normalized_options: dict[str, TaskOptionValue] = {}
@@ -317,7 +318,7 @@ def _normalize_raw_task_options(value: Any) -> dict[str, dict[str, TaskOptionVal
                 continue
             normalized_options[option_name] = normalized_option_value
 
-        normalized[task_id] = normalized_options
+        normalized[task_name] = normalized_options
 
     return normalized
 
@@ -387,7 +388,7 @@ def _build_task_option_maps(
     for task in interface_model.task or []:
         collected: dict[str, Option] = {}
         _collect_task_options(task.option or [], option_map, collected)
-        task_option_maps[task.entry] = collected
+        task_option_maps[task.name] = collected
 
     return task_option_maps
 

@@ -30,7 +30,7 @@
             <div class="flex flex-col gap-1.5">
               <AddTaskRow
                 v-for="task in section.tasks"
-                :key="task.entry"
+                :key="task.name"
                 :task="task"
                 :controller-name="controllerName"
                 :resource-name="resourceName"
@@ -46,7 +46,7 @@
           <div v-if="filteredFlatTasks.length > 0" class="flex flex-col gap-1.5">
             <AddTaskRow
               v-for="task in filteredFlatTasks"
-              :key="task.entry"
+              :key="task.name"
               :task="task"
               :controller-name="controllerName"
               :resource-name="resourceName"
@@ -79,7 +79,7 @@ interface Props {
 }
 
 interface Emits {
-  (e: "add", entry: string): void
+  (e: "add", name: string): void
 }
 
 const { controllerName = null, resourceName = null } = defineProps<Props>()

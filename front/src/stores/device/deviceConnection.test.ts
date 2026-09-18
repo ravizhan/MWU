@@ -260,7 +260,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1", controller: ["win32"] }],
@@ -304,7 +304,7 @@ describe("useDeviceConnectionStore", () => {
       const store = useDeviceConnectionStore()
       const configStore = useTaskConfigStore()
       const interfaceStore = useInterfaceStore()
-      const payload = { task_list: ["task1"], task_options: {}, preTasks: [] }
+      const payload = { task_list: ["Task 1"], task_options: {}, preTasks: [] }
       const expectedPayload = {
         ...payload,
         controller_name: "adb",
@@ -315,7 +315,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -332,7 +332,7 @@ describe("useDeviceConnectionStore", () => {
       const store = useDeviceConnectionStore()
       const configStore = useTaskConfigStore()
       const interfaceStore = useInterfaceStore()
-      const payload = { task_list: ["task1"], task_options: {}, preTasks: [] }
+      const payload = { task_list: ["Task 1"], task_options: {}, preTasks: [] }
       const conflict = {
         code: "busy_manual" as const,
         message: "busy",
@@ -344,7 +344,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -375,13 +375,13 @@ describe("useDeviceConnectionStore", () => {
           active_origin: "manual",
         }
         configStore.configLoaded = true
-        configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+        configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
         interfaceStore.interface = {
           task: [{ name: "Task 1", entry: "task1" }],
         }
         vi.mocked(api.getDeviceState).mockResolvedValue(lockedAdbState)
         vi.spyOn(configStore, "buildExecutionPayload").mockReturnValue({
-          task_list: ["task1"],
+          task_list: ["Task 1"],
           task_options: {},
           preTasks: [],
         })
@@ -605,12 +605,12 @@ describe("useDeviceConnectionStore", () => {
       const store = useDeviceConnectionStore()
       const configStore = useTaskConfigStore()
       const interfaceStore = useInterfaceStore()
-      const payload = { task_list: ["task1"], task_options: {}, preTasks: [] }
+      const payload = { task_list: ["Task 1"], task_options: {}, preTasks: [] }
       store.controllerCapabilities = [adbCapability]
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -1188,9 +1188,9 @@ describe("useDeviceConnectionStore", () => {
       expect(setIntervalSpy).toHaveBeenCalledTimes(1)
       store.init()
       expect(setIntervalSpy).toHaveBeenCalledTimes(1)
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
       await nextTick()
-      expect(indexStore.SelectedTaskID).toBe("task1")
+      expect(indexStore.SelectedTaskID).toBe("Task 1")
       setIntervalSpy.mockRestore()
     })
 
@@ -1203,11 +1203,11 @@ describe("useDeviceConnectionStore", () => {
       const saveSpy = vi.spyOn(configStore, "debouncedSave").mockImplementation(() => {})
 
       store.init()
-      configStore.taskList = [{ uid: "task1-instance", id: "task1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
       await nextTick()
       expect(saveSpy).toHaveBeenCalledTimes(1)
 
-      configStore.options = { task1: { mode: "safe" } }
+      configStore.options = { "Task 1": { mode: "safe" } }
       await nextTick()
       expect(saveSpy).toHaveBeenCalledTimes(2)
 
@@ -1220,7 +1220,7 @@ describe("useDeviceConnectionStore", () => {
       expect(saveSpy).toHaveBeenCalledTimes(4)
 
       configStore.configLoaded = false
-      configStore.options = { task1: { mode: "fast" } }
+      configStore.options = { "Task 1": { mode: "fast" } }
       await nextTick()
       expect(saveSpy).toHaveBeenCalledTimes(4)
     })
@@ -1232,7 +1232,7 @@ describe("useDeviceConnectionStore", () => {
       const configStore = useTaskConfigStore()
       settingsStore.initialized = true
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "initial-instance", id: "initial", name: "Initial", order: 0 }]
+      configStore.taskList = [{ uid: "initial-instance", id: "Initial", name: "Initial", order: 0 }]
       indexStore.Connected = true
       store.isDeviceResourceLocked = true
       const saveSpy = vi.spyOn(configStore, "debouncedSave").mockImplementation(() => {})
@@ -1244,10 +1244,10 @@ describe("useDeviceConnectionStore", () => {
       indexStore.SelectTask("sentinel")
 
       configStore.taskList = [
-        { uid: "first-instance", id: "first", name: "First", order: 0 },
-        { uid: "second-instance", id: "second", name: "Second", order: 1 },
+        { uid: "first-instance", id: "First", name: "First", order: 0 },
+        { uid: "second-instance", id: "Second", name: "Second", order: 1 },
       ]
-      configStore.options = { first: { mode: "safe" } }
+      configStore.options = { First: { mode: "safe" } }
       configStore.preTasks = [{ id: "pre1", command: "echo hi", enabled: true, timeout: 30 }]
       configStore.selectedPresetName = "preset1"
       indexStore.Connected = false

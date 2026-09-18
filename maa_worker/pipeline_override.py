@@ -36,7 +36,7 @@ class PipelineOverrideService:
             (
                 task
                 for task in self.worker.interface.task or []
-                if task.entry == task_name
+                if task.name == task_name
             ),
             None,
         )

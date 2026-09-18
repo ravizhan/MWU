@@ -132,7 +132,8 @@ def test_saved_global_value_is_not_shadowed_by_task_default():
             global_option=["GlobalMode"],
             task=[
                 SimpleNamespace(
-                    entry="Task",
+                    name="Task",
+                    entry="EntryTask",
                     pipeline_override={},
                     option=[],
                 )

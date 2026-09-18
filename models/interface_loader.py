@@ -28,7 +28,6 @@ class InterfaceLoadError(ValueError):
 
 class _MergeState:
     def __init__(self):
-        self.task_entries: dict[str, Path] = {}
         self.task_names: dict[str, Path] = {}
         self.option_keys: dict[str, Path] = {}
         self.preset_names: dict[str, Path] = {}
@@ -97,14 +96,10 @@ def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
                 f"task[{index}].entry 必须是非空字符串: {source_path}"
             )
 
-        existing_entry = state.task_entries.get(task_entry)
-        if existing_entry is not None:
-            _raise_conflict("task.entry", task_entry, source_path, existing_entry)
         existing_name = state.task_names.get(task_name)
         if existing_name is not None:
             _raise_conflict("task.name", task_name, source_path, existing_name)
 
-        state.task_entries[task_entry] = source_path
         state.task_names[task_name] = source_path
 
 

@@ -44,7 +44,7 @@ def sample_interface() -> dict:
         "task": [
             {
                 "name": "Startup",
-                "entry": "Startup",
+                "entry": "EntryStartup",
             },
         ],
         "option": {

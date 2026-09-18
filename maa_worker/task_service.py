@@ -14,12 +14,12 @@ class TaskService:
     def __init__(self, worker: "MaaWorker"):
         self.worker = worker
 
-    def _get_task_definition(self, task_entry: str):
+    def _get_task_definition(self, task_name: str):
         return next(
             (
                 task
                 for task in self.worker.interface.task or []
-                if task.entry == task_entry
+                if task.name == task_name
             ),
             None,
         )
@@ -72,23 +72,18 @@ class TaskService:
         current_resource_name = self.worker.device_state.current_resource_name
 
         filtered_task_list: list[str] = []
-        for task_entry in task_list:
-            task_definition = self._get_task_definition(task_entry)
+        for queued_task_name in task_list:
+            task_definition = self._get_task_definition(queued_task_name)
             compatible, reason = self._is_task_compatible(
                 task_definition,
                 controller_names,
                 current_resource_name,
             )
             if compatible:
-                filtered_task_list.append(task_entry)
+                filtered_task_list.append(queued_task_name)
                 continue
 
-            task_display_name = (
-                task_definition.label or task_definition.name
-                if task_definition is not None
-                else task_entry
-            )
-            self.worker.events.send_log(f"跳过任务 {task_display_name}: {reason}")
+            self.worker.events.send_log(f"跳过任务 {queued_task_name}: {reason}")
 
         if not filtered_task_list:
             self.worker.task_state.last_error = "当前资源/控制器下无可执行任务"
@@ -99,8 +94,10 @@ class TaskService:
             return False
 
         cleaned_options: TaskOptionsByTask = {}
-        for task_id, task_options in options.items():
-            if not isinstance(task_id, str) or not isinstance(task_options, dict):
+        for option_task_name, task_options in options.items():
+            if not isinstance(option_task_name, str) or not isinstance(
+                task_options, dict
+            ):
                 continue
 
             cleaned_task_options: dict[str, TaskOptionValue] = {}
@@ -122,7 +119,7 @@ class TaskService:
                 else:
                     cleaned_task_options[key] = value
 
-            cleaned_options[task_id] = cleaned_task_options
+            cleaned_options[option_task_name] = cleaned_task_options
 
         state = self.worker.task_state
         if not state.lock.acquire(blocking=False):
@@ -172,7 +169,7 @@ class TaskService:
         state.pre_tasks = pre_tasks or []
         try:
             self.worker.events.emit_task_started(task_list)
-            for task in task_list:
+            for queued_task_name in task_list:
                 if state.stop_flag:
                     self.worker.tasker.post_stop().wait()
                     state.last_status = "stopped"
@@ -181,16 +178,25 @@ class TaskService:
                     self.worker.events.emit_task_failed(task_list, "任务已终止")
                     return
 
+                task_definition = self._get_task_definition(queued_task_name)
+                if task_definition is None:
+                    self.worker.events.send_log(
+                        f"跳过任务 {queued_task_name}: 未找到任务定义"
+                    )
+                    continue
+
                 pipeline_override = self.worker.pipeline.build_task_pipeline_override(
-                    task,
-                    options.get(task, {}),
+                    queued_task_name,
+                    options.get(queued_task_name, {}),
                     global_options or {},
                 )
                 if pipeline_override:
-                    task_result = self.worker.tasker.post_task(task, pipeline_override)
+                    task_result = self.worker.tasker.post_task(
+                        task_definition.entry, pipeline_override
+                    )
                 else:
-                    task_result = self.worker.tasker.post_task(task)
-                self.worker.events.send_log("正在运行任务: " + task)
+                    task_result = self.worker.tasker.post_task(task_definition.entry)
+                self.worker.events.send_log("正在运行任务: " + queued_task_name)
                 while not task_result.done:
                     time.sleep(0.5)
                     if state.stop_flag:

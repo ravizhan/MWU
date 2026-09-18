@@ -185,10 +185,10 @@ def test_pi_argv_preserves_args_and_appends_compact_option_json(monkeypatch):
     ]
 
 
-def test_option_values_aggregate_task_entry_values_and_honor_declared_defaults(
+def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
     monkeypatch,
 ):
-    """task_options 以任务条目 ID 为键；pretask 选项跨条目聚合查找用户值，
+    """task_options 以任务名为键；pretask 选项跨任务聚合查找用户值，
     缺失时回退到接口声明的 default_case/inputs 默认值。"""
     options = {
         "mode": Option(
@@ -220,12 +220,12 @@ def test_option_values_aggregate_task_entry_values_and_honor_declared_defaults(
     recorder = _PopenRecorder([_FakeProcess(), _FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    # 用户值挂在任务条目 "selected-task" 下（不等于 pretask 的 resource 名），
+    # 用户值挂在任务名 "Selected Task" 下（不等于 pretask 的 resource 名），
     # 聚合查找仍应命中；未提供的选项回退声明默认值。
     PretaskService(worker).run_all(
         "adb",
         "main",
-        {"selected-task": {"mode": "first"}, "fallback": {"mode": "ignored"}},
+        {"Selected Task": {"mode": "first"}, "fallback": {"mode": "ignored"}},
         [],
     )
 

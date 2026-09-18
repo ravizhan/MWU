@@ -229,8 +229,8 @@ function handleTasksUpdate(tasks: QueuedTaskItem[]) {
 
 const showAddTask = ref(false)
 
-function handleAddTask(entry: string) {
-  configStore.addTaskToQueue(entry)
+function handleAddTask(name: string) {
+  configStore.addTaskToQueue(name)
 }
 
 function handleRemoveTask(uid: string) {
@@ -246,11 +246,11 @@ function handleRemoveTask(uid: string) {
   }
 }
 
-function handleConfigTask(uid: string, entry: string) {
+function handleConfigTask(uid: string, name: string) {
   clickedTaskUid.value = uid
-  indexStore.SelectTask(entry)
+  indexStore.SelectTask(name)
   if (isMobile.value) {
-    indexStore.openTaskSettingsDrawer(entry)
+    indexStore.openTaskSettingsDrawer(name)
   }
 }
 
