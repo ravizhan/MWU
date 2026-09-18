@@ -2,6 +2,7 @@
   <div class="flex w-full max-w-sm flex-col gap-2">
     <div v-for="hotkey in option.hotkeys" :key="hotkey.name" class="flex flex-col gap-1">
       <span class="text-xs opacity-60">{{ resolveHotkeyLabel(hotkey.label, hotkey.name) }}</span>
+      <InterfaceDescription :text="hotkey.description" />
       <NInput
         size="small"
         readonly
@@ -26,6 +27,7 @@ import { useInterfaceStore } from "@/stores"
 import type { HotkeyOption } from "@/types/interfaceModel"
 import { buildHotkeyCombo, getHotkeyCaptureIssue } from "@/utils/hotkey"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
 
 const { option, value } = defineProps<{
   option: HotkeyOption
@@ -65,9 +67,7 @@ function handleKeydown(name: string, event: KeyboardEvent): void {
   const issue = getHotkeyCaptureIssue(event)
   if (issue) {
     const messageKey =
-      issue === "meta_unsupported"
-        ? "option.hotkeyMetaUnsupported"
-        : "option.hotkeyTooManyModifiers"
+      issue === "unsupported_key" ? "option.hotkeyUnsupportedKey" : "option.hotkeyTooManyModifiers"
     captureError.value = { name, message: t(messageKey) }
     return
   }

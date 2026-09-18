@@ -435,34 +435,25 @@ class TestInterfaceModel:
         with pytest.raises(ValidationError, match="至少包含一次键"):
             InterfaceModel.model_validate(data)
 
-    def test_hotkey_default_rejects_more_than_two_modifiers(self, _base_iface_data):
+    @pytest.mark.parametrize(
+        "default", ["Ctrl+Alt+Shift+A", "Meta+A", "Cmd+S", "Win+A"]
+    )
+    def test_hotkey_default_is_not_restricted_at_load(self, _base_iface_data, default):
+        """default 只是用户捕获前的初值，合法性由运行时按键码映射判定。"""
         data = {
             **_base_iface_data,
             "option": {
                 "shortcut": {
                     "type": "hotkey",
                     "hotkeys": [
-                        {"name": "run", "default": "Ctrl+Alt+Shift+A"},
+                        {"name": "run", "default": default},
                     ],
                 }
             },
         }
 
-        with pytest.raises(ValidationError, match="最多支持两个修饰键"):
-            InterfaceModel.model_validate(data)
+        model = InterfaceModel.model_validate(data)
 
-    def test_hotkey_default_rejects_meta(self, _base_iface_data):
-        data = {
-            **_base_iface_data,
-            "option": {
-                "shortcut": {
-                    "type": "hotkey",
-                    "hotkeys": [
-                        {"name": "run", "default": "Meta+A"},
-                    ],
-                }
-            },
-        }
-
-        with pytest.raises(ValidationError, match="不支持 Meta/Command/Win"):
-            InterfaceModel.model_validate(data)
+        assert model.option is not None
+        assert model.option["shortcut"].hotkeys is not None
+        assert model.option["shortcut"].hotkeys[0].default == default

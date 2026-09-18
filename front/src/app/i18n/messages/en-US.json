@@ -238,8 +238,8 @@
   },
   "option": {
     "hotkeyCapturing": "Press shortcut keys...",
-    "hotkeyMetaUnsupported": "Meta, Command, and Win shortcuts are not supported",
-    "hotkeyTooManyModifiers": "Shortcuts support at most two modifier keys"
+    "hotkeyTooManyModifiers": "Shortcuts support at most two modifier keys",
+    "hotkeyUnsupportedKey": "This key is not supported, please pick another one"
   },
   "panel": {
     "device": "Connect Device",

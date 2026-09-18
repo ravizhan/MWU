@@ -134,8 +134,9 @@ class PretaskService:
                     value for value in option.default_case if isinstance(value, str)
                 ]
             return []
-        if option.type == "input":
-            return {field.name: field.default or "" for field in option.inputs or []}
+        if option.type in {"input", "hotkey"}:
+            fields = option.inputs if option.type == "input" else option.hotkeys
+            return {field.name: field.default or "" for field in fields or []}
         return ""
 
     def _run_one(

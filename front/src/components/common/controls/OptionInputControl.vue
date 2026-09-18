@@ -2,6 +2,7 @@
   <div class="flex w-full max-w-sm flex-col gap-2">
     <div v-for="input in option.inputs" :key="input.name" class="flex flex-col gap-1">
       <span class="text-xs opacity-60">{{ resolveInputLabel(input.label, input.name) }}</span>
+      <InterfaceDescription :text="input.description" />
       <NInputNumber
         v-if="getInputControlType(input) === 'number'"
         size="small"
@@ -42,6 +43,7 @@ import { useInterfaceStore } from "@/stores"
 import type { InputCase, InputOption } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { makeInterfaceInputSchema } from "@/validation/interfaceInput"
+import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
 
 const { option, value } = defineProps<{
   option: InputOption

@@ -511,6 +511,23 @@ def _validate_setting_sections(interface_model: InterfaceModel) -> None:
                 )
 
 
+def _validate_option_field_names(interface_model: InterfaceModel) -> None:
+    """cases / inputs / hotkeys 的 name 均为唯一标识符，重复会静默互相覆盖。"""
+    for option_name, option in (interface_model.option or {}).items():
+        for field_kind, fields in (
+            ("cases", option.cases or []),
+            ("inputs", option.inputs or []),
+            ("hotkeys", option.hotkeys or []),
+        ):
+            seen_names: set[str] = set()
+            for field in fields:
+                if field.name in seen_names:
+                    raise InterfaceLoadError(
+                        f"option[{option_name}].{field_kind} 中存在重复名称: {field.name}"
+                    )
+                seen_names.add(field.name)
+
+
 def _validate_task_context_constraints(interface_model: InterfaceModel) -> None:
     tasks = interface_model.task or []
     resource_names = {resource.name for resource in interface_model.resource}
@@ -668,6 +685,7 @@ def load_interface_model(base_dir: str | Path) -> InterfaceModel:
         interface_model = InterfaceModel.model_validate(merged_data)
         _validate_task_context_constraints(interface_model)
         _validate_pretasks(interface_model)
+        _validate_option_field_names(interface_model)
         _validate_presets(interface_model)
         _validate_setting_sections(interface_model)
         return interface_model

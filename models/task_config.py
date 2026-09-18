@@ -597,8 +597,6 @@ def _apply_preset_option_value(
 
 
 def _hotkey_value_supported(value: str) -> bool:
+    """只按占位符表达能力过滤；键名合法性由 maa_worker.hotkey 转换时判定。"""
     parts = [part.strip() for part in value.split("+") if part.strip()]
-    unsupported_keys = {"META", "SUPER", "WIN", "CMD", "COMMAND"}
-    return len(parts) <= 3 and not any(
-        part.upper() in unsupported_keys for part in parts
-    )
+    return len(parts) <= 3
