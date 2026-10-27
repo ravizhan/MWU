@@ -11,10 +11,10 @@ repos:
         entry: uv run ruff format
         language: system
         types: [python]
-        pass_filenames: false
       - id: pnpm-format
         name: pnpm-format
-        entry: pnpm --dir front run format
+        # oxfmt 从每个目标文件向上查找 front/.oxfmtrc.json，可在仓库根目录直接运行
+        entry: node front/node_modules/oxfmt/bin/oxfmt
         language: system
-        files: ^front/.*
-        pass_filenames: false
+        files: ^front/
+        types: [text]

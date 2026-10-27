@@ -60,12 +60,7 @@ export default defineConfigWithVueTs(
     files: ["src/**/*.vue"],
     plugins: { "@intlify/vue-i18n": pluginVueI18n },
     rules: {
-      "@intlify/vue-i18n/no-raw-text": [
-        "error",
-        {
-          /* config */
-        },
-      ],
+      "@intlify/vue-i18n/no-raw-text": ["error", {/* config */}],
     },
   },
 

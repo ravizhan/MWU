@@ -3,6 +3,6 @@
   "semi": false,
   "singleQuote": false,
   "printWidth": 100,
-  "experimentalSortPackageJson": false,
+  "sortPackageJson": false,
   "ignorePatterns": []
 }

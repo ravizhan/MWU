@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, vi } from "vitest"
 import { server } from "./mocks/server"
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }))
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 

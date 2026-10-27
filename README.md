@@ -239,7 +239,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 项目采用前后端分离架构：
 
 - **后端**：FastAPI (Python 3.12+)，提供 RESTful API 和 Server-Sent Events (SSE) 服务，运行在 `http://127.0.0.1:5566`
-- **前端**：Vue 3 + NaiveUI + Vite + UnoCSS + Pinia，构建输出到 `page/` 目录
+- **前端**：Vue 3 + NaiveUI + Vite + Tailwind CSS + Pinia，构建输出到 `page/` 目录
 - **核心交互**：通过 SSE (Server-Sent Events) 实现任务状态和日志的实时推送
 
 ### 💻 开发指南
@@ -248,19 +248,21 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 ```bash
 cd front
+pnpm install --frozen-lockfile
 pnpm dev     # 开发服务器，自动代理 /api 到 localhost:5566
 pnpm build   # 构建到 ../page 目录
-pnpm lint    # 使用 oxlint 进行代码检查
-pnpm format  # 使用 Prettier 格式化代码
+pnpm lint    # 使用 oxlint 和 ESLint 进行代码检查
+pnpm format  # 使用 oxfmt 格式化代码
 ```
 
 #### 🔧 后端开发
 
 ```bash
+uv sync --locked
 uv run main.py  # 启动 FastAPI 服务
 ```
 
-**依赖管理**：使用 `uv` 作为 Python 包管理器
+Nuitka 位于 `build` 分组，编译后端前需运行 `uv sync --locked --group build`。
 
 #### 🧪 项目构建
 

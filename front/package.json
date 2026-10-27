@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@vicons/ionicons5": "catalog:",
+    "@vue/devtools-api": "catalog:",
     "cron-converter": "catalog:",
     "dompurify": "catalog:",
     "github-markdown-css": "catalog:",
