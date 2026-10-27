@@ -6,7 +6,6 @@ Focus 协议实现 — 严格遵循 PI V2 官方规范。
 """
 
 from dataclasses import dataclass, field
-from typing import TypedDict
 
 from models.api import RealtimeEventLevel
 
@@ -25,13 +24,6 @@ DISPLAY_MODAL = "modal"
 # ---------------------------------------------------------------------------
 
 
-class FocusRawObject(TypedDict, total=False):
-    """协议规定的 focus 对象格式。"""
-
-    content: str
-    display: str | list[str]
-
-
 @dataclass
 class FocusTemplate:
     """Focus 模板（对象格式或字符串简写）。
@@ -46,19 +38,29 @@ class FocusTemplate:
     # ---- 工厂方法 ------------------------------------------------------------
 
     @staticmethod
-    def from_raw(raw: str | FocusRawObject) -> "FocusTemplate":
+    def from_raw(raw: object) -> "FocusTemplate":
         """从 interface.json 的 focus 值构造模板。
 
         - str : 简写，等价 display=["log"]
         - dict: 完整对象 { "content": "...", "display": [...] }
+        - 其它: 空模板（content=None，display=[]）
         """
         if isinstance(raw, str):
             return FocusTemplate(content=raw, display=[DISPLAY_LOG])
+        if not isinstance(raw, dict):
+            return FocusTemplate(content=None, display=[])
 
+        content = raw.get("content")
         display = raw.get("display", DISPLAY_LOG)
+        if isinstance(display, str):
+            channels = [display]
+        elif isinstance(display, list):
+            channels = [item for item in display if isinstance(item, str)]
+        else:
+            channels = []
         return FocusTemplate(
-            content=raw.get("content"),
-            display=[display] if isinstance(display, str) else display,
+            content=content if isinstance(content, str) else None,
+            display=channels,
         )
 
 
@@ -204,11 +206,15 @@ class UnifiedFocusResolver:
                 content=AutoFocusGenerator.generate(msg, details),
                 display=[DISPLAY_LOG],
             )
-        if not template.content:
+        content = template.content
+        if content is None:
+            return None
+        content = UnifiedFocusResolver._substitute(content, details)
+        if not content.strip():
             return None
 
         return FocusDisplayEvent(
-            content=UnifiedFocusResolver._substitute(template.content, details),
+            content=content,
             display_channels=template.display,
             level=UnifiedFocusResolver._derive_level(msg),
             raw_msg=msg,

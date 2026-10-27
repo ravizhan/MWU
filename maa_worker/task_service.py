@@ -154,10 +154,12 @@ class TaskService:
         state = self.worker.task_state
         with self.worker.focus_state.lock:
             state.stop_flag = True
-        if self.worker.tasker.running:
-            self.worker.tasker.post_stop()
-        self.worker.focus.cancel_pending()
-        self.worker.pretasks.stop_current()
+        try:
+            if self.worker.tasker.running:
+                self.worker.tasker.post_stop()
+        finally:
+            self.worker.focus.cancel_pending()
+            self.worker.pretasks.stop_current()
         while self.worker.tasker.running:
             time.sleep(0.5)
         return True

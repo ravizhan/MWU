@@ -179,7 +179,7 @@ class TestDialogAndModalDispatch:
     def test_dialog_returns_immediately_and_emits_notify(self):
         worker = make_worker()
 
-        event = resolve(MSG, focus_details("{name} 等待", DISPLAY_DIALOG))
+        event = resolve(MSG, focus_details("  {name} 等待\n", DISPLAY_DIALOG))
 
         assert event.has_dialog is True
         assert event.has_modal is False
@@ -199,7 +199,7 @@ class TestDialogAndModalDispatch:
         assert pending_ids(worker) == []
         displayed = worker.message_conn.get(timeout=5)
         assert displayed.event == "focus.display"
-        assert displayed.message == "Gate 等待"
+        assert displayed.message == "  Gate 等待\n"
         assert displayed.notify == [DISPLAY_DIALOG]
         assert displayed.display is False
         assert worker.message_conn.empty()
@@ -261,7 +261,7 @@ class TestDisplayChannels:
     def test_log_toast_modal_share_one_display_and_one_pending(self):
         worker = make_worker()
         thread, focus_id, _ = start_modal(
-            worker, "混合渠道", [DISPLAY_LOG, DISPLAY_TOAST, DISPLAY_MODAL]
+            worker, "混合渠道", [DISPLAY_LOG, None, DISPLAY_TOAST, {}, DISPLAY_MODAL]
         )
         try:
             displayed = worker.message_conn.get(timeout=5)
@@ -339,6 +339,38 @@ class TestDisplayChannels:
         assert worker.message_conn.empty()
         assert pending_ids(worker) == []
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            {"content": 1, "display": DISPLAY_MODAL},
+            {"content": "忽略", "display": None},
+            {"content": "忽略", "display": {"modal": True}},
+            {"content": "忽略", "display": []},
+        ],
+    )
+    def test_invalid_templates_and_empty_channels_do_not_display(self, raw):
+        worker = make_worker()
+        details = {"name": "Gate", "focus": {MSG: raw}}
+        event = UnifiedFocusResolver.resolve(MSG, details)
+        assert event is None or not event.has_modal
+
+        SinkHandler(worker.focus).on_event(MSG, details)
+
+        assert worker.message_conn.empty()
+        assert pending_ids(worker) == []
+
+    @pytest.mark.parametrize("content", ["{entry}", " \t{entry}{task_id}\n"])
+    def test_blank_substitution_does_not_display_or_block(self, content):
+        worker = make_worker()
+        details = focus_details(content, [DISPLAY_LOG, DISPLAY_DIALOG, DISPLAY_MODAL])
+        assert UnifiedFocusResolver.resolve(MSG, details) is None
+
+        SinkHandler(worker.focus).on_event(MSG, details)
+
+        assert worker.message_conn.empty()
+        assert pending_ids(worker) == []
+
     @pytest.mark.parametrize("alias", ["Gate", "Starting"])
     def test_name_and_status_suffix_are_not_focus_keys(self, alias):
         worker = make_worker()
@@ -365,7 +397,8 @@ class TestDisplayChannels:
 
 
 class TestStopReleasesPendingModals:
-    def test_stop_native_stop_precedes_release(self):
+    @pytest.mark.parametrize("stop_fails", [False, True])
+    def test_stop_native_stop_precedes_release(self, stop_fails):
         worker = make_worker()
         worker.tasker.running = True
         observed: list[str] = []
@@ -377,13 +410,20 @@ class TestStopReleasesPendingModals:
                 observed.append(
                     "released" if pending[0].released.is_set() else "blocked"
                 )
+            if stop_fails:
+                worker.tasker.running = True
+                raise RuntimeError("native stop failed")
 
         worker.tasker.on_post_stop = on_post_stop
         thread, focus_id, _ = start_modal(worker, "Gate 等待")
         with worker.focus_state.lock:
             pending = worker.focus_state.pending[focus_id]
         try:
-            assert worker.tasks.stop() is True
+            if stop_fails:
+                with pytest.raises(RuntimeError, match="native stop failed"):
+                    worker.tasks.stop()
+            else:
+                assert worker.tasks.stop() is True
             thread.join(5)
             assert not thread.is_alive()
             assert observed == ["blocked"]
