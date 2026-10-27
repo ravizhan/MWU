@@ -8,7 +8,7 @@ from pathlib import Path
 from queue import SimpleQueue
 from typing import TYPE_CHECKING, Any
 
-from models.api import RealtimeEvent, RealtimeEventLevel
+from models.api import FocusModal, RealtimeEvent, RealtimeEventLevel
 from models.settings import SettingsModel
 
 if TYPE_CHECKING:
@@ -63,6 +63,18 @@ class AgentRuntimeState:
     pi_env: dict[str, str] | None = None
     processes: list[subprocess.Popen] = field(default_factory=list)
     agent_client: "AgentClient" = None
+
+
+@dataclass
+class PendingFocusModal:
+    modal: FocusModal
+    released: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class FocusRuntimeState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    pending: dict[str, PendingFocusModal] = field(default_factory=dict)
 
 
 @dataclass
@@ -127,6 +139,7 @@ class AppState:
         self.device = DeviceRuntimeState()
         self.task = TaskRuntimeState()
         self.agent = AgentRuntimeState()
+        self.focus = FocusRuntimeState()
         # 薄执行模块状态
         self.active_run: ActiveRun | None = None
         self.active_execution_task: asyncio.Task | None = None

@@ -1,4 +1,9 @@
-import type { RealtimeEvent, RealtimeEventLevel, RealtimeEventName } from "@/types/realtimeModel"
+import type {
+  FocusModal,
+  RealtimeEvent,
+  RealtimeEventLevel,
+  RealtimeEventName,
+} from "@/types/realtimeModel"
 import { tryCatch } from "@/utils/tryCatch"
 
 const VALID_EVENT_LEVELS: ReadonlySet<string> = new Set(["info", "success", "error"])
@@ -13,6 +18,19 @@ function isRealtimeEventName(value: unknown): value is RealtimeEventName {
 
 function isValidEventLevel(level: unknown): level is RealtimeEventLevel {
   return typeof level === "string" && VALID_EVENT_LEVELS.has(level)
+}
+
+function isFocusModals(value: unknown): value is FocusModal[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (modal: unknown) =>
+        isRecord(modal) &&
+        typeof modal.id === "string" &&
+        typeof modal.message === "string" &&
+        isValidEventLevel(modal.level),
+    )
+  )
 }
 
 function extractString(data: unknown, key: string): string | undefined {
@@ -133,18 +151,37 @@ export class SSEClient {
       return null
     }
 
+    const event = extractEventType(data)
     const message = extractString(data, "message")
+    const time = extractString(data, "time") ?? ""
+    const title = extractString(data, "title") ?? null
+    if (event === "focus.modal") {
+      if (message === undefined || !isFocusModals(data.focus_modals)) {
+        return null
+      }
+      return {
+        event,
+        message,
+        level: extractLevel(data),
+        time,
+        notify: [],
+        title,
+        details: extractDetails(data),
+        display: false,
+        focus_modals: data.focus_modals,
+      }
+    }
     if (!message) {
       return null
     }
 
     return {
-      event: extractEventType(data),
+      event,
       level: extractLevel(data),
       message,
-      time: extractString(data, "time") ?? "",
+      time,
       notify: extractStringArray(data, "notify"),
-      title: extractString(data, "title") ?? null,
+      title,
       details: extractDetails(data),
       display: "display" in data ? Boolean(data.display) : true,
     }

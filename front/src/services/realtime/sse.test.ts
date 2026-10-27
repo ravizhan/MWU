@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 // Since setup.ts already provides a global EventSource mock,
 // we can import the module safely
 import { SSEClient } from "@/services/realtime/sse"
+import type { FocusModal, RealtimeEvent } from "@/types/realtimeModel"
 
 describe("SSEClient", () => {
   let mockEventSourceCtor: ReturnType<typeof vi.fn>
@@ -91,6 +92,51 @@ describe("SSEClient", () => {
   })
 
   describe("event dispatching", () => {
+    it("accepts empty-message modal snapshots including the empty state", () => {
+      const client = new SSEClient("/api/logs")
+      let modals: FocusModal[] = []
+      client.addEventListener("focus.modal", (event: RealtimeEvent) => {
+        if (event.event === "focus.modal") modals = event.focus_modals
+      })
+      const instance = getESInstance()
+      const modal: FocusModal = { id: "gate", message: "Confirm", level: "info" }
+      instance.onmessage?.({
+        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals: [modal] }),
+      })
+      expect(modals).toEqual([modal])
+      instance.onmessage?.({
+        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals: [] }),
+      })
+      expect(modals).toEqual([])
+      client.close()
+    })
+
+    it.each([
+      undefined,
+      null,
+      {},
+      [null],
+      [{ id: 1, message: "Confirm", level: "info" }],
+      [{ id: "gate", message: null, level: "info" }],
+      [{ id: "gate", message: "Confirm", level: "warning" }],
+    ])("does not clear modal state on malformed snapshot %j", (focus_modals) => {
+      const client = new SSEClient("/api/logs")
+      const modal: FocusModal = { id: "gate", message: "Confirm", level: "info" }
+      let modals: FocusModal[] = []
+      client.addEventListener("focus.modal", (event: RealtimeEvent) => {
+        if (event.event === "focus.modal") modals = event.focus_modals
+      })
+      const instance = getESInstance()
+      instance.onmessage?.({
+        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals: [modal] }),
+      })
+      instance.onmessage?.({
+        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals }),
+      })
+      expect(modals).toEqual([modal])
+      client.close()
+    })
+
     it("dispatches normalized events to registered listeners", () => {
       const client = new SSEClient("/api/logs")
       const listener = vi.fn<() => void>()

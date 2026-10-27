@@ -152,11 +152,22 @@ class TaskService:
 
     def stop(self) -> bool:
         state = self.worker.task_state
-        state.stop_flag = True
+        with self.worker.focus_state.lock:
+            state.stop_flag = True
+        if self.worker.tasker.running:
+            self.worker.tasker.post_stop()
+        self.worker.focus.cancel_pending()
         self.worker.pretasks.stop_current()
         while self.worker.tasker.running:
             time.sleep(0.5)
         return True
+
+    def _finish_stopped(self, task_list: list[str]) -> None:
+        state = self.worker.task_state
+        state.last_status = "stopped"
+        state.last_error = "任务已终止"
+        self.worker.events.send_log("任务已终止")
+        self.worker.events.emit_task_failed(task_list, "任务已终止")
 
     def run_process(
         self,
@@ -172,10 +183,7 @@ class TaskService:
             for queued_task_name in task_list:
                 if state.stop_flag:
                     self.worker.tasker.post_stop().wait()
-                    state.last_status = "stopped"
-                    state.last_error = "任务已终止"
-                    self.worker.events.send_log("任务已终止")
-                    self.worker.events.emit_task_failed(task_list, "任务已终止")
+                    self._finish_stopped(task_list)
                     return
 
                 task_definition = self._get_task_definition(queued_task_name)
@@ -201,11 +209,11 @@ class TaskService:
                     time.sleep(0.5)
                     if state.stop_flag:
                         self.worker.tasker.post_stop().wait()
-                        state.last_status = "stopped"
-                        state.last_error = "任务已终止"
-                        self.worker.events.send_log("任务已终止")
-                        self.worker.events.emit_task_failed(task_list, "任务已终止")
+                        self._finish_stopped(task_list)
                         return
+            if state.stop_flag:
+                self._finish_stopped(task_list)
+                return
             state.last_status = "success"
             state.last_error = None
             self.worker.events.emit_task_completed(task_list)

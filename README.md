@@ -349,6 +349,30 @@ MWU/
         └── utils/               # 纯函数工具
 ```
 
+### 节点消息与人工确认
+
+Pipeline 的 `focus` 按完整回调消息名匹配模板，例如 `Node.Action.Starting`。字符串模板等价于 `display: "log"`；对象模板的 `display` 默认也是 `log`，可以指定单个渠道或渠道数组。MWU 支持 `log`、`toast`、`notification`、`dialog` 和 `modal`。
+
+```json
+{
+  "Gate": {
+    "focus": {
+      "Node.Action.Starting": {
+        "content": "{name} 等待人工确认",
+        "display": ["log", "modal"]
+      }
+    },
+    "next": ["After"]
+  }
+}
+```
+
+`dialog` 显示非阻塞信息框，任务和页面背景可以继续操作。`modal` 暂停当前流水线，点击「确认并继续」后才执行后续节点；点击「停止任务」会终止任务并解除等待。modal 优先显示，之前尚未关闭的 dialog 会在 modal 处理后恢复。同一条回调同时指定 `dialog` 和 `modal` 时只显示 modal，其他渠道仍独立生效。
+
+modal 没有超时，也不会因为浏览器关闭或断线而自动确认。刷新或重新打开页面会恢复当前进程的待确认消息，任一标签页确认后，其他标签页同步关闭对应弹窗。普通 dialog 不随历史日志重放；待确认状态不跨后端进程重启保存。
+
+模板缺少 `content` 或内容为空字符串时不展示，也不创建等待。未知渠道不会回退为日志；没有匹配模板的普通回调仍生成原有自动日志。模板键不支持节点名称或状态后缀别名，`focus.trace` 暂不处理。弹窗按文本显示解析后的内容，不额外读取文件、URL 或解释 HTML。
+
 ### 全代码开发集成
 
 > 以下仅为推荐写法，对于全代码开发，选择权都在于您
@@ -362,6 +386,7 @@ MWU/
 - `maa_worker/task_service.py`：任务线程启动/停止与执行主循环
 - `maa_worker/pipeline_override.py`：任务选项与 pipeline_override 合并
 - `maa_worker/event_service.py`：统一日志、实时事件、系统通知与外部通知
+- `maa_worker/focus_processor.py`：focus 渠道分发、modal 确认与停止释放
 
 #### 🔧 扩展任务执行流程
 
@@ -378,9 +403,7 @@ def run_process(self, task_list, options):
         for task in task_list:
             if state.stop_flag:
                 self.worker.tasker.post_stop().wait()
-                state.last_status = "stopped"
-                state.last_error = "任务已终止"
-                self.worker.events.send_log("任务已终止")
+                self._finish_stopped(task_list)
                 return
 
             # 自定义入口：按 task entry 分发到专用逻辑
@@ -404,10 +427,12 @@ def run_process(self, task_list, options):
                 time.sleep(0.5)
                 if state.stop_flag:
                     self.worker.tasker.post_stop().wait()
-                    state.last_status = "stopped"
-                    state.last_error = "任务已终止"
-                    self.worker.events.send_log("任务已终止")
+                    self._finish_stopped(task_list)
                     return
+
+        if state.stop_flag:
+            self._finish_stopped(task_list)
+            return
 
         state.last_status = "success"
         state.last_error = None

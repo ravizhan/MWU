@@ -12,6 +12,7 @@ from app_state import WorkerContext
 from maa_worker.agent_service import AgentService
 from maa_worker.device_service import DeviceService
 from maa_worker.event_service import EventService
+from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.pipeline_override import PipelineOverrideService
 from maa_worker.pretask_service import PretaskService
 from maa_worker.sink_service import SinkHandler, SinkService
@@ -42,17 +43,19 @@ class MaaWorker:
         self.device_state = state.device
         self.task_state = state.task
         self.agent_state = state.agent
+        self.focus_state = state.focus
 
         Toolkit.init_option(str(self.context.interface_base_dir))
 
         self.events = EventService(self)
+        self.focus = FocusEventProcessor(self)
         self.device = DeviceService(self)
         self.pipeline = PipelineOverrideService(self)
         self.agents = AgentService(self)
         self.pretasks = PretaskService(self)
         self.tasks = TaskService(self)
 
-        self.sinks = SinkService(SinkHandler(self.events))
+        self.sinks = SinkService(SinkHandler(self.focus))
         self.sinks.register_all(self.resource, self.tasker)
 
         self.events.send_log("MAA初始化成功")
@@ -83,13 +86,7 @@ class MaaWorker:
         return None
 
     def shutdown(self):
-        if self.task_state.running:
-            self.tasks.stop()
-        else:
-            # 前置任务阶段 running 尚未置位：兜底置停止标志并终止正在运行的前置进程，
-            # 避免关闭/更新时用户前置命令一直阻塞到超时。
-            self.task_state.stop_flag = True
-            self.pretasks.stop_current()
+        self.tasks.stop()
         self.sinks.unregister_all(
             self.resource,
             self.tasker,

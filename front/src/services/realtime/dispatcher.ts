@@ -1,11 +1,13 @@
 import type { RealtimeEvent, RealtimeEventName } from "@/types/realtimeModel"
 import type { useIndexStore } from "@/stores/panel/session"
 import type { useSettingsStore } from "@/stores/settings/settings"
+import type { FocusEventReceiver } from "@/stores/focus/focus"
 import { formatRealtimeLog, showBrowserRealtimeNotification, showToastMessage } from "./events"
 
 export interface RealtimeStoreRefs {
   indexStore: ReturnType<typeof useIndexStore>
   settingsStore: ReturnType<typeof useSettingsStore>
+  focusStore: FocusEventReceiver
 }
 
 /**
@@ -26,6 +28,13 @@ function handleCommon(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
   }
   if (event.notify.includes("notification")) {
     showBrowserRealtimeNotification(event, stores.settingsStore.settings.notification)
+  }
+}
+
+function handleFocusDisplay(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
+  handleCommon(event, stores)
+  if (event.notify.includes("dialog")) {
+    stores.focusStore.enqueueDialog(event.message, event.level)
   }
 }
 
@@ -51,12 +60,12 @@ function handleTaskFailed(event: RealtimeEvent, stores: RealtimeStoreRefs): void
  * Per-event-type handlers. Events not listed here fall through to
  * handleCommon (log + notify channels only).
  *
- * Emitted RealtimeEventName values: log, focus.display, task.started,
- * task.completed, task.failed, notification.test.
+ * Modal snapshots are handled separately and never enter common handling.
  */
 const typeHandlers: Partial<
   Record<RealtimeEventName, (event: RealtimeEvent, stores: RealtimeStoreRefs) => void>
 > = {
+  "focus.display": handleFocusDisplay,
   "task.started": handleTaskStarted,
   "task.completed": handleTaskCompleted,
   "task.failed": handleTaskFailed,
@@ -68,6 +77,10 @@ const typeHandlers: Partial<
  * side effects (e.g. task lifecycle → store state updates).
  */
 export function dispatchRealtimeEvent(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
+  if (event.event === "focus.modal") {
+    stores.focusStore.replaceModals(event.focus_modals)
+    return
+  }
   const handler = typeHandlers[event.event]
   if (handler) {
     handler(event, stores)

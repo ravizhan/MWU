@@ -48,13 +48,36 @@ def make_payload(task_name: str = "Startup") -> ManualStartPayload:
     )
 
 
-def make_task(task_id: str = "task-1", name: str = "定时任务") -> ScheduledTask:
+def make_task(
+    task_id: str = "task-1",
+    name: str = "定时任务",
+    *,
+    with_payload: bool = False,
+) -> ScheduledTask:
+    """构造调度任务记录。
+
+    with_payload=True 时补齐可执行载荷（任务名/控制器/设备/资源），与 make_payload
+    对齐：缺少 device 或 resource_name 的调度任务会被 submit_scheduled 判为
+    「设备或资源配置缺失」并立刻收尾，无法占据执行槽位。
+    """
     return ScheduledTask(
         id=task_id,
         name=name,
         wakeup_enabled=True,
         enabled=True,
         trigger_config=CronTriggerConfig(cron="0 9 * * *"),
+        task_list=["Startup"] if with_payload else [],
+        controller_name="AdbController" if with_payload else None,
+        device=(
+            ScheduledTaskDeviceConfig(
+                controller_name="AdbController",
+                device_type="Adb",
+                device_address="127.0.0.1:5555",
+            )
+            if with_payload
+            else None
+        ),
+        resource_name="main" if with_payload else None,
     )
 
 
@@ -544,7 +567,9 @@ class TestSubmitScheduled:
         state.worker = worker
 
         first = await submit_scheduled(
-            state, make_task("task-a", name="定时任务"), origin="in_app"
+            state,
+            make_task("task-a", name="定时任务", with_payload=True),
+            origin="in_app",
         )
         assert first.accepted is True
 
