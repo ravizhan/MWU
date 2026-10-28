@@ -248,6 +248,18 @@ async def _record_skip(
     return Admission(accepted=False, run_id=run_id, skip_status=status)
 
 
+def _claim_slot(state: AppState, active: ActiveRun) -> None:
+    """占用执行槽并开启新的停止生命周期。
+
+    占槽前 active_run 为空，stop_active() 不会执行，因此此处复位 stop_flag
+    不会吞掉任何仍有效的停止请求；上一次运行遗留的 True 则必须清掉，否则
+    TaskService.start() 会把它当作前置阶段的停止请求而拒绝启动。
+    """
+    state.active_run = active
+    if state.worker is not None:
+        state.worker.task_state.stop_flag = False
+
+
 async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admission:
     """手动启动准入"""
     if state.update_in_progress:
@@ -268,10 +280,13 @@ async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admissi
         return Admission(accepted=False, conflict=conflict)
 
     run_id = str(uuid.uuid4())
-    state.active_run = ActiveRun(
-        run_id=run_id,
-        origin="manual",
-        task_name=payload.task_list[0] if payload.task_list else "手动任务",
+    _claim_slot(
+        state,
+        ActiveRun(
+            run_id=run_id,
+            origin="manual",
+            task_name=payload.task_list[0] if payload.task_list else "手动任务",
+        ),
     )
     try:
         execution = TaskExecution(
@@ -346,11 +361,14 @@ async def submit_scheduled(
         )
 
     run_id = str(uuid.uuid4())
-    state.active_run = ActiveRun(
-        run_id=run_id,
-        origin=origin,
-        task_name=task.name,
-        occurrence_id=occurrence_id,
+    _claim_slot(
+        state,
+        ActiveRun(
+            run_id=run_id,
+            origin=origin,
+            task_name=task.name,
+            occurrence_id=occurrence_id,
+        ),
     )
     try:
         execution = TaskExecution(
@@ -468,7 +486,7 @@ async def _complete_run(
 
         # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
         # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。
-        # stop_flag 由 TaskService.start() 在任务线程启动时重置；此处不得重置，
+        # stop_flag 只在准入占槽时复位（_claim_slot）；此处不得重置，
         # 否则 stop_active() 在准入后、本阶段前设置的停止请求会被吞掉。
         effective_controller = payload.controller_name or payload.device.controller_name
         try:

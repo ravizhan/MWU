@@ -667,6 +667,24 @@ class TestPretaskAdmission:
         assert row.status == "failed"
         assert row.error_message == "任务列表为空"
 
+    async def test_previous_stop_does_not_block_next_run(self, state: AppState):
+        # 上一次运行被停止后 stop_flag 遗留为 True；新运行占槽时必须复位，
+        # 否则前置任务和 TaskService.start() 会把它当作本次的停止请求。
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        worker.task_state.stop_flag = True
+        state.worker = worker
+
+        admission = await submit_manual(state, make_payload())
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.pretasks.stop_flags == [False]
+        assert worker.tasks.called is True
+        assert list_executions(state.scheduler_db_path)[0].status == "success"
+
     async def test_pretask_receives_normalized_options_and_pre_tasks(
         self, state: AppState
     ):

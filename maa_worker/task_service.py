@@ -130,7 +130,6 @@ class TaskService:
             if state.stop_flag:
                 # 前置阶段已收到停止请求：保持标志，不启动任务线程
                 return False
-            state.stop_flag = False
             state.running = True
             state.last_status = "running"
             state.last_error = None
