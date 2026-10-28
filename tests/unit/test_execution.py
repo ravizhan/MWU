@@ -95,14 +95,22 @@ async def _await_active_task(state: AppState) -> None:
 
 class _FakeEvents:
     def __init__(self):
-        self.failed_events: list[tuple[list[str], str]] = []
+        self.terminal_events: list[tuple[list[str], str | None, bool]] = []
         self.logs: list[str] = []
 
     def send_log(self, msg: str):
         self.logs.append(msg)
 
-    def emit_task_failed(self, task_list: list[str], error_message: str):
-        self.failed_events.append((list(task_list), error_message))
+    def publish_task_terminal(self, task_list, run_label, succeeded, settings):
+        self.terminal_events.append((list(task_list), run_label, succeeded))
+        return SimpleNamespace(notify=[])
+
+    def deliver_notification(self, event):
+        pass
+
+    @property
+    def failed_events(self) -> list[tuple[list[str], str | None, bool]]:
+        return [event for event in self.terminal_events if not event[2]]
 
 
 class _FakeInterface:
@@ -463,7 +471,7 @@ class TestSubmitManual:
         assert row.id == admission.run_id
         assert row.status == "success"
         assert row.finished_at is not None
-        assert worker.events.failed_events == []
+        assert worker.events.terminal_events == [(["Startup"], "Startup", True)]
 
     async def test_update_in_progress_conflict(self, state: AppState):
         state.update_in_progress = True
@@ -599,7 +607,8 @@ class TestPretaskAdmission:
         assert row.id == admission.run_id
         assert row.status == "failed"
         assert row.error_message == "pretask failed"
-        assert [error for _, error in worker.events.failed_events] == ["pretask failed"]
+        assert len(worker.events.failed_events) == 1
+        assert "任务异常详情: pretask failed" in worker.events.logs
 
     async def test_pretask_stopped_records_stopped_and_terminal_event(
         self, state: AppState
@@ -886,9 +895,13 @@ class TestTerminalEventOrdering:
             result=True, task_state=worker.task_state
         )
         slot_free_at_emit: list[bool] = []
-        worker.events.emit_task_completed = lambda _tasks: slot_free_at_emit.append(
-            state.active_run is None
-        )
+        record = worker.events.publish_task_terminal
+
+        def publish(*args):
+            slot_free_at_emit.append(state.active_run is None)
+            return record(*args)
+
+        worker.events.publish_task_terminal = publish
         state.worker = worker
 
         admission = await submit_manual(state, make_payload())
@@ -897,6 +910,20 @@ class TestTerminalEventOrdering:
 
         assert slot_free_at_emit == [True]
         assert list_executions(state.scheduler_db_path)[0].status == "success"
+
+    async def test_scheduled_terminal_event_uses_schedule_name(self, state: AppState):
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        state.worker = worker
+
+        task = make_task(name="每日例行", with_payload=True)
+        admission = await submit_scheduled(state, task, origin="in_app")
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.events.terminal_events == [(["Startup"], "每日例行", True)]
 
 
 @pytest.mark.parametrize(

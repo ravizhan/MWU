@@ -25,6 +25,7 @@ from models.scheduler import (
     StartConflict,
     TaskExecution,
 )
+from models.settings import SettingsModel
 from models.task_config import (
     normalize_global_option_values,
     normalize_task_execution_payload,
@@ -450,13 +451,10 @@ async def _drain_cancelled_pretasks(worker, pretask_future: asyncio.Future) -> N
         pretask_future.exception()
 
 
-def _publish_terminal_event(
-    worker, task_list: list[str], status: ExecutionStatus, error: str | None
-) -> None:
-    if status == "success":
-        worker.events.emit_task_completed(task_list)
-        return
-    worker.events.emit_task_failed(task_list, error or "")
+def _deliver_terminal_side_effects(worker, event, error: str | None) -> None:
+    worker.events.deliver_notification(event)
+    if error:
+        worker.events.send_log(f"任务异常详情: {error}")
 
 
 async def _complete_run(
@@ -471,6 +469,9 @@ async def _complete_run(
     status: ExecutionStatus = "failed"
     error: str | None = None
     event_task_list = payload.task_list if payload is not None else (task_list or [])
+    # 通知标题用运行标签（定时任务为计划名）；task_state.current_task_name
+    # 会在 run_process 退出时被清空，收尾阶段不能再依赖它。
+    run_label = state.active_run.task_name if state.active_run is not None else None
     try:
         if worker is None:
             raise RuntimeError("Worker 未就绪")
@@ -624,7 +625,18 @@ async def _complete_run(
             pass
         except Exception as e:
             logger.error(f"收尾执行记录失败: {e}")
-        # 无条件清槽（纯同步赋值，不受取消影响）
+        # 读取失败也必须发终端事件，否则前端 TaskRunning 卡住；此时仅按默认设置决定是否通知。
+        notify_settings = SettingsModel()
+        if worker is not None:
+            try:
+                notify_settings = await asyncio.shield(asyncio.to_thread(load_settings))
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"读取通知设置失败: {e}")
+        # 清槽与终端事件入队必须在同一同步段内（中间不得 await）：
+        # 前端收到 task.completed/task.failed 后立即发起的新启动不能再被判 busy_manual，
+        # 同时新运行的 task.started 也不能排在旧运行的终端事件之前。
         if state.active_run is not None and state.active_run.run_id == run_id:
             state.active_run = None
         if (
@@ -632,23 +644,25 @@ async def _complete_run(
             and state.active_execution_task is asyncio.current_task()
         ):
             state.active_execution_task = None
-        # 终端事件必须在清槽之后发布：前端收到 task.completed/task.failed 后立即
-        # 发起的新一轮启动，不能再被残留的 active_run 判为 busy_manual。
+        terminal_event = None
         if worker is not None:
+            try:
+                terminal_event = worker.events.publish_task_terminal(
+                    event_task_list, run_label, status == "success", notify_settings
+                )
+            except Exception as emit_err:
+                logger.error(f"发送任务终端事件失败: {emit_err}")
+        if terminal_event is not None:
             try:
                 await asyncio.shield(
                     asyncio.to_thread(
-                        _publish_terminal_event,
-                        worker,
-                        event_task_list,
-                        status,
-                        error,
+                        _deliver_terminal_side_effects, worker, terminal_event, error
                     )
                 )
             except asyncio.CancelledError:
                 pass
             except Exception as emit_err:
-                logger.error(f"发送任务终端事件失败: {emit_err}")
+                logger.error(f"发送任务终端通知失败: {emit_err}")
         # 若任务是被取消的，继续传播 CancelledError
         if cancelled:
             raise asyncio.CancelledError

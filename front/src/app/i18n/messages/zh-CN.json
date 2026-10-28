@@ -168,6 +168,7 @@
         "dateRequired": "请选择执行时间",
         "dateInPast": "执行时间不能早于当前时间",
         "intervalRequired": "间隔时间必须大于 0",
+        "intervalEndBeforeStart": "结束时间不能早于开始时间",
         "taskListRequired": "请至少选择一个任务",
         "invalidAddress": "设备地址格式不正确"
       }

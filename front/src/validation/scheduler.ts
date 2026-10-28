@@ -54,7 +54,7 @@ const intervalTriggerSchema = z
       if (!val.start_date || !val.end_date) return true
       return new Date(val.end_date).getTime() >= new Date(val.start_date).getTime()
     },
-    { message: "end date must not be before start date" },
+    { message: "end date must not be before start date", path: ["end_date"] },
   )
 
 export const triggerConfigSchema = z.discriminatedUnion("type", [

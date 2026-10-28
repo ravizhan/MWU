@@ -68,6 +68,10 @@ def _validate_importable_fragment(data: dict[str, Any], source_path: Path) -> No
             f"global_option、setting 字段: {source_path}，"
             f"发现非法字段 {', '.join(invalid_keys)}"
         )
+    for key in ("global_option", "setting"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, list):
+            raise InterfaceLoadError(f"{key} 字段必须是数组: {source_path}")
 
 
 def _raise_conflict(
@@ -79,12 +83,20 @@ def _raise_conflict(
 
 
 def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
-    """记录任务名以检测跨文件重复；字段类型/非空由 InterfaceModel 校验。"""
-    if not isinstance(tasks, list):
+    """校验任务容器与 name/entry 非空，并记录任务名以检测跨文件重复。"""
+    if tasks is None:
         return
-    for task in tasks:
-        if not isinstance(task, dict) or not isinstance(task.get("name"), str):
-            continue
+    if not isinstance(tasks, list):
+        raise InterfaceLoadError(f"task 字段必须是数组: {source_path}")
+    for index, task in enumerate(tasks):
+        if not isinstance(task, dict):
+            raise InterfaceLoadError(f"task[{index}] 必须是对象: {source_path}")
+        for field in ("name", "entry"):
+            value = task.get(field)
+            if not isinstance(value, str) or not value:
+                raise InterfaceLoadError(
+                    f"task[{index}].{field} 必须是非空字符串: {source_path}"
+                )
         task_name = task["name"]
         existing_name = state.task_names.get(task_name)
         if existing_name is not None:
@@ -93,11 +105,13 @@ def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
 
 
 def _register_options(options: Any, source_path: Path, state: _MergeState) -> None:
-    if not isinstance(options, dict):
+    if options is None:
         return
+    if not isinstance(options, dict):
+        raise InterfaceLoadError(f"option 字段必须是对象: {source_path}")
     for option_key in options:
-        if not isinstance(option_key, str):
-            continue
+        if not isinstance(option_key, str) or not option_key:
+            raise InterfaceLoadError(f"option 键必须是非空字符串: {source_path}")
         existing_path = state.option_keys.get(option_key)
         if existing_path is not None:
             _raise_conflict("option", option_key, source_path, existing_path)
@@ -105,12 +119,18 @@ def _register_options(options: Any, source_path: Path, state: _MergeState) -> No
 
 
 def _register_presets(presets: Any, source_path: Path, state: _MergeState) -> None:
-    if not isinstance(presets, list):
+    if presets is None:
         return
-    for preset in presets:
-        if not isinstance(preset, dict) or not isinstance(preset.get("name"), str):
-            continue
-        preset_name = preset["name"]
+    if not isinstance(presets, list):
+        raise InterfaceLoadError(f"preset 字段必须是数组: {source_path}")
+    for index, preset in enumerate(presets):
+        if not isinstance(preset, dict):
+            raise InterfaceLoadError(f"preset[{index}] 必须是对象: {source_path}")
+        preset_name = preset.get("name")
+        if not isinstance(preset_name, str) or not preset_name:
+            raise InterfaceLoadError(
+                f"preset[{index}].name 必须是非空字符串: {source_path}"
+            )
         existing_path = state.preset_names.get(preset_name)
         if existing_path is not None:
             _raise_conflict("preset", preset_name, source_path, existing_path)

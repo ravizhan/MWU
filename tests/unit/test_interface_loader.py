@@ -645,6 +645,42 @@ class TestLoadInterfaceModel:
         with pytest.raises(InterfaceLoadError, match="循环导入"):
             load_interface_model(tmp_path)
 
+    @pytest.mark.parametrize(
+        ("root_extra", "fragment", "expected_message"),
+        [
+            pytest.param(
+                {"task": [{"name": "T", "entry": ""}]},
+                None,
+                r"task\[0\]\.entry 必须是非空字符串",
+                id="empty-task-entry",
+            ),
+            pytest.param(
+                {"preset": [{"name": ""}]},
+                None,
+                r"preset\[0\]\.name 必须是非空字符串",
+                id="empty-preset-name",
+            ),
+            pytest.param({}, {"task": 5}, "task 字段必须是数组", id="fragment-task"),
+            pytest.param(
+                {}, {"option": "x"}, "option 字段必须是对象", id="fragment-option"
+            ),
+            pytest.param(
+                {}, {"setting": {}}, "setting 字段必须是数组", id="fragment-setting"
+            ),
+        ],
+    )
+    def test_malformed_definitions_fail_with_load_error(
+        self, tmp_path, root_extra, fragment, expected_message
+    ):
+        data: dict = {"interface_version": 2, "name": "Test", **root_extra}
+        if fragment is not None:
+            (tmp_path / "frag.json").write_text(stdlib_json.dumps(fragment))
+            data["import"] = ["frag.json"]
+        _write_interface(tmp_path, data)
+
+        with pytest.raises(InterfaceLoadError, match=expected_message):
+            load_interface_model(tmp_path)
+
     def test_nonexistent_resource(self, tmp_path):
         _write_interface(
             tmp_path,

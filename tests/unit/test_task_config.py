@@ -443,15 +443,29 @@ class TestNormalizeTaskExecutionPayload:
         assert len(pre_tasks) == 1
         assert pre_tasks[0].command == "echo ok"
 
-    def test_pre_task_invalid_timeout_is_rejected_not_dropped(self):
-        iface = _make_interface()
-        with pytest.raises(ValidationError):
-            normalize_task_execution_payload(
-                [],
-                {},
-                iface,
-                raw_pre_tasks=[{"command": "echo hi", "timeout": 0}],
-            )
+
+@pytest.mark.parametrize(
+    "raw_pre_tasks",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("echo", id="not-a-list"),
+        pytest.param(
+            [{"command": "bad", "timeout": 0}, {"command": "ok", "timeout": 10}],
+            id="invalid-item",
+        ),
+    ],
+)
+def test_persisted_config_with_bad_pre_tasks_still_loads(raw_pre_tasks):
+    snapshot: dict = {"tasks": []}
+    if raw_pre_tasks is not None:
+        snapshot["preTasks"] = raw_pre_tasks
+
+    config = TaskConfigModel.model_validate(
+        {"selectedPreset": "", "presets": {"p": snapshot}}
+    )
+
+    expected = ["ok"] if isinstance(raw_pre_tasks, list) else []
+    assert [p.command for p in config.presets["p"].preTasks] == expected
 
 
 # ---------------------------------------------------------------------------

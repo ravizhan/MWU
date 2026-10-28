@@ -44,6 +44,21 @@ let watcherStopHandles: (() => void)[] = []
 /** Upper bound for waiting on the backend to release its run slot after stop. */
 const STOP_WAIT_TIMEOUT_MS = 30_000
 
+/** Cadence and deadline for retrying a start that loses the race with slot release. */
+const START_RETRY_INTERVAL_MS = 500
+const START_RETRY_DEADLINE_MS = 60_000
+
+/** One in-flight stop-then-restart sequence, shared by concurrent callers. */
+let restartInFlight: Promise<boolean> | null = null
+/** Cancels the pending wait/retry when the owning view unmounts. */
+let restartAbort: AbortController | null = null
+
+/** Result of a single start request, kept free of dialog state. */
+type StartOutcome =
+  | { kind: "started" }
+  | { kind: "conflict"; conflict: StartConflict }
+  | { kind: "failed" }
+
 export const useDeviceConnectionStore = defineStore("deviceConnection", {
   state: (): {
     selectedController: string | null
@@ -595,6 +610,23 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
 
     // --- Task control ---
     async StartTask(): Promise<boolean> {
+      const outcome = await this.requestTaskStart()
+      if (outcome.kind === "conflict") {
+        // No toast here — StartConflictDialog renders from startConflict
+        this.startConflict = outcome.conflict
+        return false
+      }
+      // 启动成功或非冲突失败都清掉过期冲突，避免对话框停留在已失效的状态。
+      this.startConflict = null
+      return outcome.kind === "started"
+    },
+
+    /**
+     * Issue one start request without touching `startConflict`.
+     * `stopActiveAndRestart` retries a busy_manual conflict through this action,
+     * so a transient rejection must not flash StartConflictDialog.
+     */
+    async requestTaskStart(): Promise<StartOutcome> {
       const t = i18n.global.t
       const indexStore = useIndexStore()
       const interfaceStore = useInterfaceStore()
@@ -612,13 +644,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         const connectResult = await this.connectDevices()
         if (!connectResult.success) {
           showGlobalMessage("error", "设备连接失败: " + connectResult.message)
-          return false
+          return { kind: "failed" }
         }
 
         const resourceResult = await this.postResourceSelection()
         if (!resourceResult.success) {
           showGlobalMessage("error", "资源设置失败: " + resourceResult.message)
-          return false
+          return { kind: "failed" }
         }
       }
 
@@ -637,10 +669,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       if (compatibleTaskIds.length === 0) {
         if (allCompatibleTaskIds.length === 0) {
           showGlobalMessage("error", t("panel.noCompatibleTask"))
-          return false
+          return { kind: "failed" }
         }
         showGlobalMessage("error", t("panel.selectTask"))
-        return false
+        return { kind: "failed" }
       }
 
       const base = configStore.buildExecutionPayload(compatibleTaskIds)
@@ -651,7 +683,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         const playCoverResult = this.buildPlayCoverDevice()
         if ("error" in playCoverResult) {
           showGlobalMessage("error", "设备连接失败: " + playCoverResult.error)
-          return false
+          return { kind: "failed" }
         }
         deviceAddress = playCoverResult.device.address
       }
@@ -670,39 +702,100 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const result = await startTask(payload)
       if (result.accepted) {
         indexStore.setTaskRunning(true)
-        // 清掉过期冲突，避免 StartConflictDialog 在运行中弹出
-        this.startConflict = null
-        return true
+        return { kind: "started" }
       }
       if (result.conflict) {
-        // No toast here — StartConflictDialog renders from startConflict
-        this.startConflict = result.conflict ?? null
-        return false
+        return { kind: "conflict", conflict: result.conflict }
       }
-      // 非冲突失败同样清掉过期冲突，避免对话框停留在已失效的冲突状态。
-      this.startConflict = null
-      return false
+      return { kind: "failed" }
     },
 
     clearStartConflict() {
       this.startConflict = null
     },
 
-    async stopActiveAndRestart(): Promise<boolean> {
+    /**
+     * Stop the active run, then start the current selection again.
+     * Concurrent callers share one in-flight sequence; `cleanup()` cancels it.
+     */
+    stopActiveAndRestart(): Promise<boolean> {
+      if (restartInFlight) {
+        return restartInFlight
+      }
+      const controller = new AbortController()
+      restartAbort = controller
+      const pending = this.runStopAndRestart(controller.signal).finally(() => {
+        if (restartInFlight === pending) {
+          restartInFlight = null
+        }
+        if (restartAbort === controller) {
+          restartAbort = null
+        }
+      })
+      restartInFlight = pending
+      return pending
+    },
+
+    async runStopAndRestart(signal: AbortSignal): Promise<boolean> {
       const stopped = await stopTask()
       if (!stopped) {
         return false
       }
       this.clearStartConflict()
 
-      // 后端在终端事件之前清空 active_run，因此 TaskRunning=false 即可安全重新准入。
+      // TaskRunning 先有界等待：正常情况下它由终端事件清除。
       const indexStore = useIndexStore()
-      const released = await waitUntilTaskStopped(() => indexStore.TaskRunning)
+      const released = await waitUntilTaskStopped(() => indexStore.TaskRunning, signal)
+      if (signal.aborted) {
+        return false
+      }
       if (!released) {
         showGlobalMessage("error", i18n.global.t("settings.scheduler.conflict.stopTimeout"))
         return false
       }
-      return this.StartTask()
+      return this.startTaskWithRetry(signal)
+    },
+
+    /**
+     * Retry while the backend still reports busy_manual: after a refresh TaskRunning
+     * is already false while `active_run` is not cleared yet, and `/api/stop` returns
+     * before that happens. Other conflicts and failures are surfaced immediately.
+     */
+    async startTaskWithRetry(signal: AbortSignal): Promise<boolean> {
+      const deadline = Date.now() + START_RETRY_DEADLINE_MS
+      let conflict: StartConflict | null = null
+
+      while (!signal.aborted && Date.now() <= deadline) {
+        const outcome = await this.requestTaskStart()
+        if (signal.aborted) {
+          return false
+        }
+        if (outcome.kind === "started") {
+          this.startConflict = null
+          return true
+        }
+        if (outcome.kind === "failed") {
+          this.startConflict = null
+          return false
+        }
+        if (outcome.conflict.code !== "busy_manual") {
+          this.startConflict = outcome.conflict
+          return false
+        }
+        conflict = outcome.conflict
+
+        await sleepUntilAborted(START_RETRY_INTERVAL_MS, signal)
+        if (signal.aborted) {
+          return false
+        }
+      }
+
+      if (signal.aborted) {
+        return false
+      }
+      // 重试耗尽：只在这里暴露一次冲突，避免对话框在两次尝试之间闪烁。
+      this.startConflict = conflict
+      return false
     },
 
     // --- Config reset ---
@@ -789,6 +882,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     },
 
     cleanup() {
+      restartAbort?.abort()
+      restartAbort = null
+      restartInFlight = null
+
       if (this.deviceStatePollTimer !== null) {
         window.clearInterval(this.deviceStatePollTimer)
         this.deviceStatePollTimer = null
@@ -806,26 +903,58 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
 
 /**
  * Wait (bounded) until the SSE terminal event clears TaskRunning.
- * The backend clears `active_run` before publishing `task.completed/failed`,
- * so a cleared flag means the next start request cannot hit busy_manual.
+ * A cleared flag is necessary but not sufficient: after a page refresh it already
+ * reads false while the backend may still be releasing `active_run`, so callers
+ * must also retry busy_manual. `signal` cancels the wait on view teardown.
  */
-function waitUntilTaskStopped(isRunning: () => boolean): Promise<boolean> {
+function waitUntilTaskStopped(isRunning: () => boolean, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) {
+    return Promise.resolve(false)
+  }
   if (!isRunning()) {
     return Promise.resolve(true)
   }
   return new Promise<boolean>((resolve) => {
     let stopWatching: (() => void) | null = null
-    const timer = window.setTimeout(() => {
+    let timer: number | null = null
+    let released = false
+    const finish = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      signal.removeEventListener("abort", finish)
       stopWatching?.()
-      resolve(false)
-    }, STOP_WAIT_TIMEOUT_MS)
+      resolve(released)
+    }
+    timer = window.setTimeout(finish, STOP_WAIT_TIMEOUT_MS)
+    signal.addEventListener("abort", finish, { once: true })
     stopWatching = watch(isRunning, (running) => {
       if (!running) {
-        window.clearTimeout(timer)
-        stopWatching?.()
-        resolve(true)
+        released = true
+        finish()
       }
     })
+  })
+}
+
+/** Resolve after `ms`, or immediately once `signal` aborts. */
+function sleepUntilAborted(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => {
+    let timer: number | null = null
+    const finish = () => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      signal.removeEventListener("abort", finish)
+      resolve()
+    }
+    timer = window.setTimeout(finish, ms)
+    signal.addEventListener("abort", finish, { once: true })
   })
 }
 

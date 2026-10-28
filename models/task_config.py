@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from models.interface import InterfaceModel, Option, Preset, PresetOptionValue
 from models.scheduler import (
@@ -251,7 +251,7 @@ def _normalize_raw_snapshot(snapshot: Any) -> dict[str, Any]:
     return {
         "tasks": raw_tasks,
         "taskOptions": _normalize_raw_task_options(snapshot.get("taskOptions")),
-        "preTasks": snapshot.get("preTasks"),
+        "preTasks": _coerce_pre_tasks(snapshot.get("preTasks"), drop_disabled=False),
     }
 
 
@@ -282,11 +282,12 @@ def _normalize_raw_task_options(value: Any) -> dict[str, dict[str, TaskOptionVal
 def _coerce_pre_tasks(
     raw_pre_tasks: Any, *, drop_disabled: bool
 ) -> list[PreTaskCommand]:
-    """把持久化/请求中的前置命令统一为 PreTaskCommand。
+    """把持久化数据或已校验请求中的前置命令统一为 PreTaskCommand。
 
     ``drop_disabled`` 为真时（执行载荷）只保留启用且有命令的项；
     为假时（快照持久化）保留禁用项，由执行阶段过滤。
-    非法 timeout 由 PreTaskCommand 的边界校验拒绝，不再静默丢弃。
+    请求路径的非法项已由 API 模型拒绝；这里只会遇到持久化文件中的损坏项，
+    逐项丢弃，避免单个坏项让整个配置或定时任务无法加载。
     """
     if not isinstance(raw_pre_tasks, list):
         return []
@@ -298,12 +299,15 @@ def _coerce_pre_tasks(
         elif isinstance(item, dict) and isinstance(item.get("command"), str):
             task_id = item.get("id")
             timeout = item.get("timeout")
-            task = PreTaskCommand(
-                id=task_id if isinstance(task_id, str) else _generate_pre_task_id(),
-                command=item["command"],
-                enabled=bool(item.get("enabled", True)),
-                timeout=int(timeout) if isinstance(timeout, (int, float)) else 30,
-            )
+            try:
+                task = PreTaskCommand(
+                    id=task_id if isinstance(task_id, str) else _generate_pre_task_id(),
+                    command=item["command"],
+                    enabled=bool(item.get("enabled", True)),
+                    timeout=int(timeout) if isinstance(timeout, (int, float)) else 30,
+                )
+            except (ValidationError, ValueError, OverflowError):
+                continue
         else:
             continue
         if drop_disabled and (not task.enabled or not task.command.strip()):

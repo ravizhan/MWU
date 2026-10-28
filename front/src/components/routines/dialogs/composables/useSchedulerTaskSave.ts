@@ -30,6 +30,7 @@ function triggerRuleMessage(issue: ZodIssue): string {
       ? "settings.scheduler.rules.dateInPast"
       : "settings.scheduler.rules.dateRequired"
   }
+  if (issue.path[1] === "end_date") return "settings.scheduler.rules.intervalEndBeforeStart"
   return "settings.scheduler.rules.intervalRequired"
 }
 

@@ -21,6 +21,17 @@ describe("triggerConfigSchema", () => {
     expect(triggerConfigSchema.safeParse({ type: "interval", seconds: -1 }).success).toBe(false)
   })
 
+  it("reports an end date before the start date on the end_date field", () => {
+    const result = triggerConfigSchema.safeParse({
+      type: "interval",
+      hours: 1,
+      start_date: "2026-10-28T10:00:00",
+      end_date: "2026-10-28T09:00:00",
+    })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0].path).toEqual(["end_date"])
+  })
+
   it("rejects an unknown trigger type", () => {
     expect(triggerConfigSchema.safeParse({ type: "unknown" }).success).toBe(false)
   })

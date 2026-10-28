@@ -426,6 +426,61 @@ describe("useDeviceConnectionStore", () => {
         expect(store.startConflict).toEqual(scheduledConflict)
       })
 
+      it("retries a busy_manual conflict after a refresh", async () => {
+        vi.useFakeTimers()
+        const { store, indexStore } = primeRunningStore()
+        // Refreshed page: no local run flag, backend slot not released yet.
+        indexStore.setTaskRunning(false)
+        vi.mocked(api.stopTask).mockResolvedValue(true)
+        vi.mocked(api.startTask)
+          .mockResolvedValueOnce({
+            accepted: false,
+            conflict: {
+              code: "busy_manual",
+              message: "busy",
+              active_run_id: "run-9",
+              active_task_name: "Other Task",
+              active_origin: "manual",
+            },
+          })
+          .mockResolvedValueOnce({ accepted: true, runId: "run-2" })
+
+        const pending = store.stopActiveAndRestart()
+        await vi.advanceTimersByTimeAsync(500)
+        await expect(pending).resolves.toBe(true)
+        vi.useRealTimers()
+
+        expect(api.startTask).toHaveBeenCalledTimes(2)
+        expect(store.startConflict).toBeNull()
+      })
+
+      it("stops waiting when the view unmounts", async () => {
+        vi.useFakeTimers()
+        const { store } = primeRunningStore()
+        vi.mocked(api.stopTask).mockResolvedValue(true)
+
+        const pending = store.stopActiveAndRestart()
+        await vi.advanceTimersByTimeAsync(0)
+        store.cleanup()
+        await expect(pending).resolves.toBe(false)
+        vi.useRealTimers()
+
+        expect(api.startTask).not.toHaveBeenCalled()
+      })
+
+      it("shares one stop sequence between concurrent calls", async () => {
+        const { store, indexStore } = primeRunningStore()
+        indexStore.setTaskRunning(false)
+        vi.mocked(api.stopTask).mockResolvedValue(true)
+        vi.mocked(api.startTask).mockResolvedValue({ accepted: true, runId: "run-2" })
+
+        const first = store.stopActiveAndRestart()
+        const second = store.stopActiveAndRestart()
+        await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+        expect(api.stopTask).toHaveBeenCalledTimes(1)
+        expect(api.startTask).toHaveBeenCalledTimes(1)
+      })
+
       it("reports a timeout when the run slot is never released", async () => {
         vi.useFakeTimers()
         const { store } = primeRunningStore()

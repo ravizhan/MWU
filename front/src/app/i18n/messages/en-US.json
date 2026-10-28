@@ -168,6 +168,7 @@
         "dateRequired": "Please select execution time",
         "dateInPast": "Execution time cannot be in the past",
         "intervalRequired": "Interval must be greater than 0",
+        "intervalEndBeforeStart": "End time cannot be before start time",
         "taskListRequired": "Please select at least one task",
         "invalidAddress": "Invalid device address format"
       }

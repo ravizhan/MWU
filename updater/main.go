@@ -51,6 +51,12 @@ func main() {
 	if cfg.Archive == "" {
 		fail("Missing -archive argument")
 	}
+	if cfg.WebhookURL == "" {
+		fail("Missing -webhook argument")
+	}
+	if cfg.RestartCmd == "" {
+		fail("Missing -restart-cmd argument")
+	}
 
 	installDir, err := os.Getwd()
 	if err != nil {

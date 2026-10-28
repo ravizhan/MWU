@@ -66,10 +66,15 @@ class EventService:
         )
 
         self._publish_event(realtime_event)
+        self.deliver_notification(realtime_event)
 
-        if "notification" not in notify:
+    def deliver_notification(self, event: RealtimeEvent):
+        """按设置发送系统/外部通知（可能阻塞在网络请求上，须在工作线程调用）。"""
+        if "notification" not in event.notify:
             return
 
+        title = event.title
+        message = event.message
         settings = load_settings()
 
         if settings.notification.systemNotification:
@@ -154,23 +159,39 @@ class EventService:
             level="info",
         )
 
-    def emit_task_completed(self, task_list: list[str]):
-        settings = load_settings()
-        self.emit(
-            "task.completed",
-            f"{self._build_task_subject(task_list)} 执行完成",
-            level="success",
-            notify=["notification"] if settings.notification.notifyOnComplete else [],
-            title="任务完成",
-        )
+    def publish_task_terminal(
+        self,
+        task_list: list[str],
+        run_label: str | None,
+        succeeded: bool,
+        settings: SettingsModel,
+    ) -> RealtimeEvent:
+        """同步入队 task.completed / task.failed，不走节流 sleep。
 
-    def emit_task_failed(self, task_list: list[str], error_message: str):
-        settings = load_settings()
-        self.emit(
-            "task.failed",
-            f"{self._build_task_subject(task_list)} 执行失败，请检查日志",
-            level="error",
-            notify=["notification"] if settings.notification.notifyOnError else [],
-            title="任务失败",
-        )
-        self.send_log(f"任务异常详情: {error_message}")
+        调用方在事件循环中与清槽处于同一同步段，保证新运行的 task.started
+        不会排在旧运行的终端事件之前；settings 由调用方预先在线程中读取。
+        通知等慢操作由 deliver_notification 另行处理。
+        """
+        subject = run_label or self._build_task_subject(task_list)
+        if succeeded:
+            notify = ["notification"] if settings.notification.notifyOnComplete else []
+            event = RealtimeEvent(
+                event="task.completed",
+                level="success",
+                message=f"{subject} 执行完成",
+                time=current_time(),
+                notify=notify,
+                title="任务完成",
+            )
+        else:
+            notify = ["notification"] if settings.notification.notifyOnError else []
+            event = RealtimeEvent(
+                event="task.failed",
+                level="error",
+                message=f"{subject} 执行失败，请检查日志",
+                time=current_time(),
+                notify=notify,
+                title="任务失败",
+            )
+        self.worker.message_conn.put(event)
+        return event
