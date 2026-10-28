@@ -80,25 +80,8 @@ describe("dispatchRealtimeEvent", () => {
       dispatchRealtimeEvent({ ...baseEvent, notify: [] }, stores)
       expect(showBrowserRealtimeNotification).not.toHaveBeenCalled()
     })
-  })
 
-  describe("double-notification bug fix", () => {
-    it("does NOT duplicate toast for toast-only events", () => {
-      const stores = makeStores()
-      dispatchRealtimeEvent({ ...baseEvent, notify: ["toast"] }, stores)
-      // showToastMessage is called exactly once — no duplicate
-      expect(showToastMessage).toHaveBeenCalledTimes(1)
-    })
-
-    it("does NOT show toast for notification-only events", () => {
-      const stores = makeStores()
-      dispatchRealtimeEvent({ ...baseEvent, notify: ["notification"] }, stores)
-      // Only browser notification, no extra toast
-      expect(showToastMessage).not.toHaveBeenCalled()
-      expect(showBrowserRealtimeNotification).toHaveBeenCalledTimes(1)
-    })
-
-    it("handles both toast and notification channels without duplication", () => {
+    it("handles both toast and notification channels once each", () => {
       const stores = makeStores()
       dispatchRealtimeEvent({ ...baseEvent, notify: ["toast", "notification"] }, stores)
       expect(showToastMessage).toHaveBeenCalledTimes(1)

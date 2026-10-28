@@ -6,6 +6,7 @@
 """
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -67,18 +68,6 @@ class TestLinuxCrontabReadSafety:
         )
         with pytest.raises(RuntimeError, match="读取 crontab 失败"):
             backend._read_crontab()
-
-    def test_list_propagates_read_error(self, monkeypatch):
-        backend = LinuxBackend()
-
-        def fake_run(args, **kwargs):
-            raise _error(stderr="crontab: can't open your crontab file\n")
-
-        monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
-        )
-        with pytest.raises(RuntimeError, match="读取 crontab 失败"):
-            backend.list_registered_task_ids()
 
     def test_multiline_crontab_list(self, monkeypatch):
         backend = LinuxBackend()
@@ -159,6 +148,23 @@ class TestWindowsUnregisterIdempotent:
         )
         with pytest.raises(CommandError):
             backend.unregister("11111111-1111-4111-8111-111111111111")
+
+
+class TestMacOSListRegistered:
+    def test_oserror_propagates(self, monkeypatch, tmp_path):
+        backend = MacOSBackend()
+        plist_dir = tmp_path / "LaunchAgents"
+        plist_dir.mkdir()
+
+        def _boom(*_args, **_kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(MacOSBackend, "_PLIST_DIR", plist_dir)
+        monkeypatch.setattr(Path, "glob", _boom)
+
+        # 未知状态必须上抛，避免把「读不到」当成「没有任务」而误清孤儿
+        with pytest.raises(RuntimeError, match="查询 macOS 计划任务失败"):
+            backend.list_registered_task_ids()
 
 
 class TestMacOSBootout:

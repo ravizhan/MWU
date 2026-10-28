@@ -1,7 +1,10 @@
 import { defineStore } from "pinia"
+import i18n from "@/app/i18n"
 import { getTaskConfig, resetTaskConfig, saveTaskConfig } from "@/services/api"
+import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore } from "@/stores"
-import type { Option, PresetTaskOptionValue } from "@/types/interfaceModel"
+import { tryCatch } from "@/utils/tryCatch"
+import type { Option, Preset, PresetTaskOptionValue } from "@/types/interfaceModel"
 import type {
   NullableTaskOptionValue,
   TaskExecutionPayload,
@@ -72,7 +75,6 @@ function createQueuedTaskItem(task: TaskListItem): QueuedTaskItem {
     uid: crypto.randomUUID(),
     id: task.id,
     name: task.name,
-    order: task.order,
   }
 }
 
@@ -238,91 +240,25 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       }
     },
 
-    buildOptionsFromPersisted(
-      taskIds: string[],
-      optionsByTask: TaskOptionsByTask | null | undefined,
-    ): TaskOptionsByTask {
-      const normalizedTaskIds = this.normalizeTaskIds(taskIds)
-      const mergedTaskOptions: TaskOptionsByTask = {}
-
-      for (const taskId of normalizedTaskIds) {
-        const defaults = this.buildDefaultOptionsForTask(taskId)
-        const persistedTaskOptions = optionsByTask?.[taskId]
-        const mergedOptions: Record<string, TaskOptionValue> = cloneTaskOptionMap(defaults)
-
-        if (persistedTaskOptions) {
-          for (const key of Object.keys(defaults)) {
-            const normalizedValue = normalizeOptionValueForBoundary(persistedTaskOptions[key])
-            if (normalizedValue !== undefined) {
-              mergedOptions[key] = normalizedValue
-            }
-          }
-        }
-
-        mergedTaskOptions[taskId] = mergedOptions
-      }
-
-      return mergedTaskOptions
-    },
-
     serializeCurrentSnapshot(): TaskPresetSnapshot {
       const tasks = this.taskList.map((task) => task.id)
-      const taskOptions = this.buildOptionsFromPersisted(tasks, this.options)
-
       return {
         tasks,
-        taskOptions,
+        taskOptions: this.buildOptionsForTasks(tasks),
         preTasks: [...this.preTasks],
       }
     },
 
+    /** Snapshots carry complete option maps (server-normalized or built from the interface). */
     hydrateSnapshot(snapshot: TaskPresetSnapshot) {
       this.taskList = this.buildQueueFromIds(snapshot.tasks)
-      this.options = this.buildOptionsFromPersisted(snapshot.tasks, snapshot.taskOptions)
-      this.preTasks = snapshot.preTasks ? [...snapshot.preTasks] : []
+      this.options = cloneTaskOptionsByTask(snapshot.taskOptions)
+      this.preTasks = [...snapshot.preTasks]
     },
 
-    normalizeSnapshot(snapshot?: TaskPresetSnapshot | null): TaskPresetSnapshot {
-      const tasks = Array.isArray(snapshot?.tasks)
-        ? this.normalizeTaskIds(
-            snapshot.tasks.filter((taskId): taskId is string => typeof taskId === "string"),
-          )
-        : []
-      const taskOptions = this.buildOptionsFromPersisted(tasks, snapshot?.taskOptions)
-
-      const preTasks = Array.isArray(snapshot?.preTasks)
-        ? snapshot.preTasks
-            .filter((pt) => typeof pt.command === "string" && pt.command.length > 0)
-            .map((pt) => ({
-              id: pt.id || crypto.randomUUID(),
-              command: pt.command,
-              enabled: typeof pt.enabled === "boolean" ? pt.enabled : true,
-              timeout: typeof pt.timeout === "number" && pt.timeout > 0 ? pt.timeout : 30,
-            }))
-        : []
-
-      return {
-        tasks,
-        taskOptions: cloneTaskOptionsByTask(taskOptions),
-        preTasks,
-      }
-    },
-
-    buildDefaultTaskOptionsByTask(taskList: TaskListItem[]): TaskOptionsByTask {
-      const taskOptions: TaskOptionsByTask = {}
-      for (const task of taskList) {
-        taskOptions[task.id] = this.buildDefaultOptionsForTask(task.id)
-      }
-      return taskOptions
-    },
-
-    buildPresetSnapshot(presetName: string): TaskPresetSnapshot | null {
+    /** Client-only normalization: interface preset declaration -> preset snapshot. */
+    buildPresetSnapshot(preset: Preset): TaskPresetSnapshot {
       const interfaceStore = useInterfaceStore()
-      const preset = interfaceStore.getPresetByName(presetName)
-      if (!preset) {
-        return null
-      }
-
       const taskMap = new Map(interfaceStore.getTaskList.map((task) => [task.id, task]))
       const optionMap = interfaceStore.interface?.option || {}
       const tasks: string[] = []
@@ -349,25 +285,25 @@ export const useTaskConfigStore = defineStore("taskConfig", {
         }
       }
 
-      return this.normalizeSnapshot({
-        tasks,
-        taskOptions,
-        preTasks: [],
-      })
+      return { tasks, taskOptions: cloneTaskOptionsByTask(taskOptions), preTasks: [] }
     },
 
+    /** Server-normalized snapshots are trusted as-is; presets the server did not send fall back to the interface. */
     seedPresetSnapshots(
       persistedSnapshots: Record<string, TaskPresetSnapshot> = {},
     ): Record<string, TaskPresetSnapshot> {
       const interfaceStore = useInterfaceStore()
       const presetSnapshots: Record<string, TaskPresetSnapshot> = {
-        [CUSTOM_PRESET_NAME]: this.normalizeSnapshot(persistedSnapshots[CUSTOM_PRESET_NAME]),
+        [CUSTOM_PRESET_NAME]: persistedSnapshots[CUSTOM_PRESET_NAME] ?? {
+          tasks: [],
+          taskOptions: {},
+          preTasks: [],
+        },
       }
 
       for (const preset of interfaceStore.getPresetList) {
-        presetSnapshots[preset.name] = this.normalizeSnapshot(
-          persistedSnapshots[preset.name] || this.buildPresetSnapshot(preset.name),
-        )
+        presetSnapshots[preset.name] =
+          persistedSnapshots[preset.name] ?? this.buildPresetSnapshot(preset)
       }
 
       return presetSnapshots
@@ -396,29 +332,24 @@ export const useTaskConfigStore = defineStore("taskConfig", {
 
     buildPersistedConfig(): PersistedTaskConfig {
       this.syncCurrentPresetSnapshot()
-
-      const normalizedSnapshots = Object.fromEntries(
-        Object.entries(this.presetSnapshots).map(([presetName, snapshot]) => [
-          presetName,
-          this.normalizeSnapshot(snapshot),
-        ]),
-      )
-
       return {
         selectedPreset: this.selectedPresetName,
-        presets: normalizedSnapshots,
+        presets: { ...this.presetSnapshots },
       }
     },
 
     async loadConfig() {
-      const taskConfig = await getTaskConfig()
-      this.presetSnapshots = this.seedPresetSnapshots(taskConfig.presets)
+      const [taskConfig, error] = await tryCatch(() => getTaskConfig())
+      if (!taskConfig) {
+        // No synthetic defaults: `configLoaded` stays false so autosave cannot
+        // overwrite the persisted task_config.json with a regenerated config.
+        console.error("Failed to load task config:", error)
+        showGlobalMessage("error", i18n.global.t("panel.taskConfigLoadFailed"))
+        return
+      }
 
-      const interfaceStore = useInterfaceStore()
-      this.selectedPresetName =
-        taskConfig.selectedPreset && this.presetSnapshots[taskConfig.selectedPreset]
-          ? taskConfig.selectedPreset
-          : (interfaceStore.getPresetList[0]?.name ?? CUSTOM_PRESET_NAME)
+      this.presetSnapshots = this.seedPresetSnapshots(taskConfig.presets)
+      this.selectedPresetName = taskConfig.selectedPreset
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
       this.configLoaded = true
     },

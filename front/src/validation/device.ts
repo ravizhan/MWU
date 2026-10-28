@@ -83,29 +83,5 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
   }),
 ])
 
-/** Runtime (scanned) device address: Adb allows USB serials. */
-export const runtimeDeviceAddressSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("Adb"),
-    address: z.string().trim().min(1, "Adb address must not be empty"),
-  }),
-  z.object({
-    type: z.literal("PlayCover"),
-    address: hostPortSchema,
-  }),
-  z.object({
-    type: z.literal("Win32"),
-    address: win32AddressSchema,
-  }),
-  z.object({
-    type: z.literal("Gamepad"),
-    address: gamepadAddressSchema,
-  }),
-  z.object({
-    type: z.literal("Linux"),
-    address: z.string().trim().min(1, "Linux device address must not be empty"),
-  }),
-])
-
 /** PlayCover address schema for connection store. */
 export const playCoverAddressSchema = hostPortSchema

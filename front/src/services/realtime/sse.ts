@@ -1,70 +1,30 @@
-import type {
-  FocusModal,
-  RealtimeEvent,
-  RealtimeEventLevel,
-  RealtimeEventName,
-} from "@/types/realtimeModel"
+import type { RealtimeEvent, RealtimeEventName } from "@/types/realtimeModel"
 import { tryCatch } from "@/utils/tryCatch"
 
-const VALID_EVENT_LEVELS: ReadonlySet<string> = new Set(["info", "success", "error"])
+/** `EventSource.CLOSED`: the browser has given up reconnecting on its own. */
+const EVENT_SOURCE_CLOSED = 2
+const REOPEN_DELAY_MS = 5000
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
-}
-
-function isRealtimeEventName(value: unknown): value is RealtimeEventName {
-  return typeof value === "string"
-}
-
-function isValidEventLevel(level: unknown): level is RealtimeEventLevel {
-  return typeof level === "string" && VALID_EVENT_LEVELS.has(level)
-}
-
-function extractFocusModals(data: Record<string, unknown>): FocusModal[] | null {
-  const value = data.focus_modals
-  return Array.isArray(value) ? value : null
-}
-
-function extractString(data: unknown, key: string): string | undefined {
-  if (!isRecord(data)) return undefined
-  const value = data[key]
-  return typeof value === "string" ? value : undefined
-}
-
-function extractStringArray(data: unknown, key: string): string[] {
-  if (!isRecord(data)) return []
-  const value = data[key]
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : []
-}
-
-function extractEventType(data: unknown): RealtimeEventName {
-  if (!isRecord(data)) return "log"
-  const raw = data.event
-  return isRealtimeEventName(raw) ? raw : "log"
-}
-
-function extractLevel(data: unknown): RealtimeEventLevel {
-  if (!isRecord(data)) return "info"
-  const raw = "level" in data ? data.level : undefined
-  return isValidEventLevel(raw) ? raw : "info"
-}
-
-function extractDetails(data: unknown): Record<string, unknown> | null {
-  if (!isRecord(data)) return null
-  const details = "details" in data ? data.details : null
-  return isRecord(details) ? details : null
+/**
+ * 后端由 pydantic `RealtimeEvent` 保证字段完整，这里只校验身份字段，
+ * 其余字段按契约断言。
+ */
+function isRealtimeEvent(value: unknown): value is RealtimeEvent {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "event" in value &&
+    typeof value.event === "string" &&
+    "message" in value &&
+    typeof value.message === "string"
+  )
 }
 
 export class SSEClient {
   private eventSource: EventSource | null = null
   private url: string
   private listeners: Map<string, Set<(data: RealtimeEvent) => void>> = new Map()
-  private baseReconnectInterval: number = 1000
-  private maxReconnectInterval: number = 30000
-  private reconnectAttempts: number = 0
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reopenTimer: ReturnType<typeof setTimeout> | null = null
   private isManuallyClosed: boolean = false
 
   constructor(url: string) {
@@ -75,7 +35,7 @@ export class SSEClient {
   private connect(): void {
     if (this.isManuallyClosed) return
 
-    this.clearReconnectTimer()
+    this.clearReopenTimer()
     this.eventSource?.close()
     this.eventSource = new EventSource(this.url)
 
@@ -85,99 +45,58 @@ export class SSEClient {
         console.error("SSE消息解析错误:", parseErr)
         return
       }
-      const data = this.normalizeEvent(parsed)
-      if (!data) {
+      if (!isRealtimeEvent(parsed)) {
         return
       }
-      this.dispatchEvent(data.event, data)
-    }
-
-    this.eventSource.onopen = () => {
-      this.reconnectAttempts = 0
+      this.dispatchEvent(parsed.event, parsed)
     }
 
     this.eventSource.onerror = (error) => {
       console.error("SSE连接错误:", error)
-      this.eventSource?.close()
-      this.eventSource = null
-      this.scheduleReconnect()
+      // EventSource 自带重连；只有浏览器彻底放弃（CLOSED）时才手动重开一次。
+      if (this.eventSource?.readyState !== EVENT_SOURCE_CLOSED) return
+      this.scheduleReopen()
     }
   }
 
-  private scheduleReconnect(): void {
-    if (this.isManuallyClosed || this.reconnectTimer) return
+  private scheduleReopen(): void {
+    if (this.isManuallyClosed || this.reopenTimer) return
 
-    const exponentialDelay = Math.min(
-      this.maxReconnectInterval,
-      this.baseReconnectInterval * 2 ** this.reconnectAttempts,
-    )
-    const jitter = Math.floor(Math.random() * 500)
-    const delay = exponentialDelay + jitter
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
-      this.reconnectAttempts++
+    this.reopenTimer = setTimeout(() => {
+      this.reopenTimer = null
       this.connect()
-    }, delay)
+    }, REOPEN_DELAY_MS)
   }
 
-  private clearReconnectTimer(): void {
-    if (!this.reconnectTimer) return
-    clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
+  private clearReopenTimer(): void {
+    if (!this.reopenTimer) return
+    clearTimeout(this.reopenTimer)
+    this.reopenTimer = null
   }
 
-  public addEventListener(type: string, callback: (data: RealtimeEvent) => void): void {
+  public addEventListener(type: RealtimeEventName, callback: (data: RealtimeEvent) => void): void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set())
     }
     this.listeners.get(type)?.add(callback)
   }
 
-  public removeEventListener(type: string, callback: (data: RealtimeEvent) => void): void {
+  public removeEventListener(
+    type: RealtimeEventName,
+    callback: (data: RealtimeEvent) => void,
+  ): void {
     this.listeners.get(type)?.delete(callback)
   }
 
-  private normalizeEvent(data: unknown): RealtimeEvent | null {
-    if (!isRecord(data)) {
-      return null
-    }
-
-    const event = extractEventType(data)
-    const message = extractString(data, "message")
-    // modal 快照的 message 恒为空串，靠 focus_modals 承载状态
-    if (message === undefined || (!message && event !== "focus.modal")) {
-      return null
-    }
-
-    return {
-      event,
-      level: extractLevel(data),
-      message,
-      time: extractString(data, "time") ?? "",
-      notify: extractStringArray(data, "notify"),
-      title: extractString(data, "title") ?? null,
-      details: extractDetails(data),
-      display: "display" in data ? Boolean(data.display) : true,
-      focus_modals: extractFocusModals(data),
-    }
-  }
-
-  private dispatchEvent(type: string, data: RealtimeEvent): void {
+  private dispatchEvent(type: RealtimeEventName, data: RealtimeEvent): void {
     this.listeners.get(type)?.forEach((callback) => callback(data))
   }
 
   public close(): void {
     this.isManuallyClosed = true
-    this.clearReconnectTimer()
+    this.clearReopenTimer()
     this.eventSource?.close()
     this.eventSource = null
-  }
-
-  public reconnect(): void {
-    this.isManuallyClosed = false
-    this.reconnectAttempts = 0
-    this.connect()
   }
 }
 

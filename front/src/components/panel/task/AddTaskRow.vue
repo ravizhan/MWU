@@ -38,16 +38,14 @@ interface Emits {
 const { task, controllerName = null, resourceName = null } = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const { locale, t } = useI18n()
+const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 
 const compatible = computed(() =>
   interfaceStore.isTaskCompatible(task, controllerName, resourceName),
 )
 
-const label = computed(() =>
-  resolveInterfaceText(interfaceStore.interface, locale.value, task.label, task.name),
-)
+const label = computed(() => resolveInterfaceText(task.label, task.name))
 
 const reason = computed(() => {
   if (compatible.value) return ""

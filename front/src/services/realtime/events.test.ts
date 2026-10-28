@@ -13,6 +13,26 @@ vi.mock("@/services/feedback/message", () => ({
 
 import { showGlobalMessage } from "@/services/feedback/message"
 
+function makeNotificationSettings(
+  overrides: Partial<NotificationSettings> = {},
+): NotificationSettings {
+  return {
+    systemNotification: false,
+    browserNotification: false,
+    externalNotification: false,
+    webhook: "",
+    contentType: "application/json",
+    headers: "",
+    body: "",
+    username: "",
+    password: "",
+    method: "POST",
+    notifyOnComplete: false,
+    notifyOnError: false,
+    ...overrides,
+  }
+}
+
 const baseEvent: RealtimeEvent = {
   event: "log",
   level: "info",
@@ -71,20 +91,7 @@ describe("showBrowserRealtimeNotification", () => {
   })
 
   it("does nothing when browserNotification is disabled", () => {
-    const settings: NotificationSettings = {
-      systemNotification: false,
-      browserNotification: false,
-      externalNotification: false,
-      webhook: "",
-      contentType: "application/json",
-      headers: "",
-      body: "",
-      username: "",
-      password: "",
-      method: "POST",
-      notifyOnComplete: false,
-      notifyOnError: false,
-    }
+    const settings = makeNotificationSettings({ browserNotification: false })
     showBrowserRealtimeNotification(baseEvent, settings)
     expect(notificationMock).not.toHaveBeenCalled()
   })
@@ -94,39 +101,13 @@ describe("showBrowserRealtimeNotification", () => {
       value: "default",
       configurable: true,
     })
-    const settings: NotificationSettings = {
-      systemNotification: false,
-      browserNotification: true,
-      externalNotification: false,
-      webhook: "",
-      contentType: "application/json",
-      headers: "",
-      body: "",
-      username: "",
-      password: "",
-      method: "POST",
-      notifyOnComplete: false,
-      notifyOnError: false,
-    }
+    const settings = makeNotificationSettings({ browserNotification: true })
     showBrowserRealtimeNotification(baseEvent, settings)
     expect(notificationMock).not.toHaveBeenCalled()
   })
 
   it("creates a notification when enabled and permission is granted", () => {
-    const settings: NotificationSettings = {
-      systemNotification: false,
-      browserNotification: true,
-      externalNotification: false,
-      webhook: "",
-      contentType: "application/json",
-      headers: "",
-      body: "",
-      username: "",
-      password: "",
-      method: "POST",
-      notifyOnComplete: false,
-      notifyOnError: false,
-    }
+    const settings = makeNotificationSettings({ browserNotification: true })
     showBrowserRealtimeNotification(baseEvent, settings)
     expect(notificationMock).toHaveBeenCalledWith("MWU", {
       body: "hello",
@@ -135,20 +116,7 @@ describe("showBrowserRealtimeNotification", () => {
   })
 
   it("uses event.title as notification title when present", () => {
-    const settings: NotificationSettings = {
-      systemNotification: false,
-      browserNotification: true,
-      externalNotification: false,
-      webhook: "",
-      contentType: "application/json",
-      headers: "",
-      body: "",
-      username: "",
-      password: "",
-      method: "POST",
-      notifyOnComplete: false,
-      notifyOnError: false,
-    }
+    const settings = makeNotificationSettings({ browserNotification: true })
     const event: RealtimeEvent = { ...baseEvent, title: "NotifyTitle" }
     showBrowserRealtimeNotification(event, settings)
     expect(notificationMock).toHaveBeenCalledWith("NotifyTitle", {

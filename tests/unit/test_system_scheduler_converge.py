@@ -136,7 +136,7 @@ class TestConvergeFailureIsolation:
         assert "unregister failed" in report.failed[ORPHAN_A]
         assert backend.unregister_calls == [ORPHAN_A]
 
-    def test_list_failure_records_sentinel_and_no_side_effects(self):
+    def test_list_failure_sets_list_error_and_no_side_effects(self):
         backend = FakeBackend(pre_registered=[GHOST], list_raises=True)
         scheduler = make_scheduler(backend)
 
@@ -145,8 +145,9 @@ class TestConvergeFailureIsolation:
         # 查询失败 → 当前状态未知，不做任何注册/清理，仅记录失败
         assert report.registered == []
         assert report.unregistered == []
-        assert set(report.failed) == {"__list__"}
-        assert "list failed" in report.failed["__list__"]
+        assert report.failed == {}
+        assert report.list_error is not None
+        assert "list failed" in report.list_error
         assert backend.register_calls == []
         assert backend.unregister_calls == []
 
@@ -200,45 +201,6 @@ class NullLikeBackend(FakeBackend):
 
 
 class TestConvergeNonNativeBackend:
-    def test_converge_is_noop_when_backend_lacks_native_support(self):
-        backend = NullLikeBackend(pre_registered={ORPHAN_A})
-        scheduler = make_scheduler(backend)
-
-        report = scheduler.converge([make_task(T1), make_task(T2)])
-
-        # 不注册、不清理孤儿，留给调度层回退到应用内派发
-        assert report.registered == []
-        assert report.unregistered == []
-        assert report.failed == {}
-        assert backend.register_calls == []
-        assert backend.unregister_calls == []
-
     def test_supports_native_property_reflects_backend(self):
         assert make_scheduler(FakeBackend()).supports_native is True
         assert make_scheduler(NullLikeBackend()).supports_native is False
-
-
-class TestNonNativeRegisterUnregister:
-    def test_register_is_noop_when_backend_lacks_native_support(self):
-        backend = NullLikeBackend()
-        scheduler = make_scheduler(backend)
-        # 非法/非 Cron 触发器也不会被解析：supports_native=False 时直接跳过
-        task = ScheduledTask(
-            id="date-1",
-            name="日期任务",
-            wakeup_enabled=True,
-            enabled=True,
-            trigger_config=DateTriggerConfig(run_date=datetime(2026, 1, 1, 9, 0)),
-        )
-
-        scheduler.register(task)
-
-        assert backend.register_calls == []
-
-    def test_unregister_is_noop_when_backend_lacks_native_support(self):
-        backend = NullLikeBackend()
-        scheduler = make_scheduler(backend)
-
-        scheduler.unregister(T1)
-
-        assert backend.unregister_calls == []

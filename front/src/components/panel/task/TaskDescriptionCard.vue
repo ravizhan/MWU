@@ -49,11 +49,7 @@ watch(
       stale = true
     })
     const task = interfaceStore.getTaskByName(selectedTaskId.value)
-    const content = await resolveInterfaceDocumentContent(
-      interfaceStore.interface,
-      "",
-      getTaskDocumentSource(task),
-    )
+    const content = await resolveInterfaceDocumentContent(getTaskDocumentSource(task))
     if (!stale) {
       documentContent.value = content
     }

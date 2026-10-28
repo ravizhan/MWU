@@ -50,7 +50,7 @@ export function useTaskEnvironment(
   formData: Ref<SchedulerTaskFormData>,
   suppressFormInit: Ref<boolean>,
 ): TaskEnvironment {
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const interfaceStore = useInterfaceStore()
   const settingsStore = useSettingsStore()
   const interfaceModel = computed(() => interfaceStore.interface ?? null)
@@ -74,12 +74,7 @@ export function useTaskEnvironment(
     (interfaceModel.value?.controller || [])
       .filter((controller) => isDeviceControllerType(controller.type))
       .map((controller) => ({
-        label: resolveInterfaceText(
-          interfaceModel.value,
-          locale.value,
-          controller.label,
-          controller.name,
-        ),
+        label: resolveInterfaceText(controller.label, controller.name),
         value: controller.name,
       })),
   )
@@ -112,12 +107,7 @@ export function useTaskEnvironment(
 
   const resourceOptions = computed(() =>
     availableResources.value.map((resource) => ({
-      label: resolveInterfaceText(
-        interfaceModel.value,
-        locale.value,
-        resource.label,
-        resource.name,
-      ),
+      label: resolveInterfaceText(resource.label, resource.name),
       value: resource.name,
     })),
   )

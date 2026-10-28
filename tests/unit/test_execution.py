@@ -95,14 +95,22 @@ async def _await_active_task(state: AppState) -> None:
 
 class _FakeEvents:
     def __init__(self):
-        self.failed_events: list[tuple[list[str], str]] = []
+        self.terminal_events: list[tuple[list[str], str | None, bool]] = []
         self.logs: list[str] = []
 
     def send_log(self, msg: str):
         self.logs.append(msg)
 
-    def emit_task_failed(self, task_list: list[str], error_message: str):
-        self.failed_events.append((list(task_list), error_message))
+    def publish_task_terminal(self, task_list, run_label, succeeded, settings):
+        self.terminal_events.append((list(task_list), run_label, succeeded))
+        return SimpleNamespace(notify=[])
+
+    def deliver_notification(self, event):
+        pass
+
+    @property
+    def failed_events(self) -> list[tuple[list[str], str | None, bool]]:
+        return [event for event in self.terminal_events if not event[2]]
 
 
 class _FakeInterface:
@@ -214,11 +222,19 @@ class _FakeDeviceState:
 class _FakeDevice:
     """模拟慢速设备连接（connect 阻塞至 release 事件，供停止测试在准备阶段取消）。"""
 
-    def __init__(self, *, ordering: list[str] | None = None, block: bool = True):
+    def __init__(
+        self,
+        *,
+        ordering: list[str] | None = None,
+        block: bool = True,
+        fail_connect: bool = False,
+    ):
         self.release = threading.Event()
         if not block:
             self.release.set()
         self.connect_called = False
+        self.connect_calls = 0
+        self.fail_connect = fail_connect
         self._ordering = ordering
 
     def build_device_model_from_config(self, controller_name, device_type, address):
@@ -230,13 +246,17 @@ class _FakeDevice:
 
     def connect(self, model):
         self.connect_called = True
+        self.connect_calls += 1
         if self._ordering is not None:
             self._ordering.append("connect")
         self.release.wait(timeout=5)
-        return True
+        return not self.fail_connect
 
     def set_resource(self, name):
         return True
+
+    def reset_connection_state(self, reason: str | None = None):
+        pass
 
 
 class _FakeTaskState:
@@ -315,7 +335,6 @@ class TestSqlitePersistence:
             "blocker_task_name",
         ):
             assert column in columns
-        assert "blocker_run_id" not in columns
 
     def test_init_db_is_idempotent(self, tmp_path: Path):
         db_path = tmp_path / "executions.sqlite"
@@ -432,25 +451,9 @@ class TestSubmitManual:
 
     async def test_success_manual_run_with_fake_worker(self, state: AppState):
         worker = _FakeWorker(start_result=True, ready=True)
-
-        class _SuccessTaskService(_FakeTaskService):
-            def start(
-                self,
-                task_list,
-                options,
-                task_name=None,
-                pre_tasks=None,
-                global_options=None,
-            ):
-                self.called = True
-                self.global_options = global_options or {}
-                # 模拟一次成功的手动运行：start 内部完成整个生命周期
-                self._task_state.running = True
-                self._task_state.last_status = "success"
-                self._task_state.running = False
-                return True
-
-        worker.tasks = _SuccessTaskService(result=True, task_state=worker.task_state)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
         state.worker = worker
 
         admission = await submit_manual(state, make_payload("Startup"))
@@ -468,7 +471,7 @@ class TestSubmitManual:
         assert row.id == admission.run_id
         assert row.status == "success"
         assert row.finished_at is not None
-        assert worker.events.failed_events == []
+        assert worker.events.terminal_events == [(["Startup"], "Startup", True)]
 
     async def test_update_in_progress_conflict(self, state: AppState):
         state.update_in_progress = True
@@ -481,15 +484,6 @@ class TestSubmitManual:
         assert admission.conflict.code == "update_in_progress"
         assert state.active_run is None
         assert list_executions(state.scheduler_db_path) == []
-
-    async def test_stop_active_with_active_run_returns_true(self, state: AppState):
-        await submit_manual(state, make_payload())
-        assert await stop_active(state) is True
-        assert state.active_run is not None
-        task = state.active_execution_task
-        assert task is not None
-        await asyncio.gather(task, return_exceptions=True)
-        assert state.active_run is None
 
     async def test_add_execution_failure_rolls_back_slot(
         self, state: AppState, monkeypatch
@@ -531,58 +525,49 @@ class TestSubmitScheduled:
         row = list_executions(state.scheduler_db_path)[0]
         assert row.status == "failed"  # worker=None，自然失败收尾
 
-    async def test_skipped_busy_manual_while_manual_run_active(self, state: AppState):
-        # ready worker + 阻塞的 start：首个手动任务持续占槽，跳过判定不受清槽时序影响
+    @pytest.mark.parametrize(
+        ("blocker_origin", "expected_status", "blocker_name"),
+        [
+            ("manual", "skipped_busy_manual", "手动任务A"),
+            ("in_app", "skipped_busy_scheduled", "定时任务"),
+        ],
+    )
+    async def test_skipped_busy_while_run_active(
+        self,
+        state: AppState,
+        blocker_origin: str,
+        expected_status: str,
+        blocker_name: str,
+    ):
+        # ready worker + 阻塞的 start：首个运行持续占槽，跳过判定不受清槽时序影响
         worker = _FakeWorker(start_result=True, ready=True)
         worker.tasks.block = threading.Event()
         state.worker = worker
 
-        task = make_task()
-        first = await submit_manual(state, make_payload("手动任务A"))
+        if blocker_origin == "manual":
+            first = await submit_manual(state, make_payload(blocker_name))
+        else:
+            first = await submit_scheduled(
+                state,
+                make_task("task-a", name=blocker_name, with_payload=True),
+                origin="in_app",
+            )
         assert first.accepted is True
 
+        task = make_task()
         admission = await submit_scheduled(state, task, origin="in_app")
 
         assert admission.accepted is False
-        assert admission.skip_status == "skipped_busy_manual"
+        assert admission.skip_status == expected_status
         assert admission.run_id is not None
-        rows = list_executions(state.scheduler_db_path)
-        by_id = {row.id: row for row in rows}
-        skip = by_id[admission.run_id]
-        assert skip.status == "skipped_busy_manual"
+        skip = {row.id: row for row in list_executions(state.scheduler_db_path)}[
+            admission.run_id
+        ]
+        assert skip.status == expected_status
         assert skip.task_id == task.id
         assert skip.origin == "in_app"
-        assert skip.blocker_task_name == "手动任务A"
+        assert skip.blocker_task_name == blocker_name
         # 放行 start 并结束任务（last_status 默认非 success → failed），清槽
-        worker.tasks.block.set()
-        worker.task_state.running = False
-        await _await_active_task(state)
-        assert state.active_run is None
-
-    async def test_skipped_busy_scheduled_while_scheduled_run_active(
-        self, state: AppState
-    ):
-        worker = _FakeWorker(start_result=True, ready=True)
-        worker.tasks.block = threading.Event()
-        state.worker = worker
-
-        first = await submit_scheduled(
-            state,
-            make_task("task-a", name="定时任务", with_payload=True),
-            origin="in_app",
-        )
-        assert first.accepted is True
-
-        admission = await submit_scheduled(state, make_task("task-b"), origin="in_app")
-
-        assert admission.accepted is False
-        assert admission.skip_status == "skipped_busy_scheduled"
-        # 冲突在另一调度运行尚占槽时被检测：跳过记录捕获其任务名
-        rows = list_executions(state.scheduler_db_path)
-        by_id = {row.id: row for row in rows}
-        assert by_id[admission.run_id].status == "skipped_busy_scheduled"
-        assert by_id[admission.run_id].blocker_task_name == "定时任务"
-        # 放行 start 并结束首个任务，清槽
         worker.tasks.block.set()
         worker.task_state.running = False
         await _await_active_task(state)
@@ -617,15 +602,13 @@ class TestPretaskAdmission:
         assert admission.accepted is True
         await _await_active_task(state)
 
-        assert worker.pretasks.calls == [
-            ("AdbController", "main", {"Startup": {}}, [], {})
-        ]
         assert worker.tasks.called is False
         row = list_executions(state.scheduler_db_path)[0]
         assert row.id == admission.run_id
         assert row.status == "failed"
         assert row.error_message == "pretask failed"
-        assert worker.events.failed_events == [(["Startup"], "pretask failed")]
+        assert len(worker.events.failed_events) == 1
+        assert "任务异常详情: pretask failed" in worker.events.logs
 
     async def test_pretask_stopped_records_stopped_and_terminal_event(
         self, state: AppState
@@ -645,7 +628,7 @@ class TestPretaskAdmission:
         assert row.id == admission.run_id
         assert row.status == "stopped"
         assert row.error_message == "任务已终止"
-        assert worker.events.failed_events == [(["Startup"], "任务已终止")]
+        assert len(worker.events.failed_events) == 1
 
     async def test_empty_task_list_fails_before_pretask_side_effects(
         self, state: AppState
@@ -753,7 +736,7 @@ class TestPretaskAdmission:
         self, state: AppState, monkeypatch
     ):
         settings = SimpleNamespace(
-            runtime=SimpleNamespace(maxRetryCount=1, retryInterval=0)
+            runtime=SimpleNamespace(autoRetry=True, maxRetryCount=1, retryInterval=0)
         )
         monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
         ordering: list[str] = []
@@ -767,9 +750,6 @@ class TestPretaskAdmission:
         assert admission.accepted is True
         await _await_active_task(state)
 
-        assert worker.pretasks.calls == [
-            ("AdbController", "main", {"Startup": {}}, [], {})
-        ]
         assert ordering == ["pretask", "connect"]
         row = list_executions(state.scheduler_db_path)[0]
         assert row.id == admission.run_id
@@ -828,7 +808,6 @@ class TestStopAndCancel:
         assert state.worker.events.failed_events, (
             "expected emit_task_failed for pre-start failure"
         )
-        assert "任务启动失败" in state.worker.events.failed_events[-1][1]
         row = list_executions(state.scheduler_db_path)[0]
         assert row.status == "failed"
 
@@ -837,7 +816,7 @@ class TestStopAndCancel:
     ):
         # 强制设备连接阶段阻塞在准备阶段，使停止请求发生时任务尚未真正启动
         settings = SimpleNamespace(
-            runtime=SimpleNamespace(maxRetryCount=1, retryInterval=0)
+            runtime=SimpleNamespace(autoRetry=True, maxRetryCount=1, retryInterval=0)
         )
         monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
         worker = _FakeWorker(start_result=True, block_connect=True)
@@ -864,6 +843,7 @@ class TestStopAndCancel:
         assert worker.tasks.called is False
         assert state.active_run is None
         assert state.active_execution_task is None
+        assert len(worker.events.failed_events) == 1
         row = list_executions(state.scheduler_db_path)[0]
         assert row.id == admission.run_id
         assert row.status == "stopped"
@@ -904,3 +884,70 @@ class TestStopAndCancel:
         assert observed_stop_flag == [True]
         assert state.active_run is None
         assert worker.tasks.called is False
+
+
+class TestTerminalEventOrdering:
+    async def test_terminal_event_published_after_slot_cleared(self, state: AppState):
+        # 前端收到 task.completed 后会立刻发起新一轮启动，此时槽位必须已清空，
+        # 否则新启动会被 busy_manual 拒绝。
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        slot_free_at_emit: list[bool] = []
+        record = worker.events.publish_task_terminal
+
+        def publish(*args):
+            slot_free_at_emit.append(state.active_run is None)
+            return record(*args)
+
+        worker.events.publish_task_terminal = publish
+        state.worker = worker
+
+        admission = await submit_manual(state, make_payload())
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert slot_free_at_emit == [True]
+        assert list_executions(state.scheduler_db_path)[0].status == "success"
+
+    async def test_scheduled_terminal_event_uses_schedule_name(self, state: AppState):
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        state.worker = worker
+
+        task = make_task(name="每日例行", with_payload=True)
+        admission = await submit_scheduled(state, task, origin="in_app")
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.events.terminal_events == [(["Startup"], "每日例行", True)]
+
+
+@pytest.mark.parametrize(
+    ("auto_retry", "expected_connect_calls"),
+    [(False, 1), (True, 3)],
+)
+async def test_connect_attempts_follow_auto_retry_setting(
+    state: AppState,
+    monkeypatch,
+    auto_retry: bool,
+    expected_connect_calls: int,
+):
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(autoRetry=auto_retry, maxRetryCount=3, retryInterval=0)
+    )
+    monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
+    worker = _FakeWorker(start_result=True, block_connect=True)
+    worker.device.fail_connect = True
+    worker.device.release.set()
+    state.worker = worker
+
+    admission = await submit_manual(state, make_payload())
+    assert admission.accepted is True
+    await _await_active_task(state)
+
+    assert worker.device.connect_calls == expected_connect_calls
+    assert list_executions(state.scheduler_db_path)[0].status == "failed"

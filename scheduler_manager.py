@@ -24,6 +24,7 @@ from models.scheduler import (
     CronTriggerConfig,
     DateTriggerConfig,
     IntervalTriggerConfig,
+    PreTaskCommand,
     ScheduledTask,
     ScheduledTaskCreate,
     ScheduledTaskDeviceConfig,
@@ -31,12 +32,12 @@ from models.scheduler import (
     TaskExecution,
     TaskOptionsByTask,
     TriggerConfig,
+    parse_portable_cron,
 )
 from models.task_config import normalize_task_execution_payload
 from services.native_cron import (
     aps_dow_to_unix,
     native_crons_may_conflict,
-    parse_native_cron,
     unix_dow_to_aps,
 )
 
@@ -145,16 +146,12 @@ class SchedulerManager:
 
         冷启动单例假设下，两个原生唤醒同分钟触发会派生两个进程竞态绑定
         端口，败者无法委托导致任务丢失。此处以保守判定阻断该配置：
-        任一 cron 字段两侧均受限且不同才视为不冲突。仅对双方均成功解析为
-        严格 cron 的 Cron 触发器任务生效；非 Cron 或非严格 cron 由
-        SystemScheduler.register 自行拒绝。
+        任一 cron 字段两侧均受限且不同才视为不冲突。非 Cron 触发器不参与
+        判定（SystemScheduler.register 自行拒绝）。
         """
         if not isinstance(candidate.trigger_config, CronTriggerConfig):
             return
-        try:
-            candidate_cron = parse_native_cron(candidate.trigger_config.cron)
-        except ValueError:
-            return
+        candidate_cron = parse_portable_cron(candidate.trigger_config.cron)
 
         for existing in await self.get_all_tasks():
             if existing.id == exclude_task_id:
@@ -163,10 +160,7 @@ class SchedulerManager:
                 continue
             if not isinstance(existing.trigger_config, CronTriggerConfig):
                 continue
-            try:
-                existing_cron = parse_native_cron(existing.trigger_config.cron)
-            except ValueError:
-                continue
+            existing_cron = parse_portable_cron(existing.trigger_config.cron)
             if native_crons_may_conflict(candidate_cron, existing_cron):
                 raise ValueError(
                     f"系统级唤醒与任务「{existing.name}」可能在同一分钟触发，"
@@ -198,22 +192,17 @@ class SchedulerManager:
     def _create_trigger(self, trigger_config: TriggerConfig):
         """根据配置创建触发器"""
         if isinstance(trigger_config, CronTriggerConfig):
-            nc = parse_native_cron(trigger_config.cron)
-            minute = str(nc.minute)
-            hour = "*" if nc.hour is None else str(nc.hour)
-            day = "*" if nc.day is None else str(nc.day)
-            month = "*" if nc.month is None else str(nc.month)
-            day_of_week = "*" if nc.dow is None else str(unix_dow_to_aps(nc.dow))
+            nc = parse_portable_cron(trigger_config.cron)
             return CronTrigger(
-                minute=minute,
-                hour=hour,
-                day=day,
-                month=month,
-                day_of_week=day_of_week,
+                minute=str(nc.minute),
+                hour="*" if nc.hour is None else str(nc.hour),
+                day="*" if nc.day is None else str(nc.day),
+                month="*" if nc.month is None else str(nc.month),
+                day_of_week="*" if nc.dow is None else str(unix_dow_to_aps(nc.dow)),
             )
-        elif isinstance(trigger_config, DateTriggerConfig):
+        if isinstance(trigger_config, DateTriggerConfig):
             return DateTrigger(run_date=trigger_config.run_date)
-        elif isinstance(trigger_config, IntervalTriggerConfig):
+        if isinstance(trigger_config, IntervalTriggerConfig):
             return IntervalTrigger(
                 weeks=trigger_config.weeks or 0,
                 days=trigger_config.days or 0,
@@ -223,8 +212,7 @@ class SchedulerManager:
                 start_date=trigger_config.start_date,
                 end_date=trigger_config.end_date,
             )
-        else:
-            raise ValueError(f"未知的触发器类型: {type(trigger_config)}")
+        raise ValueError(f"未知的触发器类型: {type(trigger_config)}")
 
     def _build_trigger_config(self, trigger) -> TriggerConfig:
         """从 APScheduler trigger 重建触发器配置"""
@@ -279,28 +267,13 @@ class SchedulerManager:
         task_list: Any,
         task_options: Any,
         pre_tasks: Any = None,
-    ) -> tuple[list[str], TaskOptionsByTask, list]:
-        worker = self._state.worker
-        if not worker or not getattr(worker, "interface", None):
-            normalized_task_list: list[str] = []
-            if isinstance(task_list, list):
-                for task_name in task_list:
-                    if not isinstance(task_name, str):
-                        continue
-                    normalized_task_list.append(task_name)
-            return (
-                normalized_task_list,
-                {task_name: {} for task_name in normalized_task_list},
-                [],
-            )
-
-        ntl, nto, npt = normalize_task_execution_payload(
+    ) -> tuple[list[str], TaskOptionsByTask, list[PreTaskCommand]]:
+        return normalize_task_execution_payload(
             task_list,
             task_options,
-            worker.interface,
+            self._state.worker.interface,
             pre_tasks,
         )
-        return ntl, nto, npt
 
     async def create_task(self, task_create: ScheduledTaskCreate) -> ScheduledTask:
         """创建定时任务"""
@@ -389,308 +362,233 @@ class SchedulerManager:
         logger.info(f"创建定时任务: {task.name} ({task_id})")
         return task
 
-    async def get_task(self, task_id: str) -> ScheduledTask | None:
-        """获取定时任务"""
-        if not self.scheduler:
-            return None
-        job = self.scheduler.get_job(task_id)
-        if not job:
-            return None
-
+    def _decode_job(self, job) -> ScheduledTask | None:
+        """从 APS job 还原定时任务；无法解码的旧/坏任务仅跳过，不删除。"""
         try:
             trigger_config = self._build_trigger_config(job.trigger)
             task = _build_task_from_kwargs(job.id, job.kwargs or {}, trigger_config)
             task.enabled = job.next_run_time is not None
             task.next_run_time = job.next_run_time
-            task_list, task_options, pre_tasks = self._normalize_task_payload(
-                task.task_list,
-                task.task_options,
-                task.preTasks,
+            task.task_list, task.task_options, task.preTasks = (
+                self._normalize_task_payload(
+                    task.task_list,
+                    task.task_options,
+                    task.preTasks,
+                )
             )
-            task.task_list = task_list
-            task.task_options = task_options
-            task.preTasks = pre_tasks
             return task
         except Exception as e:
-            logger.warning(f"任务 {task_id} 载荷解码失败，跳过: {e}")
+            logger.warning(f"任务 {job.id} 载荷解码失败，跳过: {e}")
             return None
+
+    def _send_error_notification(self, title: str, message: str) -> None:
+        settings = load_settings()
+        self._state.worker.events.send_notification(
+            title,
+            message,
+            level="error",
+            notify=["notification"] if settings.notification.notifyOnError else [],
+        )
+
+    async def get_task(self, task_id: str) -> ScheduledTask | None:
+        """获取定时任务"""
+        if not self.scheduler:
+            return None
+        job = self.scheduler.get_job(task_id)
+        if job is None:
+            return None
+        return self._decode_job(job)
 
     async def get_all_tasks(self) -> list[ScheduledTask]:
         """获取所有定时任务"""
         if not self.scheduler:
             return []
-        tasks: list[ScheduledTask] = []
-        jobs = self.scheduler.get_jobs()
-
-        for job in jobs:
-            try:
-                trigger_config = self._build_trigger_config(job.trigger)
-                task = _build_task_from_kwargs(job.id, job.kwargs or {}, trigger_config)
-                task.enabled = job.next_run_time is not None
-                task.next_run_time = job.next_run_time
-                task_list, task_options, pre_tasks = self._normalize_task_payload(
-                    task.task_list,
-                    task.task_options,
-                    task.preTasks,
-                )
-                task.task_list = task_list
-                task.task_options = task_options
-                task.preTasks = pre_tasks
-                tasks.append(task)
-            except Exception as e:
-                # 无法解码的旧/坏任务仅跳过，不删除
-                logger.warning(f"任务 {job.id} 载荷解码失败，跳过: {e}")
-
-        return tasks
+        tasks = (self._decode_job(job) for job in self.scheduler.get_jobs())
+        return [task for task in tasks if task is not None]
 
     async def update_task(
         self, task_id: str, task_update: ScheduledTaskUpdate
     ) -> ScheduledTask | None:
-        """更新定时任务"""
+        """更新定时任务。
+
+        None 仅表示调度器未初始化或任务不存在；其余失败原样抛出，
+        由 API 层报告真实原因。
+        """
         if not self.scheduler:
-            if self._state.worker:
-                _settings = load_settings()
-                self._state.worker.events.send_notification(
-                    "调度器未初始化",
-                    "无法更新定时任务：调度器未初始化",
-                    level="error",
-                    notify=["notification"]
-                    if _settings.notification.notifyOnError
-                    else [],
-                )
+            self._send_error_notification(
+                "调度器未初始化", "无法更新定时任务：调度器未初始化"
+            )
             return None
         job = self.scheduler.get_job(task_id)
-        if not job:
-            if self._state.worker:
-                _settings = load_settings()
-                self._state.worker.events.send_notification(
-                    "任务不存在",
-                    f"无法更新定时任务：任务 {task_id} 不存在",
-                    level="error",
-                    notify=["notification"]
-                    if _settings.notification.notifyOnError
-                    else [],
-                )
+        if job is None:
+            self._send_error_notification(
+                "任务不存在", f"无法更新定时任务：任务 {task_id} 不存在"
+            )
             return None
 
-        try:
-            # 获取当前任务信息
-            current_kwargs = job.kwargs or {}
+        current_kwargs = job.kwargs or {}
+        current_trigger_config = self._build_trigger_config(job.trigger)
+        updated_fields = task_update.model_fields_set
 
-            current_trigger_config = self._build_trigger_config(job.trigger)
+        new_name = (
+            task_update.name
+            if task_update.name is not None
+            else current_kwargs.get("task_name", "")
+        )
+        new_description = (
+            task_update.description
+            if task_update.description is not None
+            else current_kwargs.get("task_description", "")
+        )
+        new_task_list = (
+            task_update.task_list
+            if task_update.task_list is not None
+            else current_kwargs.get("task_list", [])
+        )
+        new_options = (
+            task_update.task_options
+            if task_update.task_options is not None
+            else current_kwargs.get("task_options", {})
+        )
+        new_pre_tasks = (
+            task_update.preTasks
+            if task_update.preTasks is not None
+            else current_kwargs.get("pre_tasks", [])
+        )
+        # Use model_fields_set to distinguish "field omitted" (keep current)
+        # from "field set to None/false" (explicitly clear).
+        new_controller_name = (
+            task_update.controller_name
+            if "controller_name" in updated_fields
+            else current_kwargs.get("controller_name", None)
+        )
+        if "device" in updated_fields:
+            new_device_raw = task_update.device
+            new_device = (
+                new_device_raw.model_dump()
+                if isinstance(new_device_raw, BaseModel)
+                else new_device_raw
+            )
+        else:
+            new_device = current_kwargs.get("device", None)
+        new_resource_name = (
+            task_update.resource_name
+            if "resource_name" in updated_fields
+            else current_kwargs.get("resource_name", None)
+        )
+        # 显式给出（含 None/False）即视为关闭唤醒；省略则沿用当前值
+        new_wakeup_enabled = (
+            bool(task_update.wakeup_enabled)
+            if "wakeup_enabled" in updated_fields
+            else bool(current_kwargs.get("wakeup_enabled", False))
+        )
+        normalized_task_list, normalized_task_options, normalized_pre_tasks = (
+            self._normalize_task_payload(
+                new_task_list,
+                new_options,
+                new_pre_tasks,
+            )
+        )
+        if not normalized_task_list:
+            raise ValueError("任务列表不能为空")
 
-            # 合并更新数据
-            new_name = (
-                task_update.name
-                if task_update.name is not None
-                else current_kwargs.get("task_name", "")
+        new_trigger_config = (
+            task_update.trigger_config
+            if task_update.trigger_config is not None
+            else current_trigger_config
+        )
+        # 合并后的启用状态：更新未显式给出时沿用当前 APS 状态
+        new_enabled = (
+            task_update.enabled
+            if task_update.enabled is not None
+            else job.next_run_time is not None
+        )
+        merged_task = ScheduledTask(
+            id=task_id,
+            name=new_name,
+            description=new_description,
+            enabled=new_enabled,
+            wakeup_enabled=new_wakeup_enabled,
+            trigger_config=new_trigger_config,
+            task_list=normalized_task_list,
+            task_options=normalized_task_options,
+            preTasks=normalized_pre_tasks,
+            controller_name=new_controller_name,
+            device=(ScheduledTaskDeviceConfig(**new_device) if new_device else None),
+            resource_name=new_resource_name,
+        )
+
+        if self._desired_wakeup(merged_task.wakeup_enabled, merged_task.enabled):
+            await self._check_wakeup_minute_conflict(
+                merged_task, exclude_task_id=task_id
             )
-            new_description = (
-                task_update.description
-                if task_update.description is not None
-                else current_kwargs.get("task_description", "")
-            )
-            new_task_list = (
-                task_update.task_list
-                if task_update.task_list is not None
-                else current_kwargs.get("task_list", [])
-            )
-            new_options = (
-                task_update.task_options
-                if task_update.task_options is not None
-                else current_kwargs.get("task_options", {})
-            )
-            new_pre_tasks = (
-                task_update.preTasks
-                if task_update.preTasks is not None
-                else current_kwargs.get("pre_tasks", [])
-            )
-            # Use model_fields_set to distinguish "field omitted" (keep current)
-            # from "field set to None/false" (explicitly clear).
-            updated_fields = task_update.model_fields_set
-            new_controller_name = (
-                task_update.controller_name
-                if "controller_name" in updated_fields
-                else current_kwargs.get("controller_name", None)
-            )
-            if "device" in updated_fields:
-                new_device_raw = task_update.device
-                new_device = (
-                    new_device_raw.model_dump()
-                    if isinstance(new_device_raw, BaseModel)
-                    else new_device_raw
-                )
+
+        # APS jobstore 是持久真源：先落库，再同步 OS 原生注册。原生同步失败
+        # 只上报错误，启动时的 converge 会按 APS 状态重新对齐。
+        self.scheduler.modify_job(
+            task_id,
+            trigger=self._create_trigger(new_trigger_config),
+            kwargs={
+                "task_id": task_id,
+                "task_name": new_name,
+                "task_description": new_description,
+                "task_list": normalized_task_list,
+                "task_options": normalized_task_options,
+                "pre_tasks": [pt.model_dump() for pt in normalized_pre_tasks],
+                "controller_name": new_controller_name,
+                "device": new_device,
+                "resource_name": new_resource_name,
+                "wakeup_enabled": new_wakeup_enabled,
+                "trigger_config": new_trigger_config.model_dump(mode="json"),
+            },
+        )
+        if task_update.enabled is not None:
+            if task_update.enabled:
+                self.scheduler.resume_job(task_id)
             else:
-                new_device = current_kwargs.get("device", None)
-            new_resource_name = (
-                task_update.resource_name
-                if "resource_name" in updated_fields
-                else current_kwargs.get("resource_name", None)
-            )
-            # 显式给出（含 None/False）即视为关闭唤醒；省略则沿用当前值
-            new_wakeup_enabled = (
-                bool(task_update.wakeup_enabled)
-                if "wakeup_enabled" in updated_fields
-                else bool(current_kwargs.get("wakeup_enabled", False))
-            )
-            normalized_task_list, normalized_task_options, normalized_pre_tasks = (
-                self._normalize_task_payload(
-                    new_task_list,
-                    new_options,
-                    new_pre_tasks,
-                )
-            )
-            if not normalized_task_list:
-                raise ValueError("任务列表不能为空")
+                self.scheduler.pause_job(task_id)
 
-            new_trigger_config = (
-                task_update.trigger_config
-                if task_update.trigger_config is not None
-                else current_trigger_config
-            )
-            # 合并后的启用状态：更新未显式给出时沿用当前 APS 状态
-            new_enabled = (
-                task_update.enabled
-                if task_update.enabled is not None
-                else job.next_run_time is not None
-            )
-            merged_task = ScheduledTask(
-                id=task_id,
-                name=new_name,
-                description=new_description,
-                enabled=new_enabled,
-                wakeup_enabled=new_wakeup_enabled,
-                trigger_config=new_trigger_config,
-                task_list=normalized_task_list,
-                task_options=normalized_task_options,
-                preTasks=normalized_pre_tasks,
-                controller_name=new_controller_name,
-                device=(
-                    ScheduledTaskDeviceConfig(**new_device) if new_device else None
-                ),
-                resource_name=new_resource_name,
-            )
-
-            # 原生注册/注销先行：期望变化时先对齐 OS 侧，再改 APS
-            prev_desired = self._desired_wakeup(
+        if self._system_scheduler is not None:
+            if self._desired_wakeup(merged_task.wakeup_enabled, merged_task.enabled):
+                try:
+                    self._system_scheduler.register(merged_task)
+                except Exception as e:
+                    logger.error(f"同步系统级唤醒失败，任务 {task_id} 已更新: {e}")
+                    raise
+            elif self._desired_wakeup(
                 bool(current_kwargs.get("wakeup_enabled", False)),
                 job.next_run_time is not None,
-            )
-            native_changed = False
-            if self._system_scheduler is not None:
-                if self._desired_wakeup(
-                    merged_task.wakeup_enabled, merged_task.enabled
-                ):
-                    await self._check_wakeup_minute_conflict(
-                        merged_task, exclude_task_id=task_id
-                    )
-                    try:
-                        self._system_scheduler.register(merged_task)
-                    except Exception as e:
-                        logger.error(
-                            f"注册系统级唤醒失败，更新任务 {task_id} 失败: {e}"
-                        )
-                        raise
-                    native_changed = True
-                elif prev_desired:
-                    try:
-                        self._system_scheduler.unregister(task_id)
-                    except Exception as e:
-                        logger.error(
-                            f"注销系统级唤醒失败，更新任务 {task_id} 失败: {e}"
-                        )
-                        raise
-                    native_changed = True
-
-            try:
-                # 创建新的触发器并修改任务
-                trigger = self._create_trigger(new_trigger_config)
-                self.scheduler.modify_job(
-                    task_id,
-                    trigger=trigger,
-                    kwargs={
-                        "task_id": task_id,
-                        "task_name": new_name,
-                        "task_description": new_description,
-                        "task_list": normalized_task_list,
-                        "task_options": normalized_task_options,
-                        "pre_tasks": [pt.model_dump() for pt in normalized_pre_tasks],
-                        "controller_name": new_controller_name,
-                        "device": new_device,
-                        "resource_name": new_resource_name,
-                        "wakeup_enabled": new_wakeup_enabled,
-                        "trigger_config": new_trigger_config.model_dump(mode="json"),
-                    },
-                )
-
-                # 处理启用/暂停状态
-                if task_update.enabled is not None:
-                    if task_update.enabled:
-                        self.scheduler.resume_job(task_id)
-                    else:
-                        self.scheduler.pause_job(task_id)
-            except Exception:
-                # APS 修改失败但原生注册已在本调用改动：尽力恢复到更新前状态
-                if native_changed and self._system_scheduler is not None:
-                    try:
-                        if prev_desired:
-                            prev_task = _build_task_from_kwargs(
-                                task_id, current_kwargs, current_trigger_config
-                            )
-                            prev_task.enabled = job.next_run_time is not None
-                            self._system_scheduler.register(prev_task)
-                        else:
-                            self._system_scheduler.unregister(task_id)
-                    except Exception as ce:
-                        logger.warning(
-                            f"更新任务 {task_id} 失败后补偿原生注册失败: {ce}"
-                        )
-                raise
-
-            # 获取更新后的任务
-            return await self.get_task(task_id)
-        except ValueError:
-            # 校验类错误（如同分钟唤醒冲突）需原样传播，由 API 层返回 400
-            raise
-        except Exception as e:
-            logger.error(f"更新任务失败: {e}")
-            if self._state.worker:
-                self._state.worker.events.send_log(f"更新任务失败: {e}")
-            return None
-
-    async def delete_task(self, task_id: str) -> bool:
-        """删除定时任务"""
-        if not self.scheduler:
-            return False
-        try:
-            # 先注销系统级唤醒：唤醒任务注销失败则中止删除，
-            # 否则会遗留活着的 OS 任务持续启动应用
-            wakeup_enabled = False
-            if self._system_scheduler is not None:
-                job = self.scheduler.get_job(task_id)
-                wakeup_enabled = bool(
-                    (job.kwargs or {}).get("wakeup_enabled", False)
-                    if job is not None
-                    else False
-                )
-            if wakeup_enabled and self._system_scheduler is not None:
+            ):
                 try:
                     self._system_scheduler.unregister(task_id)
                 except Exception as e:
-                    logger.error(f"注销系统级唤醒失败，中止删除任务 {task_id}: {e}")
-                    if self._state.worker:
-                        self._state.worker.events.send_log(
-                            f"删除任务失败: 注销系统级唤醒失败 {e}"
-                        )
-                    return False
-            self.scheduler.remove_job(task_id)
-            logger.info(f"删除定时任务: {task_id}")
-            return True
-        except Exception as e:
-            logger.error(f"删除任务失败: {e}")
-            if self._state.worker:
-                self._state.worker.events.send_log(f"删除任务失败: {e}")
+                    logger.error(f"注销系统级唤醒失败，任务 {task_id} 已更新: {e}")
+                    raise
+
+        return await self.get_task(task_id)
+
+    async def delete_task(self, task_id: str) -> bool:
+        """删除定时任务。
+
+        False 仅表示调度器未初始化或任务不存在；注销/删除失败原样抛出。
+        """
+        if not self.scheduler:
             return False
+        job = self.scheduler.get_job(task_id)
+        if job is None:
+            return False
+        # 先注销系统级唤醒：注销失败则中止删除，
+        # 否则会遗留活着的 OS 任务持续启动应用
+        wakeup_enabled = bool((job.kwargs or {}).get("wakeup_enabled", False))
+        if wakeup_enabled and self._system_scheduler is not None:
+            try:
+                self._system_scheduler.unregister(task_id)
+            except Exception as e:
+                logger.error(f"注销系统级唤醒失败，中止删除任务 {task_id}: {e}")
+                raise
+        self.scheduler.remove_job(task_id)
+        logger.info(f"删除定时任务: {task_id}")
+        return True
 
     async def degrade_wakeup(self, task_id: str) -> bool:
         """启动时注册失败后降级任务：关闭 wakeup_enabled，跳过原生注销。
@@ -717,72 +615,56 @@ class SchedulerManager:
             return False
 
     async def pause_task(self, task_id: str) -> bool:
-        """暂停定时任务"""
+        """暂停定时任务。
+
+        False 仅表示调度器未初始化或任务不存在；注销/暂停失败原样抛出。
+        """
         if not self.scheduler:
             return False
-        try:
-            # 唤醒任务先注销原生注册：仅当任务当前确实启用了唤醒
-            if self._system_scheduler is not None:
-                job = self.scheduler.get_job(task_id)
-                if job is not None:
-                    current_enabled = job.next_run_time is not None
-                    if self._desired_wakeup(
-                        bool((job.kwargs or {}).get("wakeup_enabled", False)),
-                        current_enabled,
-                    ):
-                        try:
-                            self._system_scheduler.unregister(task_id)
-                        except Exception as e:
-                            logger.error(
-                                f"注销系统级唤醒失败，中止暂停任务 {task_id}: {e}"
-                            )
-                            if self._state.worker:
-                                self._state.worker.events.send_log(
-                                    f"暂停任务失败: 注销系统级唤醒失败 {e}"
-                                )
-                            return False
-            self.scheduler.pause_job(task_id)
-            logger.info(f"暂停定时任务: {task_id}")
-            return True
-        except Exception as e:
-            logger.error(f"暂停任务失败: {e}")
-            if self._state.worker:
-                self._state.worker.events.send_log(f"暂停任务失败: {e}")
+        job = self.scheduler.get_job(task_id)
+        if job is None:
             return False
+        # 唤醒任务先注销原生注册：仅当任务当前确实启用了唤醒
+        if self._system_scheduler is not None and self._desired_wakeup(
+            bool((job.kwargs or {}).get("wakeup_enabled", False)),
+            job.next_run_time is not None,
+        ):
+            try:
+                self._system_scheduler.unregister(task_id)
+            except Exception as e:
+                logger.error(f"注销系统级唤醒失败，中止暂停任务 {task_id}: {e}")
+                raise
+        self.scheduler.pause_job(task_id)
+        logger.info(f"暂停定时任务: {task_id}")
+        return True
 
     async def resume_task(self, task_id: str) -> bool:
-        """恢复定时任务"""
+        """恢复定时任务。
+
+        False 仅表示调度器未初始化或任务不存在；注册/恢复失败原样抛出。
+        """
         if not self.scheduler:
             return False
-        try:
-            # 唤醒任务先重新注册原生：失败则中止恢复，避免恢复为启用却无原生匹配
-            if self._system_scheduler is not None:
-                job = self.scheduler.get_job(task_id)
-                if job is not None and self._desired_wakeup(
-                    bool((job.kwargs or {}).get("wakeup_enabled", False)),
-                    True,  # resume 后任务将启用
-                ):
-                    try:
-                        task = await self.get_task(task_id)
-                        if task is None:
-                            raise RuntimeError(f"任务 {task_id} 不存在")
-                        task.enabled = True  # resume 后将启用
-                        self._system_scheduler.register(task)
-                    except Exception as e:
-                        logger.error(f"注册系统级唤醒失败，中止恢复任务 {task_id}: {e}")
-                        if self._state.worker:
-                            self._state.worker.events.send_log(
-                                f"恢复任务失败: 注册系统级唤醒失败 {e}"
-                            )
-                        return False
-            self.scheduler.resume_job(task_id)
-            logger.info(f"恢复定时任务: {task_id}")
-            return True
-        except Exception as e:
-            logger.error(f"恢复任务失败: {e}")
-            if self._state.worker:
-                self._state.worker.events.send_log(f"恢复任务失败: {e}")
+        job = self.scheduler.get_job(task_id)
+        if job is None:
             return False
+        # 唤醒任务先重新注册原生：失败则中止恢复，避免恢复为启用却无原生匹配
+        if self._system_scheduler is not None and self._desired_wakeup(
+            bool((job.kwargs or {}).get("wakeup_enabled", False)),
+            True,  # resume 后任务将启用
+        ):
+            task = await self.get_task(task_id)
+            if task is None:
+                raise RuntimeError(f"任务 {task_id} 载荷无法解码")
+            task.enabled = True  # resume 后将启用
+            try:
+                self._system_scheduler.register(task)
+            except Exception as e:
+                logger.error(f"注册系统级唤醒失败，中止恢复任务 {task_id}: {e}")
+                raise
+        self.scheduler.resume_job(task_id)
+        logger.info(f"恢复定时任务: {task_id}")
+        return True
 
     async def get_executions(self, limit: int = 50) -> list[TaskExecution]:
         """获取执行历史"""

@@ -19,23 +19,6 @@
 
     <div class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4">
       <label class="text-sm font-medium md:text-right">
-        {{ t("settings.runtime.reminderInterval") }}
-      </label>
-      <div class="flex items-center gap-2">
-        <NInputNumber
-          :value="settings.runtime.reminderInterval"
-          class="w-32"
-          :min="5"
-          :max="120"
-          :step="5"
-          @update:value="handleNumberChange('reminderInterval', $event, 5, 120)"
-        />
-        <span class="text-sm opacity-60">{{ t("settings.runtime.reminderSuffix") }}</span>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4">
-      <label class="text-sm font-medium md:text-right">
         {{ t("settings.runtime.autoRetry") }}
       </label>
       <NSwitch
@@ -75,9 +58,9 @@ const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
 
-type EditableCategory = Exclude<keyof SettingsModel, "about">
+type EditableCategory = keyof SettingsModel
 type MaybeNullForNumbers<T> = T extends number ? T | null : T
-type RuntimeNumberKey = "timeout" | "reminderInterval" | "maxRetryCount"
+type RuntimeNumberKey = "timeout" | "maxRetryCount"
 
 async function handleSettingChange<K extends EditableCategory, P extends keyof SettingsModel[K]>(
   category: K,

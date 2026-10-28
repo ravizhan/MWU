@@ -11,38 +11,26 @@
 <script setup lang="ts">
 import { computed } from "vue"
 import { useI18n } from "vue-i18n"
-import { useInterfaceStore } from "@/stores"
 import type { TaskGroupSection } from "@/utils/task-config/order"
 import { resolveInterfaceAssetUrl, resolveInterfaceText } from "@/utils/interface/content"
 
 const { section } = defineProps<{ section: TaskGroupSection }>()
 
-const { locale, t } = useI18n()
-const interfaceStore = useInterfaceStore()
+const { t } = useI18n()
 
 const label = computed(() => {
   if (section.kind === "ungrouped") return t("panel.addTask.ungrouped")
   if (section.kind === "adhoc") return section.key
-  return resolveInterfaceText(
-    interfaceStore.interface,
-    locale.value,
-    section.group?.label,
-    section.key,
-  )
+  return resolveInterfaceText(section.group?.label, section.key)
 })
 
 const description = computed(() => {
   if (section.kind !== "declared" || !section.group?.description) return ""
-  return resolveInterfaceText(
-    interfaceStore.interface,
-    locale.value,
-    section.group.description,
-    section.group.description,
-  )
+  return resolveInterfaceText(section.group.description, section.group.description)
 })
 
 const icon = computed(() => {
   if (section.kind !== "declared") return undefined
-  return resolveInterfaceAssetUrl(interfaceStore.interface, locale.value, section.group?.icon)
+  return resolveInterfaceAssetUrl(section.group?.icon)
 })
 </script>

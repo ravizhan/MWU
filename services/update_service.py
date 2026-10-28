@@ -52,6 +52,7 @@ def check_mirrorchyan_update(
 
     proxy = settings.update.proxy or None
 
+    last_error: Exception | None = None
     for api_base in MIRRORCHYAN_API_BASES:
         try:
             resp = httpx.get(
@@ -61,12 +62,16 @@ def check_mirrorchyan_update(
                 timeout=15,
             )
             data = resp.json()
-            if data.get("code") == 0:
-                return data
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - 记录后继续尝试镜像地址
+            last_error = exc
             continue
+        if data.get("code") == 0:
+            return data
+        last_error = RuntimeError(
+            f"MirrorChyan 返回错误码 {data.get('code')}: {data.get('msg', '')}".strip()
+        )
 
-    return None
+    raise RuntimeError(f"MirrorChyan 更新检查失败: {last_error}")
 
 
 def check_github_update(
@@ -87,7 +92,9 @@ def check_github_update(
         proxy=proxy,
         timeout=15,
     ).json()
-    latest_version = response["tag_name"]
+    latest_version = response.get("tag_name")
+    if not latest_version:
+        raise RuntimeError("GitHub Releases 响应缺少 tag_name")
 
     plat, arch = get_platform_info()
     platform_arch = f"{plat}-{arch}"

@@ -32,21 +32,9 @@ export interface UISettings {
 // 运行设置
 export interface RuntimeSettings {
   timeout: number
-  reminderInterval: number
   autoRetry: boolean
   maxRetryCount: number
   retryInterval: number
-}
-
-// 关于我们（包含联系方式）
-export interface AboutInfo {
-  version: string
-  author: string
-  github: string
-  license: string
-  description: string
-  contact: string
-  issueUrl: string
 }
 
 // 面板持久化设备信息
@@ -84,7 +72,6 @@ export interface SettingsModel {
   notification: NotificationSettings
   ui: UISettings
   runtime: RuntimeSettings
-  about: AboutInfo
   panel: PanelSettings
   globalOptionValues: Record<string, TaskOptionValue>
 }

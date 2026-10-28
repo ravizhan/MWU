@@ -8,17 +8,8 @@ type Locale = "zh-CN" | "en-US"
 const DEFAULT_LOCALE = "zh-CN" as const
 
 const savedLocale = localStorage.getItem("locale")
-const savedLang = localStorage.getItem("lang")
-let locale: Locale = DEFAULT_LOCALE
-if (savedLocale === "zh-CN" || savedLocale === "en-US") {
-  locale = savedLocale
-}
-if (
-  !(savedLocale === "zh-CN" || savedLocale === "en-US") &&
-  (savedLang === "zh-CN" || savedLang === "en-US")
-) {
-  locale = savedLang
-}
+const locale: Locale =
+  savedLocale === "zh-CN" || savedLocale === "en-US" ? savedLocale : DEFAULT_LOCALE
 
 const i18n = createI18n<[MessageSchema], Locale>({
   legacy: false,

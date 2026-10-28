@@ -4,6 +4,7 @@ import { useSchedulerStore, useTaskConfigStore } from "@/stores"
 import { schedulerTaskFormSchema } from "@/validation/scheduler"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
+import type { ZodIssue } from "zod"
 import type { ScheduledTask } from "@/types/schedulerModel"
 import type { SchedulerTaskFormData } from "./useSchedulerTaskForm"
 
@@ -20,6 +21,38 @@ interface SaveCallbacks {
 export interface SchedulerTaskSave {
   loading: Ref<boolean>
   handleSave: () => Promise<void>
+}
+
+function triggerRuleMessage(issue: ZodIssue): string {
+  if (issue.path[1] === "cron") return "settings.scheduler.rules.cronInvalid"
+  if (issue.path[1] === "run_date") {
+    return issue.message.includes("future")
+      ? "settings.scheduler.rules.dateInPast"
+      : "settings.scheduler.rules.dateRequired"
+  }
+  if (issue.path[1] === "end_date") return "settings.scheduler.rules.intervalEndBeforeStart"
+  return "settings.scheduler.rules.intervalRequired"
+}
+
+/** 把 zod 校验问题路由到对应分区，并提示该分区的规则文案。 */
+function reportFormIssue(
+  issue: ZodIssue,
+  callbacks: SaveCallbacks,
+  t: (key: string) => string,
+): void {
+  const path = issue.path.join(".")
+  if (path.startsWith("name")) {
+    callbacks.focusSection("basic")
+    showGlobalMessage("error", t("settings.scheduler.rules.nameRequired"))
+    return
+  }
+  if (path.startsWith("trigger_config")) {
+    callbacks.focusSection("schedule")
+    showGlobalMessage("error", t(triggerRuleMessage(issue)))
+    return
+  }
+  callbacks.focusSection("content", "task-list")
+  showGlobalMessage("error", t("settings.scheduler.rules.taskListRequired"))
 }
 
 export function useSchedulerTaskSave(
@@ -48,45 +81,15 @@ export function useSchedulerTaskSave(
 
     const parseResult = schedulerTaskFormSchema.safeParse(taskPayload)
     if (!parseResult.success) {
-      const firstIssue = parseResult.error.issues[0]
-      const path = firstIssue.path.join(".")
-      // Route to correct section based on issue path
-      if (path.startsWith("name")) {
-        callbacks.focusSection("basic")
-        showGlobalMessage("error", t("settings.scheduler.rules.nameRequired"))
-        return
-      }
-      if (path.startsWith("trigger_config.cron")) {
-        callbacks.focusSection("schedule")
-        showGlobalMessage("error", t("settings.scheduler.rules.cronInvalid"))
-        return
-      }
-      if (path.startsWith("trigger_config.run_date")) {
-        callbacks.focusSection("schedule")
-        const msg = firstIssue.message.includes("future")
-          ? t("settings.scheduler.rules.dateInPast")
-          : t("settings.scheduler.rules.dateRequired")
-        showGlobalMessage("error", msg)
-        return
-      }
-      if (!path || path.startsWith("trigger_config")) {
-        callbacks.focusSection("schedule")
-        showGlobalMessage("error", t("settings.scheduler.rules.intervalRequired"))
-        return
-      }
-      if (path.startsWith("task_list")) {
-        callbacks.focusSection("content", "task-list")
-        showGlobalMessage("error", t("settings.scheduler.rules.taskListRequired"))
-        return
-      }
-      showGlobalMessage("error", firstIssue.message)
+      reportFormIssue(parseResult.error.issues[0], callbacks, t)
       return
     }
 
     const parsedTask = {
-      ...parseResult.data,
-      description: parseResult.data.description ?? undefined,
-      preTasks: parseResult.data.preTasks.map((preTask) => ({
+      ...taskPayload,
+      name: parseResult.data.name,
+      description: taskPayload.description ?? undefined,
+      preTasks: taskPayload.preTasks.map((preTask) => ({
         ...preTask,
         id: preTask.id ?? crypto.randomUUID(),
       })),

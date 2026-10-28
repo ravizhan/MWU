@@ -26,8 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
-import { useI18n } from "vue-i18n"
+import { computed } from "vue"
 import { FileTrayOutline, SettingsOutline } from "@vicons/ionicons5"
 import { useInterfaceStore } from "@/stores"
 import type { TaskOptionsByTask } from "@/types/schedulerModel"
@@ -55,39 +54,19 @@ const {
 } = defineProps<Props>()
 
 const interfaceStore = useInterfaceStore()
-const { locale } = useI18n()
-
-const taskOptionsMap = ref<TaskOptionsByTask>({})
-watch(
-  () => options,
-  (newOptions) => {
-    taskOptionsMap.value = newOptions
-  },
-  { immediate: true },
-)
 
 const currentTaskName = computed(() => {
   if (!currentTaskId) return ""
   const task = interfaceStore.getTaskByName(currentTaskId)
-  return resolveInterfaceText(interfaceStore.interface, locale.value, task?.label, task?.name || "")
+  return resolveInterfaceText(task?.label, task?.name || "")
 })
 
 const currentTaskOptions = computed(() => {
   if (!currentTaskId) {
     return {}
   }
-  return taskOptionsMap.value[currentTaskId] || {}
+  return options[currentTaskId] ?? {}
 })
-
-watch(
-  () => currentTaskId,
-  (taskId) => {
-    if (taskId && !taskOptionsMap.value[taskId]) {
-      taskOptionsMap.value[taskId] = {}
-    }
-  },
-  { immediate: true },
-)
 
 const taskOptions = computed(() => {
   if (!currentTaskId) return []

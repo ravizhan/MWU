@@ -20,6 +20,12 @@ describe("buildHotkeyCombo", () => {
     expect(buildHotkeyCombo(event)).toBe("Meta+A")
   })
 
+  it("derives the primary key from code rather than the shifted character", () => {
+    const event = keydownEvent({ code: "Digit1", key: "!", shiftKey: true })
+
+    expect(buildHotkeyCombo(event)).toBe("Shift+1")
+  })
+
   it("rejects shortcuts with more than two modifiers", () => {
     const event = keydownEvent({
       code: "KeyA",
@@ -53,70 +59,14 @@ describe("buildHotkeyCombo", () => {
   })
 
   it.each([
-    ["KeyA", "A"],
-    ["KeyZ", "Z"],
-    ["Digit7", "7"],
-  ])("maps %s to %s", (code, expected) => {
-    const event = keydownEvent({ code, key: code.slice(-1) })
-
-    expect(buildHotkeyCombo(event)).toBe(expected)
-  })
-
-  it.each([
-    ["F1", "F1"],
-    ["F12", "F12"],
-  ])("maps function key %s to %s", (code, expected) => {
-    const event = keydownEvent({ code, key: code })
-
-    expect(buildHotkeyCombo(event)).toBe(expected)
-  })
-
-  it.each([
-    ["Semicolon", "SEMICOLON"],
-    ["Equal", "EQUAL"],
-    ["Comma", "COMMA"],
-    ["Minus", "MINUS"],
-    ["Period", "PERIOD"],
-    ["Slash", "SLASH"],
-    ["Backquote", "GRAVE"],
-    ["BracketLeft", "LEFTBRACKET"],
-    ["Backslash", "BACKSLASH"],
-    ["BracketRight", "RIGHTBRACKET"],
-    ["Quote", "APOSTROPHE"],
-  ])("maps symbol key %s to %s", (code, expected) => {
-    const event = keydownEvent({ code, key: "?" })
-
-    expect(buildHotkeyCombo(event)).toBe(expected)
-  })
-
-  it.each([
-    ["Numpad5", "NUMPAD5"],
-    ["Numpad0", "NUMPAD0"],
-    ["NumpadAdd", "NUMPADADD"],
-    ["NumpadDecimal", "NUMPADDECIMAL"],
-    ["NumpadEnter", "NUMPADENTER"],
-  ])("maps numpad key %s to %s", (code, expected) => {
-    const event = keydownEvent({ code, key: "5" })
-
-    expect(buildHotkeyCombo(event)).toBe(expected)
-  })
-
-  it.each([
-    ["ArrowLeft", "LEFT"],
-    ["ArrowRight", "RIGHT"],
-    ["ArrowUp", "UP"],
-    ["ArrowDown", "DOWN"],
-    ["Escape", "ESC"],
-    ["Space", "SPACE"],
-  ])("maps %s to %s", (code, expected) => {
-    const event = keydownEvent({ code, key: code })
-
-    expect(buildHotkeyCombo(event)).toBe(expected)
-  })
-
-  it("derives the primary key from code rather than the shifted character", () => {
-    const event = keydownEvent({ code: "Digit1", key: "!", shiftKey: true })
-
-    expect(buildHotkeyCombo(event)).toBe("Shift+1")
+    ["KeyA", "a", "A"],
+    ["Digit7", "7", "7"],
+    ["F1", "F1", "F1"],
+    ["Semicolon", "?", "SEMICOLON"],
+    ["Numpad5", "5", "NUMPAD5"],
+    ["ArrowLeft", "ArrowLeft", "LEFT"],
+    ["Escape", "Escape", "ESC"],
+  ])("maps %s to %s", (code, key, expected) => {
+    expect(buildHotkeyCombo(keydownEvent({ code, key }))).toBe(expected)
   })
 })

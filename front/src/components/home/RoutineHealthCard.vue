@@ -53,7 +53,7 @@ const { t, locale } = useI18n()
 const schedulerStore = useSchedulerStore()
 
 function formatTriggerText(triggerConfig: TriggerConfig): string {
-  return formatTrigger(t, locale.value, triggerConfig.type, triggerConfig)
+  return formatTrigger(t, locale.value, triggerConfig)
 }
 
 function formatDateTimeText(dateStr?: string): string {

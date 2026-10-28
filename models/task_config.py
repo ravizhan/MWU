@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from models.interface import InterfaceModel, Option, Preset, PresetOptionValue
 from models.scheduler import (
@@ -80,7 +80,8 @@ def normalize_task_config(
             interface_presets[0].name if interface_presets else CUSTOM_PRESET_NAME
         )
 
-    return TaskConfigModel(
+    # 快照已是归一化后的模型，无需再走一遍 raw 校验
+    return TaskConfigModel.model_construct(
         selectedPreset=selected_preset,
         presets=preset_snapshots,
     )
@@ -92,14 +93,19 @@ def normalize_snapshot(
 ) -> TaskPresetSnapshotModel:
     valid_task_names = {task.name for task in (interface_model.task or [])}
 
-    raw_snapshot = _normalize_raw_snapshot(snapshot)
+    if isinstance(snapshot, TaskPresetSnapshotModel):
+        raw_tasks = snapshot.tasks
+        raw_task_options = snapshot.taskOptions
+        raw_pre_tasks = snapshot.preTasks
+    else:
+        raw_snapshot = _normalize_raw_snapshot(snapshot)
+        raw_tasks = raw_snapshot["tasks"]
+        raw_task_options = raw_snapshot["taskOptions"]
+        raw_pre_tasks = raw_snapshot["preTasks"]
+
     normalized_tasks = [
-        task_name
-        for task_name in raw_snapshot["tasks"]
-        if task_name in valid_task_names
+        task_name for task_name in raw_tasks if task_name in valid_task_names
     ]
-    raw_task_options = raw_snapshot["taskOptions"]
-    raw_pre_tasks = raw_snapshot.get("preTasks", [])
 
     normalized_options = normalize_task_options_by_task(
         raw_task_options,
@@ -107,25 +113,10 @@ def normalize_snapshot(
         interface_model,
     )
 
-    normalized_pre_tasks = _normalize_raw_pre_tasks(raw_pre_tasks)
-    parsed_pre_tasks: list[PreTaskCommand] = []
-    for item in normalized_pre_tasks:
-        try:
-            parsed_pre_tasks.append(
-                PreTaskCommand(
-                    id=item.get("id", _generate_pre_task_id()),
-                    command=item["command"],
-                    enabled=item["enabled"],
-                    timeout=item["timeout"],
-                )
-            )
-        except Exception:
-            continue
-
     return TaskPresetSnapshotModel(
         tasks=normalized_tasks,
         taskOptions=normalized_options,
-        preTasks=parsed_pre_tasks,
+        preTasks=_coerce_pre_tasks(raw_pre_tasks, drop_disabled=False),
     )
 
 
@@ -136,11 +127,8 @@ def normalize_task_options_by_task(
 ) -> TaskOptionsByTask:
     task_option_maps = _build_task_option_maps(interface_model)
     normalized: TaskOptionsByTask = {}
-    normalized_task_names = [
-        task_name for task_name in task_names if isinstance(task_name, str)
-    ]
 
-    for task_name in normalized_task_names:
+    for task_name in task_names:
         option_map = task_option_maps.get(task_name, {})
         defaults, value_types = _build_option_defaults(option_map)
         case_name_sets = _build_option_case_name_sets(option_map)
@@ -204,34 +192,11 @@ def normalize_task_execution_payload(
         interface_model,
     )
 
-    normalized_pre_tasks: list[PreTaskCommand] = []
-    if isinstance(raw_pre_tasks, list):
-        for item in raw_pre_tasks:
-            if isinstance(item, PreTaskCommand):
-                if item.enabled and item.command.strip():
-                    normalized_pre_tasks.append(item)
-            elif isinstance(item, dict):
-                command = item.get("command", "")
-                enabled = bool(item.get("enabled", True))
-                timeout = item.get("timeout", 30)
-                task_id = item.get("id")
-                if enabled and isinstance(command, str) and command.strip():
-                    try:
-                        validated = PreTaskCommand(
-                            id=task_id
-                            if isinstance(task_id, str)
-                            else _generate_pre_task_id(),
-                            command=command,
-                            enabled=True,
-                            timeout=int(timeout)
-                            if isinstance(timeout, (int, float))
-                            else 30,
-                        )
-                        normalized_pre_tasks.append(validated)
-                    except Exception:
-                        continue
-
-    return normalized_task_list, normalized_task_options, normalized_pre_tasks
+    return (
+        normalized_task_list,
+        normalized_task_options,
+        _coerce_pre_tasks(raw_pre_tasks, drop_disabled=True),
+    )
 
 
 def build_interface_preset_snapshot(
@@ -269,15 +234,6 @@ def build_interface_preset_snapshot(
 
 
 def _normalize_raw_snapshot(snapshot: Any) -> dict[str, Any]:
-    if isinstance(snapshot, TaskPresetSnapshotModel):
-        return {
-            "tasks": [
-                task_name for task_name in snapshot.tasks if isinstance(task_name, str)
-            ],
-            "taskOptions": _normalize_raw_task_options(snapshot.taskOptions),
-            "preTasks": _normalize_raw_pre_tasks(snapshot.preTasks),
-        }
-
     if not isinstance(snapshot, dict):
         return {
             "tasks": [],
@@ -295,7 +251,7 @@ def _normalize_raw_snapshot(snapshot: Any) -> dict[str, Any]:
     return {
         "tasks": raw_tasks,
         "taskOptions": _normalize_raw_task_options(snapshot.get("taskOptions")),
-        "preTasks": _normalize_raw_pre_tasks(snapshot.get("preTasks")),
+        "preTasks": _coerce_pre_tasks(snapshot.get("preTasks"), drop_disabled=False),
     }
 
 
@@ -323,40 +279,41 @@ def _normalize_raw_task_options(value: Any) -> dict[str, dict[str, TaskOptionVal
     return normalized
 
 
-def _normalize_raw_pre_tasks(value: Any) -> list[dict[str, Any]]:
-    """Normalize preTasks for JSON serialization."""
-    if isinstance(value, list):
-        result: list[dict[str, Any]] = []
-        for item in value:
-            if isinstance(item, PreTaskCommand):
-                result.append(
-                    {
-                        "id": item.id,
-                        "command": item.command,
-                        "enabled": item.enabled,
-                        "timeout": item.timeout,
-                    }
+def _coerce_pre_tasks(
+    raw_pre_tasks: Any, *, drop_disabled: bool
+) -> list[PreTaskCommand]:
+    """把持久化数据或已校验请求中的前置命令统一为 PreTaskCommand。
+
+    ``drop_disabled`` 为真时（执行载荷）只保留启用且有命令的项；
+    为假时（快照持久化）保留禁用项，由执行阶段过滤。
+    请求路径的非法项已由 API 模型拒绝；这里只会遇到持久化文件中的损坏项，
+    逐项丢弃，避免单个坏项让整个配置或定时任务无法加载。
+    """
+    if not isinstance(raw_pre_tasks, list):
+        return []
+
+    result: list[PreTaskCommand] = []
+    for item in raw_pre_tasks:
+        if isinstance(item, PreTaskCommand):
+            task = item
+        elif isinstance(item, dict) and isinstance(item.get("command"), str):
+            task_id = item.get("id")
+            timeout = item.get("timeout")
+            try:
+                task = PreTaskCommand(
+                    id=task_id if isinstance(task_id, str) else _generate_pre_task_id(),
+                    command=item["command"],
+                    enabled=bool(item.get("enabled", True)),
+                    timeout=int(timeout) if isinstance(timeout, (int, float)) else 30,
                 )
-            elif isinstance(item, dict):
-                command = item.get("command", "")
-                enabled = item.get("enabled", True)
-                timeout = item.get("timeout", 30)
-                task_id = item.get("id")
-                if isinstance(command, str):
-                    result.append(
-                        {
-                            "id": task_id
-                            if isinstance(task_id, str)
-                            else _generate_pre_task_id(),
-                            "command": command,
-                            "enabled": bool(enabled),
-                            "timeout": int(timeout)
-                            if isinstance(timeout, (int, float))
-                            else 30,
-                        }
-                    )
-        return result
-    return []
+            except (ValidationError, ValueError, OverflowError):
+                continue
+        else:
+            continue
+        if drop_disabled and (not task.enabled or not task.command.strip()):
+            continue
+        result.append(task)
+    return result
 
 
 def _normalize_option_value_for_storage(value: Any) -> TaskOptionValue | None:
@@ -538,15 +495,10 @@ def _normalize_options_for_task(
 
 
 def _clone_option_value(value: TaskOptionValue) -> TaskOptionValue:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    if isinstance(value, dict):
-        return {
-            key: item
-            for key, item in value.items()
-            if isinstance(key, str) and isinstance(item, str)
-        }
-    return value
+    """归一化并返回独立副本，避免共享的默认值列表/字典被就地修改。"""
+    cloned = _normalize_option_value_for_storage(value)
+    assert cloned is not None  # TaskOptionValue 的三种形态都有对应分支
+    return cloned
 
 
 def _apply_preset_option_value(

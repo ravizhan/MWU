@@ -1,4 +1,3 @@
-import type { InterfaceModel } from "@/types/interfaceModel"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
 
@@ -68,12 +67,7 @@ export function buildResourceUrl(path: string): string | undefined {
   return `/api/file?path=${encodeURIComponent(normalizedPath)}`
 }
 
-export function resolveInterfaceText(
-  _model: Partial<InterfaceModel> | null | undefined,
-  _locale: string,
-  value?: string | null,
-  fallback = "",
-): string {
+export function resolveInterfaceText(value?: string | null, fallback = ""): string {
   if (value === null || value === undefined) {
     return fallback
   }
@@ -85,12 +79,8 @@ export function resolveInterfaceText(
   return value
 }
 
-export function resolveInterfaceAssetUrl(
-  model: Partial<InterfaceModel> | null | undefined,
-  locale: string,
-  value?: string | null,
-): string | undefined {
-  const resolvedValue = resolveInterfaceText(model, locale, value, "").trim()
+export function resolveInterfaceAssetUrl(value?: string | null): string | undefined {
+  const resolvedValue = resolveInterfaceText(value).trim()
   if (!resolvedValue) {
     return undefined
   }
@@ -100,12 +90,8 @@ export function resolveInterfaceAssetUrl(
   return buildResourceUrl(resolvedValue)
 }
 
-export async function resolveInterfaceDocumentContent(
-  model: Partial<InterfaceModel> | null | undefined,
-  locale: string,
-  value?: string | null,
-): Promise<string> {
-  const resolvedValue = resolveInterfaceText(model, locale, value, "")
+export async function resolveInterfaceDocumentContent(value?: string | null): Promise<string> {
+  const resolvedValue = resolveInterfaceText(value)
   const trimmedValue = resolvedValue.trim()
   if (!trimmedValue) {
     return ""

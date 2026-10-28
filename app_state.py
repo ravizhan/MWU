@@ -26,7 +26,7 @@ _HISTORY_MAXLEN = 2000
 @dataclass
 class WorkerContext:
     interface_base_dir: Path
-    i18n_text_mapping: dict[str, Any] | None = None
+    interface_translations: dict[str, dict] | None = None
 
 
 @dataclass
@@ -146,15 +146,8 @@ class AppState:
         self.update_in_progress = False
         # 系统级调度状态
         self.pending_scheduled_task_id: str | None = None
-        self.native_token: str | None = None
         self.system_scheduler = None
         self.scheduler_db_path = Path("config") / "scheduler.sqlite"
 
     def send_log(self, msg: str):
         self.message_conn.put(build_log_event(msg))
-
-    def set_update_in_progress(self) -> None:
-        self.update_in_progress = True
-
-    def clear_update_in_progress(self) -> None:
-        self.update_in_progress = False

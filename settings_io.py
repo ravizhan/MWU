@@ -1,75 +1,80 @@
+import logging
 import os
-import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 import json_utils as json
+from app_paths import resolve_app_root
 from models.settings import SettingsModel
 
-SETTINGS_LOCK = threading.RLock()
+logger = logging.getLogger(__name__)
+
+# 保护 settings.json 的读-改-写序列（设备列表与 /api/settings 都会改写同一文件）。
+# read_settings_raw / atomic_write_settings 自身不加锁，调用方必须在持有本锁时
+# 完成「读 → 改 → 写」，避免嵌套加锁。
+SETTINGS_LOCK = threading.Lock()
 
 
 def default_settings_path() -> Path:
     """Return config/settings.json under the frozen or source app root."""
-    if getattr(sys, "frozen", False):
-        app_root = Path(sys.executable).resolve().parent
-    else:
-        app_root = Path(__file__).resolve().parent
-    return app_root / "config" / "settings.json"
+    return resolve_app_root() / "config" / "settings.json"
 
 
 def read_settings_raw(path: Path) -> dict[str, Any]:
-    """Read settings.json under lock. Corrupt or missing files yield {}."""
-    with SETTINGS_LOCK:
-        if not path.exists():
-            return {}
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                raw = json.load(f)
-        except Exception:
-            return {}
-        if not isinstance(raw, dict):
-            return {}
-        return raw
+    """Read settings.json. Missing or corrupt files yield {} (corruption is logged)."""
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.warning(f"读取设置文件失败，按空设置处理: {path}: {exc}")
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
 
 
 def atomic_write_settings(path: Path, data: dict[str, Any]) -> None:
-    """Atomically write settings.json under lock (tmp + fsync + os.replace)."""
-    with SETTINGS_LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f".settings.json.{os.getpid()}.tmp")
-        try:
-            with tmp_path.open("w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-        except Exception:
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
-            raise
+    """Atomically write settings.json (tmp + fsync + os.replace).
+
+    Caller must hold SETTINGS_LOCK.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".settings.json.{os.getpid()}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def load_settings_model(path: Path, **validate_kwargs: Any) -> SettingsModel:
-    """Load and validate settings from path. Missing/corrupt → defaults."""
+    """Load settings from path; missing/corrupt/invalid → defaults (logged)."""
     raw = read_settings_raw(path)
     try:
         return SettingsModel.model_validate(raw, **validate_kwargs)
-    except Exception:
+    except ValueError as exc:
+        logger.warning(f"校验设置失败，使用默认值: {path}: {exc}")
         return SettingsModel()
 
 
 def write_settings_preserving_custom_devices(
     path: Path, settings: SettingsModel
-) -> dict[str, Any]:
+) -> None:
     """Write settings while force-preserving panel.customDevices from disk.
 
     Frontend POST /api/settings must not wipe custom devices saved by the
-    device service. Returns the final dict written to disk.
+    device service.
     """
     with SETTINGS_LOCK:
         payload = settings.model_dump()
@@ -82,4 +87,3 @@ def write_settings_preserving_custom_devices(
                 payload["panel"] = panel
             panel["customDevices"] = disk_panel["customDevices"]
         atomic_write_settings(path, payload)
-        return payload

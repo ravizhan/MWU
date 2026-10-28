@@ -39,7 +39,7 @@ import TaskOptionPanel from "@/components/panel/task/TaskOptionPanel.vue"
 import { useIndexStore, useInterfaceStore, useTaskConfigStore } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const configStore = useTaskConfigStore()
 const indexStore = useIndexStore()
 const interfaceStore = useInterfaceStore()
@@ -55,12 +55,7 @@ const drawerTitle = computed(() => {
     return t("panel.taskSettings")
   }
 
-  const taskName = resolveInterfaceText(
-    interfaceStore.interface,
-    locale.value,
-    task.label,
-    task.name,
-  )
+  const taskName = resolveInterfaceText(task.label, task.name)
   return `${t("panel.taskSettings")} · ${taskName}`
 })
 </script>

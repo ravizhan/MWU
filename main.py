@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import hashlib
 import os
-import secrets
 import signal
 import socket
 import subprocess
@@ -11,7 +10,6 @@ import threading
 import time
 import webbrowser
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 
 import httpx
 import uvicorn
@@ -23,6 +21,7 @@ from pydantic import BaseModel
 
 import json_utils as json
 import settings_io
+from app_paths import resolve_app_root
 from app_state import AppState, LogBroadcaster
 from maa_utils import MaaWorker
 from maa_worker import execution
@@ -52,19 +51,11 @@ from services.update_service import (
     get_platform_info,
 )
 
-
-def _resolve_app_root_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
-
-APP_ROOT_DIR = _resolve_app_root_dir()
+APP_ROOT_DIR = resolve_app_root()
 CONFIG_DIR = APP_ROOT_DIR / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 TASK_CONFIG_FILE = CONFIG_DIR / "task_config.json"
 INDEX_FILE = APP_ROOT_DIR / "page/index.html"
-NATIVE_TOKEN_FILE = CONFIG_DIR / "native_token"
 SCHEDULER_DB_PATH = CONFIG_DIR / "scheduler.sqlite"
 EXIT_SUCCESS = 0
 EXIT_FAILED = 1
@@ -120,32 +111,10 @@ if not CONFIG_DIR.exists():
 
 
 app_state = AppState()
-_PENDING_SCHEDULED_TASK_ID: str | None = None
 
 
 class NativeDispatchRequest(BaseModel):
     task_id: str
-    token: str
-
-
-def ensure_native_token() -> str:
-    """读取或生成 native token（冷启动委托鉴权用，0600 权限）"""
-    try:
-        if NATIVE_TOKEN_FILE.exists():
-            token = NATIVE_TOKEN_FILE.read_text(encoding="utf-8").strip()
-            if token:
-                return token
-    except OSError:
-        pass
-    token = secrets.token_hex(32)
-    fd = os.open(NATIVE_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(token)
-    try:
-        os.chmod(NATIVE_TOKEN_FILE, 0o600)
-    except PermissionError:
-        pass
-    return token
 
 
 def _port_in_use(host: str = "127.0.0.1", port: int = 5566) -> bool:
@@ -159,13 +128,12 @@ def _port_in_use(host: str = "127.0.0.1", port: int = 5566) -> bool:
 
 def delegate_native_dispatch(task_id: str) -> int:
     """已有实例运行时，将系统级任务通过 HTTP 移交给已运行实例"""
-    token = NATIVE_TOKEN_FILE.read_text(encoding="utf-8").strip()
     attempts = 6
     for attempt in range(attempts):
         try:
             response = httpx.post(
                 "http://127.0.0.1:5566/api/internal/scheduler/native-dispatch",
-                json={"task_id": task_id, "token": token},
+                json={"task_id": task_id},
                 timeout=10,
             )
         except Exception as e:
@@ -196,31 +164,22 @@ async def log_monitor():
             message = app_state.message_conn.get_nowait()
             if message.event == "focus.modal":
                 # modal 快照是状态而非日志，不进历史；重连时由 stream_logs 补发当前快照。
-                if app_state.broadcaster:
-                    await app_state.broadcaster.broadcast(message)
+                await app_state.broadcaster.broadcast(message)
                 continue
             app_state.history_message.append(message)
-            if app_state.broadcaster:
-                await app_state.broadcaster.broadcast(message)
+            await app_state.broadcaster.broadcast(message)
         await asyncio.sleep(0.1)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app_state.is_shutting_down = False
-    app_state.worker = MaaWorker(app_state, interface)
+    app_state.worker = MaaWorker(app_state, interface, interface_translations)
     app_state.broadcaster = LogBroadcaster()
-    with SETTINGS_FILE.open("r", encoding="utf-8") as f:
-        config_data = json.load(f)
-    with interface_lock:
-        app_state.settings = SettingsModel.model_validate(
-            config_data,
-            context={"interface": interface},
-        )
-    if _PENDING_SCHEDULED_TASK_ID is not None:
-        app_state.pending_scheduled_task_id = _PENDING_SCHEDULED_TASK_ID
+    app_state.settings = settings_io.load_settings_model(
+        SETTINGS_FILE, context={"interface": interface}
+    )
     # 初始化系统级调度
-    app_state.native_token = ensure_native_token()
     app_state.scheduler_db_path = SCHEDULER_DB_PATH
     await asyncio.to_thread(execution.init_db, SCHEDULER_DB_PATH)
     app_state.system_scheduler = SystemScheduler(APP_ROOT_DIR)
@@ -230,10 +189,10 @@ async def lifespan(app: FastAPI):
     await app_state.scheduler_manager.initialize(paused=True)
     desired = await app_state.scheduler_manager.get_all_tasks()
     report = app_state.system_scheduler.converge(desired)
+    if report.list_error is not None:
+        app_state.send_log(f"查询系统级唤醒注册状态失败: {report.list_error}")
     # 启动时注册失败的任务自动降级为应用内派发，避免静默失能
     for task_id, error in report.failed.items():
-        if task_id == "__list__":
-            continue
         task = await app_state.scheduler_manager.get_task(task_id)
         if task and task.wakeup_enabled:
             ok = await app_state.scheduler_manager.degrade_wakeup(task_id)
@@ -280,10 +239,8 @@ async def lifespan(app: FastAPI):
         app_state.active_execution_task.cancel()
         with suppress(asyncio.CancelledError):
             await app_state.active_execution_task
-    if app_state.scheduler_manager:
-        await app_state.scheduler_manager.shutdown()
-    if app_state.worker:
-        app_state.worker.shutdown()
+    await app_state.scheduler_manager.shutdown()
+    app_state.worker.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -363,11 +320,9 @@ def get_file(path: str):
             field_name="path",
         )
     except ValueError as exc:
-        message = str(exc)
-        status_code = 404 if ("不存在" in message or "不是文件" in message) else 400
         return JSONResponse(
-            status_code=status_code,
-            content={"status": "failed", "message": message},
+            status_code=400,
+            content={"status": "failed", "message": str(exc)},
         )
     return FileResponse(resolved_path)
 
@@ -430,18 +385,12 @@ async def stream_live(fps: int = 15):
 
 @app.get("/api/device")
 def get_device(controller: str | None = None):
-    if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
     data = app_state.worker.device.get_device(controller)
     return {"status": "success", "data": data}
 
 
 @app.post("/api/device")
 async def connect_device(device: DeviceModel):
-    if app_state.worker is None:
-        msg = "Worker未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     if await asyncio.to_thread(app_state.worker.device.connect, device):
         return {"status": "success"}
     msg = app_state.worker.device_state.last_device_error or "设备连接失败"
@@ -450,8 +399,6 @@ async def connect_device(device: DeviceModel):
 
 @app.post("/api/device/custom")
 def add_custom_device(payload: CustomDeviceCreate):
-    if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
     try:
         device = app_state.worker.device.add_custom_device(payload)
         return {"status": "success", "data": device}
@@ -463,8 +410,6 @@ def add_custom_device(payload: CustomDeviceCreate):
 
 @app.get("/api/device/state")
 def get_device_state():
-    if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
     if (
         app_state.worker.device_state.connected
         and not app_state.worker.device.is_connection_alive()
@@ -486,8 +431,6 @@ def get_device_state():
 
 @app.get("/api/resource")
 def get_resource(controller_type: str | None = Query(default=None)):
-    if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
     controller_names = (
         {c.name for c in interface.controller if c.type == controller_type}
         if controller_type
@@ -510,10 +453,6 @@ def get_resource(controller_type: str | None = Query(default=None)):
 @app.post("/api/resource")
 async def set_resource(name: str):
     # 设置资源
-    if app_state.worker is None:
-        msg = "Worker未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     if not app_state.worker.device_state.connected:
         msg = "请先连接设备后再选择资源"
         app_state.send_log(msg)
@@ -531,25 +470,13 @@ async def set_resource(name: str):
 
 @app.get("/api/settings")
 def get_settings():
-    with interface_lock:
-        app_state.settings = settings_io.load_settings_model(
-            SETTINGS_FILE,
-            context={"interface": interface},
-        )
     return {"status": "success", "settings": app_state.settings.model_dump()}
 
 
 @app.post("/api/settings")
 def set_settings(settings: SettingsModel):
-    written = settings_io.write_settings_preserving_custom_devices(
-        SETTINGS_FILE, settings
-    )
-    # Re-validate so app_state reflects preserved customDevices from disk.
-    with interface_lock:
-        app_state.settings = SettingsModel.model_validate(
-            written,
-            context={"interface": interface},
-        )
+    settings_io.write_settings_preserving_custom_devices(SETTINGS_FILE, settings)
+    app_state.settings = settings
     return {"status": "success"}
 
 
@@ -594,12 +521,19 @@ def check_update():
         mirrorchyan_rid = getattr(interface, "mirrorchyan_rid", None)
         github_url = interface.github or ""
         cdk = settings.update.mirrorchyanCdk
+        mirrorchyan_error: str | None = None
 
         if mirrorchyan_rid:
-            mc_data = check_mirrorchyan_update(
-                mirrorchyan_rid, current_version, cdk, settings
-            )
-            if mc_data and mc_data.get("code") == 0:
+            try:
+                mc_data = check_mirrorchyan_update(
+                    mirrorchyan_rid, current_version, cdk, settings
+                )
+            except RuntimeError as exc:
+                # 配置了 MirrorChyan 时仍回退 GitHub，但失败原因必须可见
+                app_state.send_log(f"MirrorChyan 更新检查失败，回退 GitHub: {exc}")
+                mirrorchyan_error = str(exc)
+                mc_data = None
+            if mc_data is not None:
                 mc_info = mc_data.get("data", {})
                 latest_version = mc_info.get("version_name", "")
                 has_update = latest_version and latest_version != current_version
@@ -639,8 +573,10 @@ def check_update():
                             app_state.update_info["file_hash"] = gh_info["file_hash"]
                             app_state.update_info["file_name"] = gh_info["file_name"]
                             app_state.update_info["download_source"] = "github"
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # 保留 mirrorchyan 版本信息，但让「拿不到 GitHub 下载链接」可见：
+                        # 后续下载将不带代理/CDK。
+                        app_state.send_log(f"获取 GitHub 下载链接失败: {exc}")
 
                 return {
                     "status": "success",
@@ -661,7 +597,7 @@ def check_update():
                 "message": msg,
             }
 
-        msg = "未配置更新源"
+        msg = mirrorchyan_error or "未配置更新源"
         app_state.send_log(msg)
         return {"status": "failed", "message": msg}
     except Exception as e:
@@ -688,7 +624,7 @@ async def perform_update():
             "message": "正在下载更新包...",
         }
         # 更新真正开始：置位准入标志，阻塞 /api/start 与调度准入，防止更新期间启动任务
-        app_state.set_update_in_progress()
+        app_state.update_in_progress = True
 
         try:
             raw_proxy = (
@@ -713,7 +649,7 @@ async def perform_update():
             msg = f"下载失败: {e}"
             app_state.send_log(msg)
             app_state.update_status = {"status": "failed", "message": msg}
-            app_state.clear_update_in_progress()
+            app_state.update_in_progress = False
             return {"status": "failed", "message": str(e)}
 
         def run_updater_loop():
@@ -783,7 +719,7 @@ async def perform_update():
             finally:
                 # 更新器线程终态：无论失败还是正常退出，均放行任务准入。
                 # 成功自更新时进程被 webhook 杀除，此 finally 不执行（进程随 flag 消亡），符合预期。
-                app_state.clear_update_in_progress()
+                app_state.update_in_progress = False
 
         threading.Thread(target=run_updater_loop, daemon=True).start()
         return {"status": "success", "message": "正在后台更新程序..."}
@@ -791,7 +727,7 @@ async def perform_update():
         msg = str(e)
         app_state.send_log(f"更新失败: {msg}")
         app_state.update_status = {"status": "failed", "message": msg}
-        app_state.clear_update_in_progress()
+        app_state.update_in_progress = False
         return {"status": "failed", "message": msg}
 
 
@@ -814,10 +750,6 @@ def system_shutdown():
 
 @app.post("/api/test-notification")
 def test_notification():
-    if app_state.worker is None:
-        msg = "Worker未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         app_state.worker.events.send_notification(
             "测试通知",
@@ -851,8 +783,6 @@ async def stop():
 
 @app.post("/api/focus/{focus_id}/confirm")
 def confirm_focus(focus_id: str):
-    if app_state.worker is None:
-        return {"status": "failed", "message": "Worker未初始化"}
     app_state.worker.focus.confirm(focus_id)
     return {"status": "success"}
 
@@ -860,11 +790,6 @@ def confirm_focus(focus_id: str):
 @app.post("/api/internal/scheduler/native-dispatch")
 async def native_dispatch(payload: NativeDispatchRequest):
     """冷启动委托入口：由系统级唤醒触发的二次进程将任务移交给本实例"""
-    if payload.token != app_state.native_token:
-        return JSONResponse(
-            status_code=401,
-            content={"status": "failed", "message": "无效的 native token"},
-        )
     task = await app_state.scheduler_manager.get_task(payload.task_id)
     if task is None:
         return JSONResponse(
@@ -891,22 +816,10 @@ async def native_dispatch(payload: NativeDispatchRequest):
 
 @app.get("/api/logs")
 async def stream_logs(request: Request):
-    if app_state.broadcaster is None:
-
-        async def empty_generator():
-            while (
-                not app_state.is_shutting_down and not await request.is_disconnected()
-            ):
-                yield ": keep-alive\n\n"
-                await asyncio.sleep(15)
-
-        return StreamingResponse(empty_generator(), media_type="text/event-stream")
-
     q = app_state.broadcaster.add_client(app_state.history_message)
-    if app_state.worker is not None:
-        # 建连即发送当前 pending 快照（空数组表示无 modal），
-        # 清除断线期间已在其他标签页确认的旧弹窗。
-        q.put_nowait(app_state.worker.focus.snapshot())
+    # 建连即发送当前 pending 快照（空数组表示无 modal），
+    # 清除断线期间已在其他标签页确认的旧弹窗。
+    q.put_nowait(app_state.worker.focus.snapshot())
 
     async def event_generator():
         try:
@@ -921,8 +834,7 @@ async def stream_logs(request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            if app_state.broadcaster is not None:
-                app_state.broadcaster.remove_client(q)
+            app_state.broadcaster.remove_client(q)
 
     return StreamingResponse(
         event_generator(),
@@ -939,10 +851,6 @@ async def stream_logs(request: Request):
 @app.get("/api/scheduler/tasks")
 async def get_scheduler_tasks():
     """获取所有定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         tasks = await app_state.scheduler_manager.get_all_tasks()
         return {"status": "success", "tasks": [task.model_dump() for task in tasks]}
@@ -955,10 +863,6 @@ async def get_scheduler_tasks():
 @app.post("/api/scheduler/tasks")
 async def create_scheduler_task(task_create: ScheduledTaskCreate):
     """创建定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         task = await app_state.scheduler_manager.create_task(task_create)
         return {"status": "success", "task": task.model_dump()}
@@ -971,10 +875,6 @@ async def create_scheduler_task(task_create: ScheduledTaskCreate):
 @app.put("/api/scheduler/tasks/{task_id}")
 async def update_scheduler_task(task_id: str, task_update: ScheduledTaskUpdate):
     """更新定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         task = await app_state.scheduler_manager.update_task(task_id, task_update)
         if task is None:
@@ -991,10 +891,6 @@ async def update_scheduler_task(task_id: str, task_update: ScheduledTaskUpdate):
 @app.delete("/api/scheduler/tasks/{task_id}")
 async def delete_scheduler_task(task_id: str):
     """删除定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.delete_task(task_id)
         if success:
@@ -1011,10 +907,6 @@ async def delete_scheduler_task(task_id: str):
 @app.post("/api/scheduler/tasks/{task_id}/pause")
 async def pause_scheduler_task(task_id: str):
     """暂停定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.pause_task(task_id)
         if success:
@@ -1031,10 +923,6 @@ async def pause_scheduler_task(task_id: str):
 @app.post("/api/scheduler/tasks/{task_id}/resume")
 async def resume_scheduler_task(task_id: str):
     """恢复定时任务"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         success = await app_state.scheduler_manager.resume_task(task_id)
         if success:
@@ -1051,10 +939,6 @@ async def resume_scheduler_task(task_id: str):
 @app.get("/api/scheduler/executions")
 async def get_scheduler_executions(limit: int = 50):
     """获取执行历史"""
-    if app_state.scheduler_manager is None:
-        msg = "调度器未初始化"
-        app_state.send_log(msg)
-        return {"status": "failed", "message": msg}
     try:
         executions = await app_state.scheduler_manager.get_executions(limit)
         return {
@@ -1084,7 +968,7 @@ if __name__ == "__main__":
         sys.exit(EXIT_FAILED)
 
     if args.scheduled_task:
-        _PENDING_SCHEDULED_TASK_ID = args.scheduled_task
+        app_state.pending_scheduled_task_id = args.scheduled_task
 
     uvicorn.run(
         app,

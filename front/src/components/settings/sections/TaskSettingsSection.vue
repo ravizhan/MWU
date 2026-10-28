@@ -45,7 +45,7 @@ import type { SettingSection } from "@/types/interfaceModel"
 import { resolveInterfaceAssetUrl, resolveInterfaceText } from "@/utils/interface/content"
 import TaskSettingOptionRow from "@/components/settings/sections/TaskSettingOptionRow.vue"
 
-const { locale, t } = useI18n()
+const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const sections = computed(() => interfaceStore.getSettingSections)
 const defaultExpandedNames = computed(() =>
@@ -61,14 +61,14 @@ function availableOptionNames(section: SettingSection): string[] {
 }
 
 function resolveSectionLabel(section: SettingSection): string {
-  return resolveInterfaceText(interfaceStore.interface, locale.value, section.label, section.name)
+  return resolveInterfaceText(section.label, section.name)
 }
 
 function resolveSectionDescription(description: string): string {
-  return resolveInterfaceText(interfaceStore.interface, locale.value, description, description)
+  return resolveInterfaceText(description, description)
 }
 
 function resolveSectionIcon(icon: string | undefined): string | undefined {
-  return resolveInterfaceAssetUrl(interfaceStore.interface, locale.value, icon)
+  return resolveInterfaceAssetUrl(icon)
 }
 </script>

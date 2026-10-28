@@ -33,7 +33,7 @@
       <NCard :bordered="false" content-style="padding: 16px">
         <div class="text-sm opacity-70">{{ t("settings.about.version") }}</div>
         <div class="text-2xl font-bold">
-          {{ settingsStore.settings.about.version || "-" }}
+          {{ interfaceStore.interface.version || "-" }}
         </div>
       </NCard>
     </div>
@@ -50,25 +50,18 @@
             </NIcon>
             {{ t("panel.device") }}
           </h2>
-          <PanelConnectionTabs
-            mode="device"
+          <PanelDevicePicker
             :selected-controller="deviceStore.selectedController"
             :selected-device-key="deviceStore.selectedDeviceKey"
             :play-cover-address="deviceStore.playCoverAddress"
             :controller-options="deviceStore.controllerOptions"
             :device-options="deviceStore.deviceOptions"
-            :device-disabled="deviceStore.isDeviceResourceLocked"
-            :resource-disabled="
-              !deviceStore.selectedController || deviceStore.isDeviceResourceLocked
-            "
+            :disabled="deviceStore.isDeviceResourceLocked"
             :selected-controller-disabled="deviceStore.selectedControllerDisabled"
             :is-play-cover="deviceStore.selectedControllerCapability?.type === 'PlayCover'"
-            :resource="deviceStore.resource"
-            :resources-list="deviceStore.resourcesList"
             @update:selected-controller="deviceStore.selectedController = $event"
             @update:selected-device-key="deviceStore.selectedDeviceKey = $event"
             @update:play-cover-address="deviceStore.playCoverAddress = $event"
-            @update:resource="deviceStore.resource = $event"
             @controller-change="deviceStore.handleControllerChange()"
             @open-devices="deviceStore.openDevices()"
             @create-device="deviceStore.createCustomDevice($event)"
@@ -83,21 +76,10 @@
             </NIcon>
             {{ t("panel.resource") }}
           </h2>
-          <PanelConnectionTabs
-            mode="resource"
-            :selected-controller="deviceStore.selectedController"
-            :selected-device-key="deviceStore.selectedDeviceKey"
-            :play-cover-address="deviceStore.playCoverAddress"
-            :controller-options="deviceStore.controllerOptions"
-            :device-options="deviceStore.deviceOptions"
-            :device-disabled="deviceStore.isDeviceResourceLocked"
-            :resource-disabled="
-              !deviceStore.selectedController || deviceStore.isDeviceResourceLocked
-            "
-            :selected-controller-disabled="deviceStore.selectedControllerDisabled"
-            :is-play-cover="deviceStore.selectedControllerCapability?.type === 'PlayCover'"
+          <PanelResourcePicker
             :resource="deviceStore.resource"
             :resources-list="deviceStore.resourcesList"
+            :disabled="!deviceStore.selectedController || deviceStore.isDeviceResourceLocked"
             @update:resource="deviceStore.resource = $event"
           />
         </NCard>
@@ -149,24 +131,23 @@ import {
 } from "@vicons/ionicons5"
 import HomeRecipeCard from "@/components/home/HomeRecipeCard.vue"
 import RoutineHealthCard from "@/components/home/RoutineHealthCard.vue"
-import PanelConnectionTabs from "@/components/panel/PanelConnectionTabs.vue"
+import PanelDevicePicker from "@/components/panel/PanelDevicePicker.vue"
+import PanelResourcePicker from "@/components/panel/PanelResourcePicker.vue"
 import {
   useIndexStore,
   useInterfaceStore,
   useTaskConfigStore,
   useSchedulerStore,
-  useSettingsStore,
   useDeviceConnectionStore,
 } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const indexStore = useIndexStore()
 const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const schedulerStore = useSchedulerStore()
-const settingsStore = useSettingsStore()
 const deviceStore = useDeviceConnectionStore()
 
 const selectedTaskCount = computed(() => configStore.taskList.length)
@@ -176,12 +157,7 @@ const recipeCards = computed(() => {
     const taskCount = preset.task?.filter((t) => t.enabled !== false).length || 0
     return {
       name: preset.name,
-      label: resolveInterfaceText(
-        interfaceStore.interface,
-        locale.value,
-        preset.label,
-        preset.name,
-      ),
+      label: resolveInterfaceText(preset.label, preset.name),
       description: preset.description || t("panel.preset.noDescription"),
       taskCount,
     }

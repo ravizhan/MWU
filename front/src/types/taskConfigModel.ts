@@ -5,8 +5,6 @@ export const CUSTOM_PRESET_NAME = "__mwu_reserved_custom_preset__"
 export interface TaskListItem {
   id: string
   name: string
-  order: number
-  checked?: boolean
 }
 
 export interface QueuedTaskItem extends TaskListItem {

@@ -1,15 +1,10 @@
-"""原生 cron 解析与跨平台转换（纯函数，无 I/O）。
+"""跨平台 cron 转换与冲突判定（纯函数，无 I/O）。
 
-输入已由 ``PortableCronStr`` 统一校验为严格子集（5 字段、单值或 *、
-分钟必须具体），此处只做结构提取与 OS 格式转换。
+输入为 ``models.scheduler.parse_portable_cron`` 提取出的 :class:`NativeCron`
+（严格子集：5 字段、单值或 *、分钟必须具体），此处只做 OS 格式转换。
 """
 
-from dataclasses import dataclass
-from typing import cast
-
-from pydantic import TypeAdapter
-
-from models.scheduler import PortableCronStr
+from models.scheduler import NativeCron
 
 # Unix 星期（0=周日）→ schtasks 三字母英文缩写
 _SCHTASKS_DOW = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
@@ -29,55 +24,6 @@ _SCHTASKS_MONTHS = (
     "NOV",
     "DEC",
 )
-
-
-@dataclass(frozen=True)
-class NativeCron:
-    """严格 cron 表达式的解析结果。
-
-    minute 必填；其余字段为 None 表示 ``*``。dow 采用 Unix 约定（0=周日），
-    解析时已将 7 归一化为 0。
-    """
-
-    minute: int
-    hour: int | None
-    day: int | None
-    month: int | None
-    dow: int | None
-
-
-_adapter = TypeAdapter(PortableCronStr)
-
-
-def parse_native_cron(cron: str) -> NativeCron:
-    """将已校验的严格 cron 表达式解析为 NativeCron 结构体。"""
-    cron_str = _adapter.validate_python(cron)
-    fields = cron_str.cron_obj.to_list()
-    minute_set, hour_set, day_set, month_set, dow_set = fields
-
-    full_minute = set(range(60))
-    full_hour = set(range(24))
-    full_day = set(range(1, 32))
-    full_month = set(range(1, 13))
-    full_dow = set(range(7))
-
-    minute = _scalar_or_none(minute_set, full_minute, "minute")
-    hour = _scalar_or_none(hour_set, full_hour, "hour")
-    day = _scalar_or_none(day_set, full_day, "day")
-    month = _scalar_or_none(month_set, full_month, "month")
-    dow = _scalar_or_none(dow_set, full_dow, "dow")
-    return NativeCron(
-        minute=cast(int, minute), hour=hour, day=day, month=month, dow=dow
-    )
-
-
-def _scalar_or_none(field_set: set[int], full_set: set[int], name: str) -> int | None:
-    values = sorted(field_set)
-    if set(values) == full_set:
-        return None
-    if len(values) == 1:
-        return values[0]
-    raise ValueError(f"{name} field must be * or a single value for native scheduling")
 
 
 def to_schtasks_args(nc: NativeCron) -> list[str]:
@@ -150,12 +96,10 @@ def _days_overlap(a: NativeCron, b: NativeCron) -> bool:
         return False
     if a.day is not None and b.day is not None and a.day != b.day:
         return False
-    if a.dow is not None and b.dow is not None and a.dow != b.dow:
-        return False
 
     # 一侧限定星期、另一侧限定具体日（含月）时，cron 的 dom/dow 为 OR 语义：
     # 无法用静态字段比较，保守判定为可能重叠。
-    return True
+    return not (a.dow is not None and b.dow is not None and a.dow != b.dow)
 
 
 def native_crons_may_conflict(a: NativeCron, b: NativeCron) -> bool:

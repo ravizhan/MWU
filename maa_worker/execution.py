@@ -25,6 +25,7 @@ from models.scheduler import (
     StartConflict,
     TaskExecution,
 )
+from models.settings import SettingsModel
 from models.task_config import (
     normalize_global_option_values,
     normalize_task_execution_payload,
@@ -74,12 +75,6 @@ def init_db(path: Path) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_scheduler_executions_started_at
             ON scheduler_executions(started_at DESC)
-            """
-        )
-        db.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_scheduler_executions_task_id
-            ON scheduler_executions(task_id)
             """
         )
 
@@ -260,6 +255,33 @@ def _claim_slot(state: AppState, active: ActiveRun) -> None:
         state.worker.task_state.stop_flag = False
 
 
+def _attach_prestart_cancel_guard(state: AppState, run_id: str) -> None:
+    """协程在首次调度前被取消时 finally 不会执行：立即清槽并补记取消记录。"""
+    task = state.active_execution_task
+    if task is None:
+        return
+
+    def _guard(t: asyncio.Task) -> None:
+        if not t.cancelled():
+            return
+        if state.active_run is None or state.active_run.run_id != run_id:
+            return
+        state.active_run = None
+        state.active_execution_task = None
+        asyncio.get_running_loop().create_task(
+            _record_prestart_cancel(state.scheduler_db_path, run_id)
+        )
+
+    task.add_done_callback(_guard)
+
+
+def _release_slot(state: AppState, run_id: str) -> None:
+    """准入阶段失败/被取消时立即清槽，避免槽位永久占用（后续启动全被拒 busy）。"""
+    if state.active_run is not None and state.active_run.run_id == run_id:
+        state.active_run = None
+    state.active_execution_task = None
+
+
 async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admission:
     """手动启动准入"""
     if state.update_in_progress:
@@ -301,26 +323,9 @@ async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admissi
         state.active_execution_task = asyncio.create_task(
             _complete_run(state, run_id, payload)
         )
-
-        # 防御：若协程在首次调度前被取消，finally 不会执行，立即清槽并补记
-        def _guard_prestart_cancel(t: asyncio.Task) -> None:
-            if (
-                t.cancelled()
-                and state.active_run is not None
-                and state.active_run.run_id == run_id
-            ):
-                state.active_run = None
-                state.active_execution_task = None
-                asyncio.get_running_loop().create_task(
-                    _record_prestart_cancel(state.scheduler_db_path, run_id)
-                )
-
-        state.active_execution_task.add_done_callback(_guard_prestart_cancel)
+        _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
-        # 落库失败或准入阶段被取消：立即清槽，避免槽位永久占用（后续每次启动都被拒 busy）
-        if state.active_run is not None and state.active_run.run_id == run_id:
-            state.active_run = None
-        state.active_execution_task = None
+        _release_slot(state, run_id)
         raise
     return Admission(accepted=True, run_id=run_id)
 
@@ -401,26 +406,9 @@ async def submit_scheduled(
         state.active_execution_task = asyncio.create_task(
             _complete_run(state, run_id, payload, task_list=task.task_list)
         )
-
-        # 防御：若协程在首次调度前被取消，finally 不会执行，立即清槽并补记
-        def _guard_prestart_cancel(t: asyncio.Task) -> None:
-            if (
-                t.cancelled()
-                and state.active_run is not None
-                and state.active_run.run_id == run_id
-            ):
-                state.active_run = None
-                state.active_execution_task = None
-                asyncio.get_running_loop().create_task(
-                    _record_prestart_cancel(state.scheduler_db_path, run_id)
-                )
-
-        state.active_execution_task.add_done_callback(_guard_prestart_cancel)
+        _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
-        # 落库失败或准入阶段被取消：立即清槽，避免槽位永久占用（后续每次启动都被拒 busy）
-        if state.active_run is not None and state.active_run.run_id == run_id:
-            state.active_run = None
-        state.active_execution_task = None
+        _release_slot(state, run_id)
         raise
     return Admission(accepted=True, run_id=run_id)
 
@@ -463,6 +451,12 @@ async def _drain_cancelled_pretasks(worker, pretask_future: asyncio.Future) -> N
         pretask_future.exception()
 
 
+def _deliver_terminal_side_effects(worker, event, error: str | None) -> None:
+    worker.events.deliver_notification(event)
+    if error:
+        worker.events.send_log(f"任务异常详情: {error}")
+
+
 async def _complete_run(
     state: AppState,
     run_id: str,
@@ -474,8 +468,10 @@ async def _complete_run(
     worker = state.worker
     status: ExecutionStatus = "failed"
     error: str | None = None
-    task_started = False
     event_task_list = payload.task_list if payload is not None else (task_list or [])
+    # 通知标题用运行标签（定时任务为计划名）；task_state.current_task_name
+    # 会在 run_process 退出时被清空，收尾阶段不能再依赖它。
+    run_label = state.active_run.task_name if state.active_run is not None else None
     try:
         if worker is None:
             raise RuntimeError("Worker 未就绪")
@@ -545,7 +541,9 @@ async def _complete_run(
         # 5. 按设置重试 connect + set_resource
         if need_connect:
             settings = load_settings()
-            max_retry = settings.runtime.maxRetryCount
+            attempts = (
+                settings.runtime.maxRetryCount if settings.runtime.autoRetry else 1
+            )
             retry_interval = settings.runtime.retryInterval
             device_model = worker.device.build_device_model_from_config(
                 payload.device.controller_name,
@@ -554,7 +552,7 @@ async def _complete_run(
             )
             connected = False
             last_err: Exception | None = None
-            for attempt in range(1, max_retry + 1):
+            for attempt in range(1, attempts + 1):
                 try:
                     if not await asyncio.to_thread(worker.device.connect, device_model):
                         raise RuntimeError("connect() 返回 False")
@@ -566,7 +564,7 @@ async def _complete_run(
                     break
                 except Exception as e:
                     last_err = e
-                    if attempt < max_retry:
+                    if attempt < attempts:
                         worker.events.send_log(f"连接失败，第 {attempt} 次重试...: {e}")
                         await asyncio.sleep(retry_interval)
             if not connected:
@@ -582,8 +580,6 @@ async def _complete_run(
             global_options=normalized_global_options,
         ):
             raise RuntimeError("任务启动失败（可能已有任务在运行）")
-        # 任务线程已启动：run_process 自行发出终端事件；标记以便停止/失败时不重复发、不误取消
-        task_started = True
         if state.active_run is not None and state.active_run.run_id == run_id:
             state.active_run.started = True
 
@@ -591,8 +587,8 @@ async def _complete_run(
         while worker.task_state.running:
             await asyncio.sleep(1)
 
-        last_status = getattr(worker.task_state, "last_status", "failed")
-        last_error = getattr(worker.task_state, "last_error", None)
+        last_status = worker.task_state.last_status
+        last_error = worker.task_state.last_error
         if last_status == "success":
             status = "success"
         elif last_status == "stopped":
@@ -607,54 +603,40 @@ async def _complete_run(
         error = "任务已终止"
         if worker is not None:
             worker.events.send_log(error)
-            if not task_started:
-                try:
-                    await asyncio.to_thread(
-                        worker.events.emit_task_failed, event_task_list, error
-                    )
-                except Exception as emit_err:
-                    logger.error(f"发送任务停止事件失败: {emit_err}")
     except Exception as e:
         status = "failed"
         error = str(e)
         logger.error(f"执行运行 {run_id} 失败: {e}")
         if worker is not None:
             worker.events.send_log(f"任务执行失败: {e}")
-            if not task_started:
-                # 前置阶段失败（run_process 未启动、未发终端事件）：补发 task.failed，
-                # 否则前端 TaskRunning 在 accept 后被置位却无 task.completed/failed 清除，UI 卡死。
-                try:
-                    await asyncio.to_thread(
-                        worker.events.emit_task_failed, event_task_list, error or ""
-                    )
-                except Exception as emit_err:
-                    logger.error(f"发送任务失败事件失败: {emit_err}")
     finally:
+        cancelled = bool(asyncio.current_task().cancelling())
         # 取消路径：改写状态，落库用 shield 保证不被二次取消
-        if asyncio.current_task().cancelling():
+        if cancelled:
             status = "stopped"
             error = "运行被取消"
-            if worker is not None and not task_started:
-                # 前置阶段被取消（run_process 未启动）：补发终端事件，避免前端 TaskRunning 卡死
-                try:
-                    await asyncio.shield(
-                        asyncio.to_thread(
-                            worker.events.emit_task_failed,
-                            event_task_list,
-                            error or "",
-                        )
-                    )
-                except Exception as emit_err:
-                    logger.error(f"发送任务失败事件失败: {emit_err}")
         try:
             await asyncio.shield(
                 asyncio.to_thread(
                     finish_execution, state.scheduler_db_path, run_id, status, error
                 )
             )
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             logger.error(f"收尾执行记录失败: {e}")
-        # 无条件清槽（纯同步赋值，不受取消影响）
+        # 读取失败也必须发终端事件，否则前端 TaskRunning 卡住；此时仅按默认设置决定是否通知。
+        notify_settings = SettingsModel()
+        if worker is not None:
+            try:
+                notify_settings = await asyncio.shield(asyncio.to_thread(load_settings))
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"读取通知设置失败: {e}")
+        # 清槽与终端事件入队必须在同一同步段内（中间不得 await）：
+        # 前端收到 task.completed/task.failed 后立即发起的新启动不能再被判 busy_manual，
+        # 同时新运行的 task.started 也不能排在旧运行的终端事件之前。
         if state.active_run is not None and state.active_run.run_id == run_id:
             state.active_run = None
         if (
@@ -662,6 +644,25 @@ async def _complete_run(
             and state.active_execution_task is asyncio.current_task()
         ):
             state.active_execution_task = None
+        terminal_event = None
+        if worker is not None:
+            try:
+                terminal_event = worker.events.publish_task_terminal(
+                    event_task_list, run_label, status == "success", notify_settings
+                )
+            except Exception as emit_err:
+                logger.error(f"发送任务终端事件失败: {emit_err}")
+        if terminal_event is not None:
+            try:
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        _deliver_terminal_side_effects, worker, terminal_event, error
+                    )
+                )
+            except asyncio.CancelledError:
+                pass
+            except Exception as emit_err:
+                logger.error(f"发送任务终端通知失败: {emit_err}")
         # 若任务是被取消的，继续传播 CancelledError
-        if asyncio.current_task().cancelling():
+        if cancelled:
             raise asyncio.CancelledError

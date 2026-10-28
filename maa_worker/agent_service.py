@@ -23,32 +23,11 @@ class AgentService:
             return self.worker.interface.agent
         return [self.worker.interface.agent]
 
-    def _load_i18n_mapping(self) -> dict[str, Any]:
-        context = self.worker.context
-        if context.i18n_text_mapping is not None:
-            return context.i18n_text_mapping
-
-        context.i18n_text_mapping = {}
-        if not self.worker.interface.languages:
-            return context.i18n_text_mapping
-
-        language_file = self.worker.interface.languages.get(PI_CLIENT_LANGUAGE)
-        if not isinstance(language_file, str) or not language_file.strip():
-            return context.i18n_text_mapping
-
-        language_path = (context.interface_base_dir / language_file).resolve()
-        try:
-            with language_path.open("r", encoding="utf-8") as f:
-                mapping = json.load(f)
-            if isinstance(mapping, dict):
-                context.i18n_text_mapping = mapping
-        except Exception as exc:
-            self.worker.events.send_log(f"加载语言映射失败: {exc}")
-        return context.i18n_text_mapping
-
     def _lookup_i18n_text(self, key: str) -> str | None:
-        mapping = self._load_i18n_mapping()
-        if not mapping:
+        # main.load_interface_translations() 已按路径约束加载全部语言文件
+        translations = self.worker.context.interface_translations or {}
+        mapping = translations.get(PI_CLIENT_LANGUAGE)
+        if not isinstance(mapping, dict):
             return None
 
         normalized_key = key.removeprefix("$")

@@ -124,7 +124,7 @@ import { CUSTOM_PRESET_NAME, type QueuedTaskItem } from "@/types/taskConfigModel
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { useViewport } from "@/utils/viewport/useViewport"
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const router = useRouter()
 const indexStore = useIndexStore()
 const interfaceStore = useInterfaceStore()
@@ -146,7 +146,7 @@ const selectedTaskUid = computed(() => {
 const presetOptions = computed(() => [
   { label: t("panel.preset.custom"), value: CUSTOM_PRESET_NAME },
   ...interfaceStore.getPresetList.map((preset) => ({
-    label: resolveInterfaceText(interfaceStore.interface, locale.value, preset.label, preset.name),
+    label: resolveInterfaceText(preset.label, preset.name),
     value: preset.name,
   })),
 ])

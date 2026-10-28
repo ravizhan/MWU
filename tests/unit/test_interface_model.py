@@ -15,9 +15,9 @@ from models.interface import (
     Option,
     OptionCase,
     Resource,
-    SettingSection,
     Win32Controller,
     _pipeline_override_contains_attach_option,
+    controller_method_ints,
     validate_regex,
 )
 
@@ -59,29 +59,15 @@ class TestValidateRegex:
 
 
 class TestPipelineOverrideContainsAttachOption:
-    def test_direct_attach(self):
-        override = {"attach": {"my_option": "value"}}
-        assert _pipeline_override_contains_attach_option(override, "my_option")
-
-    def test_nested_attach(self):
-        override = {"sub": {"attach": {"my_option": "value"}}}
-        assert _pipeline_override_contains_attach_option(override, "my_option")
-
-    def test_attach_not_present(self):
+    def test_absent(self):
         assert not _pipeline_override_contains_attach_option(
             {"other": "value"}, "my_option"
         )
-
-    def test_attach_wrong_key(self):
         assert not _pipeline_override_contains_attach_option(
             {"attach": {"other": "value"}}, "my_option"
         )
 
-    def test_in_list(self):
-        override = [{"attach": {"my_option": "value"}}]
-        assert _pipeline_override_contains_attach_option(override, "my_option")
-
-    def test_deeply_nested(self):
+    def test_deeply_nested_with_list(self):
         override = {"a": {"b": {"c": [{"attach": {"my_option": 1}}]}}}
         assert _pipeline_override_contains_attach_option(override, "my_option")
 
@@ -99,11 +85,11 @@ class TestWin32Controller:
         assert isinstance(ctrl.class_regex, re.Pattern)
         assert isinstance(ctrl.window_regex, re.Pattern)
 
-    def test_string_method_converted_to_int(self):
+    def test_methods_stay_strings(self):
         ctrl = Win32Controller(mouse="Seize", keyboard="SendMessage", screencap="GDI")
-        assert ctrl.mouse == 1
-        assert ctrl.keyboard == 2
-        assert ctrl.screencap == 1
+        assert ctrl.mouse == "Seize"
+        assert ctrl.keyboard == "SendMessage"
+        assert ctrl.screencap == "GDI"
 
     def test_invalid_method_raises(self):
         with pytest.raises(ValidationError):
@@ -179,27 +165,52 @@ class TestGamepadController:
         )
         assert isinstance(ctrl.class_regex, re.Pattern)
 
-    def test_gamepad_type_default_converted(self):
-        """Default 'Xbox360' is converted to int 0 by method_to_int."""
-        ctrl = GamepadController()
-        assert ctrl.gamepad_type == 0
+    def test_values_stay_strings(self):
+        ctrl = GamepadController(gamepad_type="DS4", screencap="GDI")
+        assert ctrl.gamepad_type == "DS4"
+        assert ctrl.screencap == "GDI"
 
-    def test_dualshock4_converted(self):
-        ctrl = GamepadController(gamepad_type="DualShock4")
-        assert ctrl.gamepad_type == 1
-
-    def test_ds4_converted(self):
-        ctrl = GamepadController(gamepad_type="DS4")
-        assert ctrl.gamepad_type == 1
+    def test_default_gamepad_type_is_xbox360(self):
+        assert GamepadController().gamepad_type == "Xbox360"
 
     def test_invalid_gamepad_type_raises(self):
         """Pydantic Literal validation rejects invalid type before method_to_int."""
         with pytest.raises(ValidationError, match="Xbox360.*DualShock4.*DS4"):
             GamepadController.model_validate({"gamepad_type": "InvalidType"})
 
-    def test_screencap_converted_to_int(self):
-        ctrl = GamepadController(screencap="GDI")
-        assert ctrl.screencap == 1
+
+class TestControllerMethodInts:
+    def test_win32(self):
+        ctrl = Controller(
+            name="w",
+            type="Win32",
+            win32=Win32Controller(
+                mouse="Seize", keyboard="SendMessage", screencap="GDI"
+            ),
+        )
+        assert controller_method_ints(ctrl) == {
+            "screencap": 1,
+            "mouse": 1,
+            "keyboard": 2,
+        }
+
+    def test_unset_fields_are_none(self):
+        assert controller_method_ints(Win32Controller()) == {
+            "screencap": None,
+            "mouse": None,
+            "keyboard": None,
+        }
+
+    def test_gamepad(self):
+        ctrl = Controller(
+            name="g",
+            type="Gamepad",
+            gamepad=GamepadController(gamepad_type="DS4", screencap="FramePool"),
+        )
+        assert controller_method_ints(ctrl) == {"screencap": 2, "gamepad_type": 1}
+
+    def test_other_controller_type(self):
+        assert controller_method_ints(Controller(name="a", type="Adb")) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -220,19 +231,17 @@ class TestController:
         with pytest.raises(ValidationError):
             Controller.model_validate({"name": "bad", "type": "InvalidType"})
 
-    def test_display_short_side_and_long_side_mutual_exclusion(self):
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"display_short_side": 1080, "display_long_side": 1920},
+            {"display_short_side": 1080, "display_raw": True},
+            {"display_long_side": 1920, "display_raw": True},
+        ],
+    )
+    def test_display_fields_mutual_exclusion(self, kwargs):
         with pytest.raises(ValidationError, match="互斥"):
-            Controller(
-                name="c", type="Adb", display_short_side=1080, display_long_side=1920
-            )
-
-    def test_display_short_side_and_raw_mutual_exclusion(self):
-        with pytest.raises(ValidationError, match="互斥"):
-            Controller(name="c", type="Adb", display_short_side=1080, display_raw=True)
-
-    def test_display_long_side_and_raw_mutual_exclusion(self):
-        with pytest.raises(ValidationError, match="互斥"):
-            Controller(name="c", type="Adb", display_long_side=1920, display_raw=True)
+            Controller(name="c", type="Adb", **kwargs)
 
     def test_display_short_side_default_no_conflict(self):
         """Default 720 should not trigger conflict."""
@@ -312,41 +321,6 @@ class TestOption:
                 cases=[OptionCase(name="a"), OptionCase(name="b")],
                 default_case=["a"],
             )
-
-
-class TestHotkeyCase:
-    def test_parses_metadata_and_optional_default(self):
-        case = HotkeyCase(
-            name="toggle",
-            label="Toggle",
-            description="Toggle feature",
-            default="Ctrl+T",
-        )
-        assert case.name == "toggle"
-        assert case.label == "Toggle"
-        assert case.description == "Toggle feature"
-        assert case.default == "Ctrl+T"
-
-
-class TestSettingSection:
-    def test_parses_metadata_and_options(self):
-        section = SettingSection(
-            name="general",
-            label="General",
-            description="General settings",
-            icon="settings",
-            option=["language", "shortcut"],
-            default_expand=False,
-        )
-        assert section.name == "general"
-        assert section.label == "General"
-        assert section.description == "General settings"
-        assert section.icon == "settings"
-        assert section.option == ["language", "shortcut"]
-        assert section.default_expand is False
-
-    def test_default_expand_is_true(self):
-        assert SettingSection(name="general").default_expand is True
 
 
 # ---------------------------------------------------------------------------

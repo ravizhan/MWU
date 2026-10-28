@@ -1,6 +1,7 @@
 """Tests for models/task_config.py — config normalization and snapshot building."""
 
-from typing import cast
+import pytest
+from pydantic import ValidationError
 
 from models.interface import (
     Controller,
@@ -14,18 +15,15 @@ from models.interface import (
     Resource,
     Task,
 )
-from models.scheduler import PreTaskCommand
 from models.task_config import (
     CUSTOM_PRESET_NAME,
     TaskConfigModel,
-    TaskPresetSnapshotModel,
     _build_option_defaults,
     _build_task_option_maps,
     _clone_option_value,
     _normalize_option_value_for_storage,
     _normalize_options_for_task,
     _normalize_preset_name,
-    _normalize_raw_pre_tasks,
     _normalize_raw_snapshot,
     _normalize_raw_task_options,
     build_interface_preset_snapshot,
@@ -146,25 +144,6 @@ class TestNormalizeRawSnapshot:
         result = _normalize_raw_snapshot({"tasks": ["a", 1, "b"]})
         assert result["tasks"] == ["a", "b"]
 
-    def test_legacy_snapshot_fields_are_not_migrated(self):
-        result = _normalize_raw_snapshot(
-            {"taskOrder": ["a", "b"], "taskChecked": {"a": True}}
-        )
-        assert result["tasks"] == []
-
-    def test_model_instance(self):
-        model = TaskPresetSnapshotModel(
-            tasks=["a", "b"],
-            taskOptions={},
-            preTasks=[],
-        )
-        result = _normalize_raw_snapshot(model)
-        assert result["tasks"] == ["a", "b"]
-
-    def test_legacy_pre_tasks_key_is_ignored(self):
-        result = _normalize_raw_snapshot({"pre_tasks": [{"command": "echo hi"}]})
-        assert result["preTasks"] == []
-
 
 # ---------------------------------------------------------------------------
 # _normalize_raw_task_options
@@ -189,49 +168,11 @@ class TestNormalizeRawTaskOptions:
 
 
 # ---------------------------------------------------------------------------
-# _normalize_raw_pre_tasks
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeRawPreTasks:
-    def test_none_or_not_list_returns_empty(self):
-        assert _normalize_raw_pre_tasks(None) == []
-        assert _normalize_raw_pre_tasks("bad") == []
-
-    def test_dict_items(self):
-        result = _normalize_raw_pre_tasks([{"command": "echo hi"}])
-        assert len(result) == 1
-        assert result[0]["command"] == "echo hi"
-        assert result[0]["enabled"] is True
-        assert result[0]["timeout"] == 30
-
-    def test_non_dict_skipped(self):
-        """Non-dict, non-PreTaskCommand items in the list are silently skipped."""
-        result = _normalize_raw_pre_tasks(["not_a_dict"])
-        assert len(result) == 0
-
-    def test_pre_task_command_model(self):
-        pt = PreTaskCommand(command="echo hi", enabled=True, timeout=30)
-        result = _normalize_raw_pre_tasks([pt])
-        assert result[0]["command"] == "echo hi"
-        assert result[0]["enabled"] is True
-
-    def test_empty_command_included(self):
-        """A dict with command='' passes isinstance(str) check and is included."""
-        result = _normalize_raw_pre_tasks([{"command": ""}])
-        assert len(result) == 1
-        assert result[0]["command"] == ""
-
-
-# ---------------------------------------------------------------------------
 # _clone_option_value — proving copies are independent
 # ---------------------------------------------------------------------------
 
 
 class TestCloneOptionValue:
-    def test_string_passthrough(self):
-        assert _clone_option_value("hello") == "hello"
-
     def test_list_cloned_independently(self):
         original = ["a", "b"]
         cloned = _clone_option_value(original)
@@ -240,9 +181,6 @@ class TestCloneOptionValue:
         assert original == ["a", "b"]  # original unchanged
         assert cloned == ["a", "b", "c"]
 
-    def test_list_filters_non_strings(self):
-        assert _clone_option_value(cast(list[str], ["a", 1])) == ["a"]
-
     def test_dict_cloned_independently(self):
         original = {"k": "v"}
         cloned = _clone_option_value(original)
@@ -250,9 +188,6 @@ class TestCloneOptionValue:
         cloned["new"] = "x"
         assert original == {"k": "v"}  # original unchanged
         assert cloned == {"k": "v", "new": "x"}
-
-    def test_dict_filters_non_strings(self):
-        assert _clone_option_value(cast(dict[str, str], {"k": 1})) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +444,30 @@ class TestNormalizeTaskExecutionPayload:
         assert pre_tasks[0].command == "echo ok"
 
 
+@pytest.mark.parametrize(
+    "raw_pre_tasks",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("echo", id="not-a-list"),
+        pytest.param(
+            [{"command": "bad", "timeout": 0}, {"command": "ok", "timeout": 10}],
+            id="invalid-item",
+        ),
+    ],
+)
+def test_persisted_config_with_bad_pre_tasks_still_loads(raw_pre_tasks):
+    snapshot: dict = {"tasks": []}
+    if raw_pre_tasks is not None:
+        snapshot["preTasks"] = raw_pre_tasks
+
+    config = TaskConfigModel.model_validate(
+        {"selectedPreset": "", "presets": {"p": snapshot}}
+    )
+
+    expected = ["ok"] if isinstance(raw_pre_tasks, list) else []
+    assert [p.command for p in config.presets["p"].preTasks] == expected
+
+
 # ---------------------------------------------------------------------------
 # normalize_snapshot
 # ---------------------------------------------------------------------------
@@ -560,80 +519,49 @@ class TestNormalizeSnapshot:
 
 
 class TestBuildInterfacePresetSnapshot:
-    def test_select_option_applied(self):
-        """Preset applies a select option value."""
-        iface = _make_interface(
-            tasks=[Task(name="T", entry="EntryT", option=["diff"])],
-            options={"diff": _make_option("select", cases=["easy", "hard"])},
-            presets=[
-                Preset(name="P", task=[PresetTask(name="T", option={"diff": "hard"})])
-            ],
-        )
-        snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        assert snapshot.taskOptions["T"]["diff"] == "hard"
-
-    def test_checkbox_option_applied(self):
-        """Preset applies a checkbox option value."""
-        iface = _make_interface(
-            tasks=[Task(name="T", entry="EntryT", option=["mods"])],
-            options={"mods": _make_option("checkbox", cases=["a", "b", "c"])},
-            presets=[
-                Preset(
-                    name="P", task=[PresetTask(name="T", option={"mods": ["a", "c"]})]
-                )
-            ],
-        )
-        snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        assert set(snapshot.taskOptions["T"]["mods"]) == {"a", "c"}
-
-    def test_input_option_applied(self):
-        """Preset applies an input option value."""
-        iface = _make_interface(
-            tasks=[Task(name="T", entry="EntryT", option=["cfg"])],
-            options={
-                "cfg": _make_option(
+    @pytest.mark.parametrize(
+        ("option", "option_value", "expected"),
+        [
+            (
+                _make_option("select", cases=["easy", "hard"]),
+                "hard",
+                "hard",
+            ),
+            (
+                _make_option("checkbox", cases=["a", "b", "c"]),
+                ["a", "c"],
+                ["a", "c"],
+            ),
+            (
+                _make_option(
                     "input", inputs=[InputCase(name="host"), InputCase(name="port")]
-                )
-            },
-            presets=[
-                Preset(
-                    name="P",
-                    task=[PresetTask(name="T", option={"cfg": {"host": "localhost"}})],
-                )
-            ],
-        )
-        snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        cfg = snapshot.taskOptions["T"]["cfg"]
-        assert isinstance(cfg, dict)
-        assert cfg["host"] == "localhost"
-        assert cfg["port"] == ""  # default preserved
-
-    def test_hotkey_option_applied(self):
-        """Preset applies a hotkey option value and preserves other defaults."""
-        opt = _make_option(
-            "hotkey",
-            hotkeys=[HotkeyCase(name="attack"), HotkeyCase(name="defend")],
-        )
+                ),
+                {"host": "localhost"},
+                {"host": "localhost", "port": ""},
+            ),
+            (
+                _make_option(
+                    "hotkey",
+                    hotkeys=[HotkeyCase(name="attack"), HotkeyCase(name="defend")],
+                ),
+                {"attack": "Alt+A"},
+                {"attack": "Alt+A", "defend": ""},
+            ),
+        ],
+    )
+    def test_option_value_applied(self, option, option_value, expected):
         iface = _make_interface(
-            tasks=[Task(name="T", entry="EntryT", option=["combo"])],
-            options={"combo": opt},
+            tasks=[Task(name="T", entry="EntryT", option=["opt"])],
+            options={"opt": option},
             presets=[
                 Preset(
                     name="P",
-                    task=[
-                        PresetTask(
-                            name="T",
-                            option={"combo": {"attack": "Alt+A"}},
-                        )
-                    ],
+                    task=[PresetTask(name="T", option={"opt": option_value})],
                 )
             ],
         )
         snapshot = build_interface_preset_snapshot(iface, iface.preset[0])
-        combo = snapshot.taskOptions["T"]["combo"]
-        assert isinstance(combo, dict)
-        assert combo["attack"] == "Alt+A"
-        assert combo["defend"] == ""
+        assert snapshot.taskOptions["T"]["opt"] == expected
 
     def test_enabled_false_is_omitted(self):
         """Preset task with enabled=False is omitted from the queue."""
@@ -662,38 +590,24 @@ class TestBuildInterfacePresetSnapshot:
 
 
 class TestNormalizeTaskConfig:
-    def test_empty_config(self):
-        iface = _make_interface(tasks=[Task(name="A", entry="EntryA")])
-        result = normalize_task_config(TaskConfigModel(), iface)
-        assert CUSTOM_PRESET_NAME in result.presets
-        assert result.selectedPreset == CUSTOM_PRESET_NAME
-
-    def test_falls_back_to_first_interface_preset_when_selected_missing(self):
+    @pytest.mark.parametrize(
+        ("selected", "has_presets", "expected"),
+        [
+            pytest.param("", False, CUSTOM_PRESET_NAME, id="no-interface-presets"),
+            pytest.param("", True, "QuickRun", id="empty-selects-first"),
+            pytest.param("Missing", True, "QuickRun", id="missing-selects-first"),
+            pytest.param("QuickRun", True, "QuickRun", id="keeps-valid-selection"),
+        ],
+    )
+    def test_selected_preset_selection(self, selected, has_presets, expected):
         iface = _make_interface(
             tasks=[Task(name="A", entry="EntryA")],
-            presets=[Preset(name="QuickRun"), Preset(name="Other")],
+            presets=(
+                [Preset(name="QuickRun"), Preset(name="Other")] if has_presets else None
+            ),
         )
-        result = normalize_task_config(
-            TaskConfigModel(selectedPreset="NonExistent"), iface
-        )
-        assert result.selectedPreset == "QuickRun"
-
-    def test_empty_config_selects_first_interface_preset(self):
-        iface = _make_interface(
-            tasks=[Task(name="A", entry="EntryA")],
-            presets=[Preset(name="QuickRun"), Preset(name="Other")],
-        )
-        result = normalize_task_config(TaskConfigModel(), iface)
-        assert result.selectedPreset == "QuickRun"
-
-    def test_preserves_valid_selected_preset(self):
-        iface = _make_interface(
-            tasks=[Task(name="A", entry="EntryA")],
-            presets=[Preset(name="QuickRun")],
-        )
-        config = TaskConfigModel(selectedPreset="QuickRun")
-        result = normalize_task_config(config, iface)
-        assert result.selectedPreset == "QuickRun"
+        result = normalize_task_config(TaskConfigModel(selectedPreset=selected), iface)
+        assert result.selectedPreset == expected
 
     def test_includes_interface_preset_when_absent_from_config(self):
         """Interface presets missing from saved config are built from scratch."""

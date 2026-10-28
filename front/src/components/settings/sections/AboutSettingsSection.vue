@@ -25,7 +25,7 @@ import { NButton, NIcon } from "naive-ui"
 import type { DataTableColumns } from "naive-ui"
 import { BugOutline, LogoGithub } from "@vicons/ionicons5"
 import { showGlobalMessage } from "@/services/feedback/message"
-import { useSettingsStore } from "@/stores"
+import { useInterfaceStore, useSettingsStore } from "@/stores"
 
 interface AboutRow {
   label: string
@@ -34,51 +34,62 @@ interface AboutRow {
   icon?: Component
 }
 
+const DEFAULT_GITHUB = "https://github.com/ravizhan/MWU"
+
+/** interface.json 的 `github` 是仓库 URL；作者取 `owner/repo` 的 owner。 */
+function githubOwner(github: string): string {
+  const segments = github.replace(/\/+$/, "").split("/")
+  return segments.length >= 2 ? segments[segments.length - 2] : ""
+}
+
 const { t } = useI18n()
+const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
-const settings = computed(() => settingsStore.settings)
 
 const rows = computed<AboutRow[]>(() => {
-  const about = settings.value.about
+  const model = interfaceStore.interface
+  const github = (model.github || DEFAULT_GITHUB).replace(/\/+$/, "")
+  const author = githubOwner(github)
+
   const result: AboutRow[] = [
     {
       label: t("settings.about.version"),
-      value: about.version || t("common.unknown"),
+      value: model.version || t("common.unknown"),
     },
     {
       label: t("settings.about.author"),
-      value: about.author || t("common.unknown"),
-      href: about.author ? `https://github.com/${about.author}` : undefined,
+      value: author || t("common.unknown"),
+      href: author ? `https://github.com/${author}` : undefined,
       icon: LogoGithub,
     },
     {
       label: t("settings.about.license"),
-      value: about.license || "MIT",
+      value: model.license || "MIT",
     },
     {
       label: t("settings.about.homepage"),
-      value: about.github || "https://github.com/ravizhan/MWU",
-      href: about.github || "https://github.com/ravizhan/MWU",
+      value: github,
+      href: github,
       icon: LogoGithub,
     },
     {
       label: t("settings.about.issue"),
       value: t("settings.about.githubIssues"),
-      href: about.issueUrl || "https://github.com/ravizhan/MWU/issues",
+      href: `${github}/issues`,
       icon: BugOutline,
     },
   ]
 
-  if (about.contact) {
+  if (model.contact) {
     result.push({
       label: t("settings.about.contact"),
-      value: about.contact,
+      value: model.contact,
     })
   }
 
   result.push({
     label: t("settings.about.description"),
-    value: about.description || t("settings.about.defaultDescription"),
+    value: model.description || t("settings.about.defaultDescription"),
   })
 
   return result

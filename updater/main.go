@@ -84,12 +84,10 @@ func main() {
 	}
 
 	log.Println("通知主程序退出...")
-	if cfg.WebhookURL != "" {
-		if err := notifyShutdown(cfg.WebhookURL); err != nil {
-			log.Printf("警告：通知关闭失败：%v。", err)
-		} else {
-			time.Sleep(2 * time.Second)
-		}
+	if err := notifyShutdown(cfg.WebhookURL); err != nil {
+		log.Printf("警告：通知关闭失败：%v。", err)
+	} else {
+		time.Sleep(2 * time.Second)
 	}
 
 	log.Println("等待文件锁释放...")
@@ -114,11 +112,9 @@ func main() {
 	os.RemoveAll(extractDir)
 	os.Remove(cfg.Archive)
 
-	if cfg.RestartCmd != "" {
-		log.Printf("重启主程序：%s", cfg.RestartCmd)
-		if err := restartMain(cfg.RestartCmd); err != nil {
-			log.Printf("Failed to restart main program: %v", err)
-		}
+	log.Printf("重启主程序：%s", cfg.RestartCmd)
+	if err := restartMain(cfg.RestartCmd); err != nil {
+		log.Printf("Failed to restart main program: %v", err)
 	}
 
 	log.Println("更新完成。")
@@ -465,36 +461,14 @@ func writeChanges(path string, changes ChangeLog) {
 }
 
 func safeJoin(baseDir, name string) (string, error) {
-	// 清理路径，移除多余的斜杠和点
-	cleanName := filepath.Clean(name)
+	joined := filepath.Join(baseDir, name)
 
-	// 转换为统一的路径分隔符进行验证
-	cleanNameSlash := filepath.ToSlash(cleanName)
-
-	// 检查路径是否以 ".." 开头，防止路径遍历
-	if strings.HasPrefix(cleanNameSlash, "..") {
-		return "", errors.New("非法路径：路径遍历攻击")
-	}
-
-	// 检查是否包含 "../"
-	if strings.Contains(cleanNameSlash, "../") {
-		return "", errors.New("非法路径：包含路径遍历")
-	}
-
-	// 构建最终路径
-	joined := filepath.Join(baseDir, cleanName)
-
-	// 使用 filepath.Rel 进行二次验证，确保结果在 baseDir 内
+	// 相对路径以 ".." 开头（含单独的 ".."）即说明越出了 baseDir
 	rel, err := filepath.Rel(baseDir, joined)
 	if err != nil {
 		return "", fmt.Errorf("路径解析失败: %w", err)
 	}
-
-	// 规范化相对路径，统一使用正斜杠进行比较
-	relSlash := filepath.ToSlash(rel)
-
-	// 如果相对路径以 ".." 开头，说明路径在 baseDir 之外
-	if strings.HasPrefix(relSlash, "..") {
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("非法路径：路径超出目标目录")
 	}
 
