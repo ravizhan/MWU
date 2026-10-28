@@ -18,19 +18,19 @@ jobs:
         working-directory: ./front
     steps:
       - name: Check-out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 11
+          version: 12
           run_install: false
           package_json_file: 'front/package.json'
 
-      - name: Use Node.js 24
-        uses: actions/setup-node@v6
+      - name: Use Node.js 26
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: "pnpm"
           cache-dependency-path: 'front/pnpm-lock.yaml'
 
@@ -45,7 +45,7 @@ jobs:
         run: echo "cache-key=frontpage-dist-${{ hashFiles('page/**') }}" >> "$GITHUB_OUTPUT"
 
       - name: Cache
-        uses: actions/cache@v5.0.3
+        uses: actions/cache@v6.1.0
         with:
           path: page
           key: ${{ steps.Store-Cache-Key.outputs.cache-key }}
@@ -88,14 +88,14 @@ jobs:
 
     steps:
       - name: Check-out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: 'Workaround for missing zstd in windows-11-arm'
         if: matrix.os == 'windows-11-arm'
         run: choco install zstandard
 
       - name: Restore cached frontend artifacts
-        uses: actions/cache@v5.0.3
+        uses: actions/cache@v6.1.0
         with:
           path: page
           key: ${{ needs.vite-build.outputs.cache-key }}
@@ -109,17 +109,17 @@ jobs:
           sudo apt-get install -y ccache
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.5.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
 
       - name: Setup Python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version-file: ".python-version"
 
       - name: Setup Go
-        uses: actions/setup-go@v6.3.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: 'updater/go.mod'
           cache-dependency-path: "updater/go.sum"
@@ -134,7 +134,7 @@ jobs:
           echo "PYTHON_VERSION=$(python --version | awk '{print $2}' | cut -d '.' -f 1,2)" >> $GITHUB_ENV
 
       - name: Cache Nuitka cache directory
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: nuitka-${{ runner.os }}-${{ runner.arch }}-python-${{ env.PYTHON_VERSION }}-nuitka-${{ github.sha }}
@@ -199,7 +199,7 @@ jobs:
         run: 7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -mf=BCJ2 -r MWU-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.ref_name }}.7z "./build/main.dist/*"
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: MWU-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.ref_name }}
           path: MWU-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.ref_name }}.7z
@@ -212,22 +212,22 @@ jobs:
     needs: build
     steps:
       - name: Check-out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
         with:
           path: artifacts
           pattern: MWU-*-*-${{ github.ref_name }}
           merge-multiple: true
 
       - name: Setup Python
-        uses: actions/setup-python@v6.2.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version-file: ".python-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.5.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
 
@@ -238,7 +238,7 @@ jobs:
         run: uv run python .github/scripts/generate_release_notes.py
 
       - name: Create Release
-        uses: ncipollo/release-action@v1.20.0
+        uses: ncipollo/release-action@v1.21.0
         with:
           draft: true
           allowUpdates: true
