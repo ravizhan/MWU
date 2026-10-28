@@ -194,6 +194,11 @@ async def log_monitor():
     while not app_state.is_shutting_down:
         while not app_state.message_conn.empty():
             message = app_state.message_conn.get_nowait()
+            if message.event == "focus.modal":
+                # modal 快照是状态而非日志，不进历史；重连时由 stream_logs 补发当前快照。
+                if app_state.broadcaster:
+                    await app_state.broadcaster.broadcast(message)
+                continue
             app_state.history_message.append(message)
             if app_state.broadcaster:
                 await app_state.broadcaster.broadcast(message)
@@ -844,6 +849,14 @@ async def stop():
     return {"status": "failed", "message": "任务未开始"}
 
 
+@app.post("/api/focus/{focus_id}/confirm")
+def confirm_focus(focus_id: str):
+    if app_state.worker is None:
+        return {"status": "failed", "message": "Worker未初始化"}
+    app_state.worker.focus.confirm(focus_id)
+    return {"status": "success"}
+
+
 @app.post("/api/internal/scheduler/native-dispatch")
 async def native_dispatch(payload: NativeDispatchRequest):
     """冷启动委托入口：由系统级唤醒触发的二次进程将任务移交给本实例"""
@@ -890,6 +903,10 @@ async def stream_logs(request: Request):
         return StreamingResponse(empty_generator(), media_type="text/event-stream")
 
     q = app_state.broadcaster.add_client(app_state.history_message)
+    if app_state.worker is not None:
+        # 建连即发送当前 pending 快照（空数组表示无 modal），
+        # 清除断线期间已在其他标签页确认的旧弹窗。
+        q.put_nowait(app_state.worker.focus.snapshot())
 
     async def event_generator():
         try:

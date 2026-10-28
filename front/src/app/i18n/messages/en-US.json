@@ -314,5 +314,13 @@
       "warnContent": "Pre-tasks run arbitrary shell commands before each run. Misconfiguration may cause failures or security risks. Only continue if you understand what this does.",
       "dontRemind": "Don't remind me again"
     }
+  },
+  "focus": {
+    "dialogTitle": "Task message",
+    "modalTitle": "Task waiting for confirmation",
+    "close": "Close",
+    "confirmAndContinue": "Confirm and continue",
+    "stopTask": "Stop task",
+    "confirmFailed": "Confirmation request failed. Try again."
   }
 }

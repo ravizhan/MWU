@@ -8,6 +8,7 @@
     <NMessageProvider placement="top">
       <NDialogProvider>
         <FeedbackBridge />
+        <FocusDialogHost />
         <NEl
           tag="div"
           class="min-h-screen transition-colors duration-300 overflow-x-hidden"
@@ -63,6 +64,7 @@ import AppNavbar from "@/app/AppNavbar.vue"
 import UpdateDialog from "@/components/settings/dialogs/UpdateDialog.vue"
 import { checkUpdateApi, type UpdateInfo } from "@/services/api"
 import FeedbackBridge from "@/services/feedback/FeedbackBridge.vue"
+import FocusDialogHost from "@/services/feedback/FocusDialogHost.vue"
 import { useNaiveTheme } from "@/app/theme"
 import { useInterfaceStore, useSettingsStore, useTaskConfigStore } from "@/stores"
 import { tryCatch } from "@/utils/tryCatch"

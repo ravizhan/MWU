@@ -6,16 +6,10 @@ FocusDisplayEvent，再由 FocusEventProcessor 按 display 通道
 分发到 SSE / 系统通知。
 """
 
-from typing import TYPE_CHECKING
-
 from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.focus_protocol import UnifiedFocusResolver
-
-if TYPE_CHECKING:
-    from maa_worker.event_service import EventService
-
 
 # ---------------------------------------------------------------------------
 # Sink 实例类 — 继承 EventSink，转发到共享 handler
@@ -57,9 +51,9 @@ class MWUContextSink(_SinkBase):
 class SinkHandler:
     """将 MAA 底层回调通过 UnifiedFocusResolver → FocusEventProcessor 统一处理。"""
 
-    def __init__(self, events: "EventService"):
+    def __init__(self, focus: FocusEventProcessor):
         self._resolver = UnifiedFocusResolver()
-        self._processor = FocusEventProcessor(events)
+        self._processor = focus
 
     def on_event(self, msg: str, details: dict) -> None:
         """统一的 sink 事件入口。
@@ -69,6 +63,8 @@ class SinkHandler:
         2. FocusEventProcessor 按 display_channels 分发到 SSE / 系统通知
         """
         event = self._resolver.resolve(msg, details)
+        if event is None:
+            return
         self._processor.dispatch(event)
 
 

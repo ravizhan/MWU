@@ -1,5 +1,6 @@
 export * from "@/services/api/core/types"
 export * from "@/services/api/modules/task"
+export * from "@/services/api/modules/focus"
 export * from "@/services/api/modules/device"
 export * from "@/services/api/modules/interface"
 export * from "@/services/api/modules/resource"

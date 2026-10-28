@@ -11,6 +11,7 @@ from models.device_address import (
 RealtimeEventName = Literal[
     "log",
     "focus.display",
+    "focus.modal",
     "task.started",
     "task.completed",
     "task.failed",
@@ -77,6 +78,12 @@ class CustomDeviceCreate(BaseModel):
         return self
 
 
+class FocusModal(BaseModel):
+    id: str
+    message: str
+    level: RealtimeEventLevel
+
+
 class RealtimeEvent(BaseModel):
     event: RealtimeEventName
     level: RealtimeEventLevel = "info"
@@ -86,3 +93,4 @@ class RealtimeEvent(BaseModel):
     title: str | None = None
     details: dict[str, Any] | None = None
     display: bool = True
+    focus_modals: list[FocusModal] | None = None

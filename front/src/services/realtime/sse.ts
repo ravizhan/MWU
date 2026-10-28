@@ -1,4 +1,9 @@
-import type { RealtimeEvent, RealtimeEventLevel, RealtimeEventName } from "@/types/realtimeModel"
+import type {
+  FocusModal,
+  RealtimeEvent,
+  RealtimeEventLevel,
+  RealtimeEventName,
+} from "@/types/realtimeModel"
 import { tryCatch } from "@/utils/tryCatch"
 
 const VALID_EVENT_LEVELS: ReadonlySet<string> = new Set(["info", "success", "error"])
@@ -13,6 +18,11 @@ function isRealtimeEventName(value: unknown): value is RealtimeEventName {
 
 function isValidEventLevel(level: unknown): level is RealtimeEventLevel {
   return typeof level === "string" && VALID_EVENT_LEVELS.has(level)
+}
+
+function extractFocusModals(data: Record<string, unknown>): FocusModal[] | null {
+  const value = data.focus_modals
+  return Array.isArray(value) ? value : null
 }
 
 function extractString(data: unknown, key: string): string | undefined {
@@ -133,13 +143,15 @@ export class SSEClient {
       return null
     }
 
+    const event = extractEventType(data)
     const message = extractString(data, "message")
-    if (!message) {
+    // modal 快照的 message 恒为空串，靠 focus_modals 承载状态
+    if (message === undefined || (!message && event !== "focus.modal")) {
       return null
     }
 
     return {
-      event: extractEventType(data),
+      event,
       level: extractLevel(data),
       message,
       time: extractString(data, "time") ?? "",
@@ -147,6 +159,7 @@ export class SSEClient {
       title: extractString(data, "title") ?? null,
       details: extractDetails(data),
       display: "display" in data ? Boolean(data.display) : true,
+      focus_modals: extractFocusModals(data),
     }
   }
 

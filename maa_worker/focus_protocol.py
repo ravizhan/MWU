@@ -1,8 +1,8 @@
 """
-Focus 协议实现 — 严格遵循 PI V2 v2.3.0 官方规范。
+Focus 协议实现 — 严格遵循 PI V2 官方规范。
 
 将 MAA 底层 sink 回调统一解析为 FocusDisplayEvent，
-按 `display` 字段指定的渠道（log / toast / notification）分发。
+按 `display` 字段指定的渠道（log / toast / notification / dialog / modal）分发。
 """
 
 from dataclasses import dataclass, field
@@ -10,15 +10,14 @@ from dataclasses import dataclass, field
 from models.api import RealtimeEventLevel
 
 # ---------------------------------------------------------------------------
-# Supported display channels (PI V2 v2.3.0)
+# Supported display channels (PI V2)
 # ---------------------------------------------------------------------------
 
 DISPLAY_LOG = "log"
 DISPLAY_TOAST = "toast"
 DISPLAY_NOTIFICATION = "notification"
-# "dialog" / "modal" reserved for future PR
-
-_VALID_DISPLAYS = frozenset({DISPLAY_LOG, DISPLAY_TOAST, DISPLAY_NOTIFICATION})
+DISPLAY_DIALOG = "dialog"
+DISPLAY_MODAL = "modal"
 
 # ---------------------------------------------------------------------------
 # FocusTemplate — 表示 interface.json 中一条 focus 模板
@@ -27,13 +26,13 @@ _VALID_DISPLAYS = frozenset({DISPLAY_LOG, DISPLAY_TOAST, DISPLAY_NOTIFICATION})
 
 @dataclass
 class FocusTemplate:
-    """Focus 模板（仅 v2.3.0 对象格式）。
+    """Focus 模板（对象格式或字符串简写）。
 
     简写纯字符串在 from_raw() 中自动升级：
         "text" → FocusTemplate(content="text", display=["log"])
     """
 
-    content: str
+    content: str | None
     display: list[str] = field(default_factory=lambda: [DISPLAY_LOG])
 
     # ---- 工厂方法 ------------------------------------------------------------
@@ -42,37 +41,21 @@ class FocusTemplate:
     def from_raw(raw: object) -> "FocusTemplate":
         """从 interface.json 的 focus 值构造模板。
 
-        支持：
         - str : 简写，等价 display=["log"]
         - dict: 完整对象 { "content": "...", "display": [...] }
+        - 其它或 content 非字符串: content=None，不展示
         """
         if isinstance(raw, str):
             return FocusTemplate(content=raw, display=[DISPLAY_LOG])
+        if not isinstance(raw, dict):
+            return FocusTemplate(content=None, display=[])
 
-        if isinstance(raw, dict):
-            content = raw.get("content", "")
-            if not isinstance(content, str):
-                content = str(content)
-
-            raw_display = raw.get("display", DISPLAY_LOG)
-            if isinstance(raw_display, str):
-                display = (
-                    [raw_display] if raw_display in _VALID_DISPLAYS else [DISPLAY_LOG]
-                )
-            elif isinstance(raw_display, (list, tuple)):
-                display = [
-                    d
-                    for d in raw_display
-                    if isinstance(d, str) and d in _VALID_DISPLAYS
-                ]
-                if not display:
-                    display = [DISPLAY_LOG]
-            else:
-                display = [DISPLAY_LOG]
-            return FocusTemplate(content=content, display=display)
-
-        # 兜底：无法识别的类型
-        return FocusTemplate(content=str(raw), display=[DISPLAY_LOG])
+        content = raw.get("content")
+        display = raw.get("display", DISPLAY_LOG)
+        return FocusTemplate(
+            content=content if isinstance(content, str) else None,
+            display=display if isinstance(display, list) else [display],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +166,14 @@ class FocusDisplayEvent:
     def has_notification(self) -> bool:
         return DISPLAY_NOTIFICATION in self.display_channels
 
+    @property
+    def has_dialog(self) -> bool:
+        return DISPLAY_DIALOG in self.display_channels
+
+    @property
+    def has_modal(self) -> bool:
+        return DISPLAY_MODAL in self.display_channels
+
 
 # ---------------------------------------------------------------------------
 # UnifiedFocusResolver — 统一解析入口
@@ -192,60 +183,46 @@ class FocusDisplayEvent:
 class UnifiedFocusResolver:
     """将 MAA 原始 (msg, details) 统一解析为 FocusDisplayEvent。
 
-    严格遵循 PI V2 v2.3.0 Client 处理流程：
+    严格遵循 PI V2 Client 处理流程：
     1. 从 details.focus[msg] 查找模板
     2. 简写字符串自动升级为 {content, display:["log"]}
     3. 无匹配时使用 AutoFocusGenerator
-    4. 占位符替换 {name}/{task_id}/{entry}/...
+    4. 占位符替换 {name}/{task_id}/{entry}/{list}
     5. 推导 level
-    6. 返回 FocusDisplayEvent
+    6. 返回 FocusDisplayEvent；模板内容为空时不产生展示事件
     """
 
     @staticmethod
-    def resolve(msg: str, details: dict) -> FocusDisplayEvent:
+    def resolve(msg: str, details: dict) -> FocusDisplayEvent | None:
         template = UnifiedFocusResolver._find_template(msg, details)
-        content = UnifiedFocusResolver._substitute(template.content, details)
-        level = UnifiedFocusResolver._derive_level(msg)
-        channels = _sanitize_display(template.display)
+        if template is None:
+            template = FocusTemplate(
+                content=AutoFocusGenerator.generate(msg, details),
+                display=[DISPLAY_LOG],
+            )
+        content = template.content
+        if content is None:
+            return None
+        content = UnifiedFocusResolver._substitute(content, details)
+        if not content.strip():
+            return None
 
         return FocusDisplayEvent(
             content=content,
-            display_channels=channels,
-            level=level,
+            display_channels=template.display,
+            level=UnifiedFocusResolver._derive_level(msg),
             raw_msg=msg,
         )
 
     # ---- 内部方法 ------------------------------------------------------------
 
     @staticmethod
-    def _find_template(msg: str, details: dict) -> FocusTemplate:
-        """从 details.focus 中查找匹配的模板。"""
+    def _find_template(msg: str, details: dict) -> FocusTemplate | None:
+        """从 details.focus 中查找匹配的模板；无条目返回 None。"""
         focus = details.get("focus")
-        if isinstance(focus, dict):
-            # 1) 精确匹配 msg（如 "Node.Action.Starting"）
-            raw = focus.get(msg)
-            if raw is not None:
-                return FocusTemplate.from_raw(raw)
-
-            # 2) 尝试用 name 作为 fallback key
-            name = details.get("name", "")
-            if name and name in focus:
-                raw = focus.get(name)
-                if raw is not None:
-                    return FocusTemplate.from_raw(raw)
-
-            # 3) 尝试用状态后缀作为 fallback key
-            suffix = msg.rsplit(".", 1)[-1] if "." in msg else ""
-            if suffix and suffix in focus:
-                raw = focus.get(suffix)
-                if raw is not None:
-                    return FocusTemplate.from_raw(raw)
-
-        # 无 focus 定义 → 自动生成默认模板
-        return FocusTemplate(
-            content=AutoFocusGenerator.generate(msg, details),
-            display=[DISPLAY_LOG],
-        )
+        if not isinstance(focus, dict) or msg not in focus:
+            return None
+        return FocusTemplate.from_raw(focus[msg])
 
     @staticmethod
     def _substitute(content: str, details: dict) -> str:
@@ -266,9 +243,3 @@ class UnifiedFocusResolver:
         if msg.endswith(".Failed"):
             return "error"
         return "info"
-
-
-def _sanitize_display(raw: list[str]) -> list[str]:
-    """过滤只保留支持的 display 通道，确保至少有一个。"""
-    valid = [d for d in raw if d in _VALID_DISPLAYS]
-    return valid if valid else [DISPLAY_LOG]

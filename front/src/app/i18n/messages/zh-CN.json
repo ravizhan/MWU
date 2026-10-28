@@ -314,5 +314,13 @@
       "warnContent": "前置任务会在每次运行前执行任意 Shell 命令，配置不当可能导致运行失败或安全风险。请确认了解其作用后再使用。",
       "dontRemind": "不再提示"
     }
+  },
+  "focus": {
+    "dialogTitle": "任务消息",
+    "modalTitle": "任务等待确认",
+    "close": "关闭",
+    "confirmAndContinue": "确认并继续",
+    "stopTask": "停止任务",
+    "confirmFailed": "确认请求失败，请重试"
   }
 }

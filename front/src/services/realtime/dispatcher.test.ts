@@ -4,6 +4,7 @@ import type { RealtimeEvent } from "@/types/realtimeModel"
 import { dispatchRealtimeEvent, type RealtimeStoreRefs } from "@/services/realtime/dispatcher"
 import { useIndexStore } from "@/stores/panel/session"
 import { useSettingsStore } from "@/stores/settings/settings"
+import { useFocusStore } from "@/stores/focus/focus"
 
 vi.mock("@/services/feedback/message", () => ({
   showGlobalMessage: vi.fn<() => void>(),
@@ -28,11 +29,12 @@ const baseEvent: RealtimeEvent = {
   display: true,
 }
 
-function makeStores(): RealtimeStoreRefs {
+function makeStores() {
   return {
     indexStore: useIndexStore(),
     settingsStore: useSettingsStore(),
-  }
+    focusStore: useFocusStore(),
+  } satisfies RealtimeStoreRefs
 }
 
 describe("dispatchRealtimeEvent", () => {
@@ -135,7 +137,42 @@ describe("dispatchRealtimeEvent", () => {
     })
   })
 
-  describe("non-task events fall through to common handler", () => {
+  describe("focus presentation", () => {
+    it("replaces modal state without logging, notifying, or changing task state", () => {
+      const stores = makeStores()
+      stores.indexStore.setTaskRunning(true)
+      const modal = { id: "gate", message: "Confirm", level: baseEvent.level }
+      dispatchRealtimeEvent(
+        { ...baseEvent, event: "focus.modal", message: "", display: false, focus_modals: [modal] },
+        stores,
+      )
+      expect(stores.focusStore.active).toEqual({ kind: "modal", ...modal })
+      expect(stores.indexStore.RunningLog).toBe("")
+      expect(stores.indexStore.TaskRunning).toBe(true)
+      expect(showToastMessage).not.toHaveBeenCalled()
+      expect(showBrowserRealtimeNotification).not.toHaveBeenCalled()
+      dispatchRealtimeEvent(
+        { ...baseEvent, event: "focus.modal", message: "", display: false, focus_modals: [] },
+        stores,
+      )
+      expect(stores.focusStore.active).toBeNull()
+      expect(stores.indexStore.TaskRunning).toBe(true)
+    })
+
+    it.each([true, false])("queues dialog independently of log display=%s and toast", (display) => {
+      const stores = makeStores()
+      dispatchRealtimeEvent(
+        { ...baseEvent, event: "focus.display", display, notify: ["dialog", "toast"] },
+        stores,
+      )
+      expect(stores.focusStore.active).toMatchObject({ kind: "dialog", message: "hello" })
+      expect(stores.indexStore.RunningLog).toBe(display ? `${baseEvent.time} hello\n` : "")
+      expect(showToastMessage).toHaveBeenCalledTimes(1)
+      expect(stores.indexStore.TaskRunning).toBe(false)
+    })
+  })
+
+  describe("non-task event behavior", () => {
     it.each(["log", "focus.display", "notification.test"] as const)(
       "event '%s' does not change TaskRunning",
       (eventName) => {

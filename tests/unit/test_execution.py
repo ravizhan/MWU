@@ -48,13 +48,36 @@ def make_payload(task_name: str = "Startup") -> ManualStartPayload:
     )
 
 
-def make_task(task_id: str = "task-1", name: str = "定时任务") -> ScheduledTask:
+def make_task(
+    task_id: str = "task-1",
+    name: str = "定时任务",
+    *,
+    with_payload: bool = False,
+) -> ScheduledTask:
+    """构造调度任务记录。
+
+    with_payload=True 时补齐可执行载荷（任务名/控制器/设备/资源），与 make_payload
+    对齐：缺少 device 或 resource_name 的调度任务会被 submit_scheduled 判为
+    「设备或资源配置缺失」并立刻收尾，无法占据执行槽位。
+    """
     return ScheduledTask(
         id=task_id,
         name=name,
         wakeup_enabled=True,
         enabled=True,
         trigger_config=CronTriggerConfig(cron="0 9 * * *"),
+        task_list=["Startup"] if with_payload else [],
+        controller_name="AdbController" if with_payload else None,
+        device=(
+            ScheduledTaskDeviceConfig(
+                controller_name="AdbController",
+                device_type="Adb",
+                device_address="127.0.0.1:5555",
+            )
+            if with_payload
+            else None
+        ),
+        resource_name="main" if with_payload else None,
     )
 
 
@@ -544,7 +567,9 @@ class TestSubmitScheduled:
         state.worker = worker
 
         first = await submit_scheduled(
-            state, make_task("task-a", name="定时任务"), origin="in_app"
+            state,
+            make_task("task-a", name="定时任务", with_payload=True),
+            origin="in_app",
         )
         assert first.accepted is True
 
@@ -641,6 +666,24 @@ class TestPretaskAdmission:
         assert row.id == admission.run_id
         assert row.status == "failed"
         assert row.error_message == "任务列表为空"
+
+    async def test_previous_stop_does_not_block_next_run(self, state: AppState):
+        # 上一次运行被停止后 stop_flag 遗留为 True；新运行占槽时必须复位，
+        # 否则前置任务和 TaskService.start() 会把它当作本次的停止请求。
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        worker.task_state.stop_flag = True
+        state.worker = worker
+
+        admission = await submit_manual(state, make_payload())
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.pretasks.stop_flags == [False]
+        assert worker.tasks.called is True
+        assert list_executions(state.scheduler_db_path)[0].status == "success"
 
     async def test_pretask_receives_normalized_options_and_pre_tasks(
         self, state: AppState
@@ -824,3 +867,40 @@ class TestStopAndCancel:
         row = list_executions(state.scheduler_db_path)[0]
         assert row.id == admission.run_id
         assert row.status == "stopped"
+
+    async def test_cancel_during_pretask_holds_slot_until_thread_exits(
+        self, state: AppState
+    ):
+        # 停止发生在前置线程两条命令之间（尚无子进程可终止）：槽位必须保持到线程退出，
+        # 否则新运行复位共享 stop_flag 后，旧线程会继续执行下一条前置命令。
+        worker = _FakeWorker(start_result=True)
+        entered = threading.Event()
+        release = threading.Event()
+        observed_stop_flag: list[bool] = []
+
+        def blocking_run_all(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=5)
+            observed_stop_flag.append(worker.task_state.stop_flag)
+
+        worker.pretasks.run_all = blocking_run_all
+        state.worker = worker
+
+        await submit_manual(state, make_payload())
+        assert await asyncio.to_thread(entered.wait, 5)
+
+        task = state.active_execution_task
+        assert task is not None
+        task.cancel()
+        await asyncio.sleep(0.1)
+
+        assert not task.done()
+        assert state.active_run is not None
+        assert (await submit_manual(state, make_payload())).accepted is False
+
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert observed_stop_flag == [True]
+        assert state.active_run is None
+        assert worker.tasks.called is False
