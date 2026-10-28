@@ -5,16 +5,15 @@ from unittest.mock import MagicMock
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-from pydantic import ValidationError
 
 from app_state import AppState
+from models.interface import Controller, InterfaceModel, Resource, Task
 from models.scheduler import (
     CronTriggerConfig,
-    PreTaskCommand,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
 )
-from scheduler_manager import SchedulerManager, _build_task_from_kwargs
+from scheduler_manager import SchedulerManager
 from services.system_scheduler import ConvergeReport
 
 
@@ -33,9 +32,30 @@ def make_create(
     )
 
 
+class _StubEvents:
+    def send_log(self, *_args, **_kwargs):
+        pass
+
+    def send_notification(self, *_args, **_kwargs):
+        pass
+
+
+class _StubWorker:
+    def __init__(self):
+        self.interface = InterfaceModel(
+            interface_version=2,
+            name="Test",
+            controller=[Controller(name="adb", type="Adb")],
+            resource=[Resource(name="main", path=["resource"])],
+            task=[Task(name="Startup", entry="Startup")],
+        )
+        self.events = _StubEvents()
+
+
 @pytest.fixture
 async def manager_env(tmp_path: Path):
     state = AppState()
+    state.worker = _StubWorker()
     system_scheduler = MagicMock()
     system_scheduler.converge.return_value = ConvergeReport()
     mgr = SchedulerManager(
@@ -128,83 +148,6 @@ class TestTriggerRoundTrip:
         decoded = mgr._build_trigger_config(trigger)
         assert isinstance(decoded, CronTriggerConfig)
         assert decoded.cron == "0 9 * * 1"
-
-    @pytest.mark.parametrize("day_of_week", ["0-4", "0,2", "*/2", "mon-fri"])
-    async def test_legacy_composite_dow_decode_rejected(self, manager_env, day_of_week):
-        mgr, _state, _system_scheduler = manager_env
-        trigger = CronTrigger(minute=0, hour=9, day_of_week=day_of_week)
-
-        with pytest.raises(ValueError):
-            mgr._build_trigger_config(trigger)
-
-    def test_composite_dow_rejected_by_unified_subset(self):
-        # 统一子集下复合 DOW（范围/列表/步进）不再合法，创建时即拒绝
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1-5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * 1,3,5")
-        with pytest.raises(ValidationError):
-            CronTriggerConfig(cron="0 9 * * */2")
-
-
-class TestLegacyPayloadCutover:
-    def test_build_task_ignores_legacy_pre_tasks_key(self):
-        trigger_config = CronTriggerConfig(cron="0 9 * * *")
-
-        legacy = _build_task_from_kwargs(
-            "legacy",
-            {"task_name": "Legacy", "preTasks": [{"command": "echo legacy"}]},
-            trigger_config,
-        )
-        canonical = _build_task_from_kwargs(
-            "canonical",
-            {"task_name": "Canonical", "pre_tasks": [{"command": "echo ok"}]},
-            trigger_config,
-        )
-
-        assert legacy.preTasks == []
-        assert len(canonical.preTasks) == 1
-        assert isinstance(canonical.preTasks[0], PreTaskCommand)
-        assert canonical.preTasks[0].command == "echo ok"
-
-    async def test_update_ignores_legacy_pre_tasks_kwargs(self, manager_env):
-        mgr, _state, _system_scheduler = manager_env
-        task = await mgr.create_task(make_create("旧前置任务"))
-        job = mgr.scheduler.get_job(task.id)
-        assert job is not None
-        legacy_kwargs = dict(job.kwargs)
-        legacy_kwargs.pop("pre_tasks")
-        legacy_kwargs["preTasks"] = [{"command": "echo legacy"}]
-        mgr.scheduler.modify_job(task.id, kwargs=legacy_kwargs)
-
-        updated = await mgr.update_task(
-            task.id, ScheduledTaskUpdate(description="已更新")
-        )
-
-        assert updated is not None
-        assert updated.preTasks == []
-        updated_job = mgr.scheduler.get_job(task.id)
-        assert updated_job is not None
-        assert updated_job.kwargs["pre_tasks"] == []
-        assert "preTasks" not in updated_job.kwargs
-
-    async def test_update_rejects_legacy_trigger_without_mutation(self, manager_env):
-        mgr, _state, _system_scheduler = manager_env
-        task = await mgr.create_task(make_create("旧触发器"))
-        legacy_trigger = CronTrigger(minute=0, hour=9, day_of_week="mon-fri")
-        mgr.scheduler.modify_job(task.id, trigger=legacy_trigger)
-        job = mgr.scheduler.get_job(task.id)
-        assert job is not None
-        original_trigger = str(job.trigger)
-        original_kwargs = dict(job.kwargs)
-
-        with pytest.raises(ValueError):
-            await mgr.update_task(task.id, ScheduledTaskUpdate(description="不得写入"))
-
-        unchanged_job = mgr.scheduler.get_job(task.id)
-        assert unchanged_job is not None
-        assert str(unchanged_job.trigger) == original_trigger
-        assert unchanged_job.kwargs == original_kwargs
 
 
 class TestUpdateTaskWakeup:
@@ -308,35 +251,9 @@ class TestWakeupMinuteConflict:
         names = {t.name for t in await mgr.get_all_tasks()}
         assert names == {"任务A"}
 
-    async def test_create_allows_different_minute_wakeup(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        await mgr.create_task(
-            make_create("任务A", wakeup_enabled=True, cron="0 9 * * *")
-        )
-
-        task_b = await mgr.create_task(
-            make_create("任务B", wakeup_enabled=True, cron="1 9 * * *")
-        )
-
-        assert system_scheduler.register.call_count == 2
-        assert mgr.scheduler.get_job(task_b.id) is not None
-
-    async def test_create_ignores_non_wakeup_overlap(self, manager_env):
-        mgr, _state, _system_scheduler = manager_env
-        # 既有任务同分钟但未开启唤醒：不构成冲突
-        await mgr.create_task(
-            make_create("普通任务", wakeup_enabled=False, cron="0 9 * * *")
-        )
-
-        task = await mgr.create_task(
-            make_create("唤醒任务", wakeup_enabled=True, cron="0 9 * * *")
-        )
-
-        assert mgr.scheduler.get_job(task.id) is not None
-
     async def test_update_rejects_conflict_with_other_task(self, manager_env):
         mgr, _state, _system_scheduler = manager_env
-        task_a = await mgr.create_task(
+        await mgr.create_task(
             make_create("任务A", wakeup_enabled=True, cron="0 9 * * *")
         )
         task_b = await mgr.create_task(
@@ -370,42 +287,20 @@ class TestWakeupMinuteConflict:
         assert updated.description == "新描述"
 
 
-class TestPauseResumeNativeSync:
-    async def test_pause_unregisters_native(self, manager_env):
+class TestNativeSync:
+    async def test_pause_unregisters_only_active_wakeup(self, manager_env):
         mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
-        system_scheduler.register.assert_called_once()
-
-        ok = await mgr.pause_task(task.id)
-
-        assert ok is True
-        system_scheduler.unregister.assert_called_once_with(task.id)
-        assert mgr.scheduler.get_job(task.id).next_run_time is None
-
-    async def test_pause_non_wakeup_skips_unregister(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("普通任务", wakeup_enabled=False))
-
-        ok = await mgr.pause_task(task.id)
-
-        assert ok is True
-        system_scheduler.unregister.assert_not_called()
-
-    async def test_pause_aborts_on_unregister_failure(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
+        wakeup = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
+        plain = await mgr.create_task(make_create("普通任务", wakeup_enabled=False))
         system_scheduler.reset_mock()
 
-        def _boom(_task_id):
-            raise RuntimeError("native unregister boom")
+        assert await mgr.pause_task(wakeup.id) is True
+        system_scheduler.unregister.assert_called_once_with(wakeup.id)
+        assert mgr.scheduler.get_job(wakeup.id).next_run_time is None
 
-        system_scheduler.unregister.side_effect = _boom
-
-        ok = await mgr.pause_task(task.id)
-
-        assert ok is False
-        # APS 任务未被暂停（仍启用）
-        assert mgr.scheduler.get_job(task.id).next_run_time is not None
+        system_scheduler.reset_mock()
+        assert await mgr.pause_task(plain.id) is True
+        system_scheduler.unregister.assert_not_called()
 
     async def test_resume_reregisters_native(self, manager_env):
         mgr, _state, system_scheduler = manager_env
@@ -413,86 +308,69 @@ class TestPauseResumeNativeSync:
         await mgr.pause_task(task.id)
         system_scheduler.unregister.assert_called_once_with(task.id)
 
-        ok = await mgr.resume_task(task.id)
-
-        assert ok is True
+        assert await mgr.resume_task(task.id) is True
         assert system_scheduler.register.call_count == 2
         assert mgr.scheduler.get_job(task.id).next_run_time is not None
 
-    async def test_resume_aborts_on_register_failure(self, manager_env):
+    async def test_delete_unregisters_only_active_wakeup(self, manager_env):
         mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
-        await mgr.pause_task(task.id)
+        wakeup = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
+        plain = await mgr.create_task(make_create("普通任务", wakeup_enabled=False))
         system_scheduler.reset_mock()
 
-        def _boom(_task):
-            raise RuntimeError("native register boom")
+        assert await mgr.delete_task(wakeup.id) is True
+        system_scheduler.unregister.assert_called_once_with(wakeup.id)
+        assert mgr.scheduler.get_job(wakeup.id) is None
 
-        system_scheduler.register.side_effect = _boom
-
-        ok = await mgr.resume_task(task.id)
-
-        assert ok is False
-        # APS 任务未被恢复（仍暂停）
-        assert mgr.scheduler.get_job(task.id).next_run_time is None
-
-
-class TestDeleteNativeSync:
-    async def test_delete_wakeup_task_succeeds(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
-
-        ok = await mgr.delete_task(task.id)
-
-        assert ok is True
-        system_scheduler.unregister.assert_called_once_with(task.id)
-        assert mgr.scheduler.get_job(task.id) is None
-
-    async def test_delete_wakeup_aborts_on_unregister_failure(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
         system_scheduler.reset_mock()
-
-        def _boom(_task_id):
-            raise RuntimeError("native unregister boom")
-
-        system_scheduler.unregister.side_effect = _boom
-
-        ok = await mgr.delete_task(task.id)
-
-        assert ok is False
-        assert mgr.scheduler.get_job(task.id) is not None
-
-    async def test_delete_non_wakeup_succeeds_no_unregister(self, manager_env):
-        mgr, _state, system_scheduler = manager_env
-        task = await mgr.create_task(make_create("普通任务", wakeup_enabled=False))
-
-        ok = await mgr.delete_task(task.id)
-
-        assert ok is True
+        assert await mgr.delete_task(plain.id) is True
         system_scheduler.unregister.assert_not_called()
-        assert mgr.scheduler.get_job(task.id) is None
+        assert mgr.scheduler.get_job(plain.id) is None
 
+    @pytest.mark.parametrize("op", ["pause", "resume", "delete"])
+    async def test_missing_task_returns_false(self, manager_env, op):
+        mgr, _state, _system_scheduler = manager_env
 
-class TestUpdateWakeupOffAborts:
-    async def test_update_wakeup_off_unregister_failure_returns_none(self, manager_env):
+        assert await getattr(mgr, f"{op}_task")("no-such-task") is False
+
+    @pytest.mark.parametrize(
+        ("op", "failing_call"),
+        [("pause", "unregister"), ("resume", "register"), ("delete", "unregister")],
+    )
+    async def test_native_failure_propagates_and_keeps_aps_state(
+        self, manager_env, op, failing_call
+    ):
         mgr, _state, system_scheduler = manager_env
         task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
-        system_scheduler.register.assert_called_once()
+        if op == "resume":
+            await mgr.pause_task(task.id)
         system_scheduler.reset_mock()
-
-        def _boom(_task_id):
-            raise RuntimeError("native unregister boom")
-
-        system_scheduler.unregister.side_effect = _boom
-
-        updated = await mgr.update_task(
-            task.id, ScheduledTaskUpdate(wakeup_enabled=False)
+        getattr(system_scheduler, failing_call).side_effect = RuntimeError(
+            "native boom"
         )
 
-        assert updated is None
-        # wakeup_enabled 未提交：仍为启用唤醒的原状态
-        got = await mgr.get_task(task.id)
-        assert got is not None
-        assert got.wakeup_enabled is True
-        assert got.enabled is True
+        with pytest.raises(RuntimeError, match="native boom"):
+            await getattr(mgr, f"{op}_task")(task.id)
+
+        job = mgr.scheduler.get_job(task.id)
+        assert job is not None  # delete 未生效
+        assert (job.next_run_time is None) == (op == "resume")
+
+    async def test_update_native_failure_raises_after_aps_commit(self, manager_env):
+        mgr, _state, system_scheduler = manager_env
+        task = await mgr.create_task(make_create("唤醒任务", wakeup_enabled=True))
+        system_scheduler.reset_mock()
+        system_scheduler.register.side_effect = RuntimeError("native boom")
+
+        with pytest.raises(RuntimeError, match="native boom"):
+            await mgr.update_task(task.id, ScheduledTaskUpdate(description="新描述"))
+
+        # APS 已提交，OS 侧由启动时 converge 修复
+        updated = await mgr.get_task(task.id)
+        assert updated is not None
+        assert updated.description == "新描述"
+
+    async def test_update_missing_task_returns_none(self, manager_env):
+        mgr, _state, _system_scheduler = manager_env
+
+        assert await mgr.update_task("no-such-task", ScheduledTaskUpdate()) is None

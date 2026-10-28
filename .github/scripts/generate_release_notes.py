@@ -8,23 +8,14 @@ import httpx
 
 
 def get_latest_version(repo):
-    """获取上一个版本的 tag name"""
-    try:
-        # 尝试获取最新 release
-        resp = httpx.get(
-            f"https://api.github.com/repos/{repo}/releases/latest", timeout=10
-        )
-        if resp.status_code == 200:
-            latest_version = resp.json().get("tag_name")
-            return latest_version
-    except Exception as e:
-        print(f"获取版本信息时出错: {e}", file=sys.stderr)
-    return None
+    """获取上一个版本的 tag name；失败时直接抛出，不构造无效的 compare 链接。"""
+    resp = httpx.get(f"https://api.github.com/repos/{repo}/releases/latest", timeout=10)
+    resp.raise_for_status()
+    return resp.json()["tag_name"]
 
 
 def read_streamed_content(response):
     content_parts = []
-    usage = None
 
     for line in response.iter_lines():
         if not line:
@@ -47,38 +38,31 @@ def read_streamed_content(response):
 
         choices = payload.get("choices", [])
         if choices:
-            delta = choices[0].get("delta", {})
-            content = delta.get("content")
+            content = choices[0].get("delta", {}).get("content")
             if content:
                 content_parts.append(content)
 
-        if payload.get("usage"):
-            usage = payload["usage"]
-
-    return "".join(content_parts), usage
+    return "".join(content_parts)
 
 
 def main():
     repo = "ravizhan/MWU"
     current_version = os.getenv("GITHUB_REF_NAME")
     api_key = os.getenv("API_KEY")
+    if not current_version or not api_key:
+        sys.exit("缺少 GITHUB_REF_NAME 或 API_KEY 环境变量")
 
     latest_version = get_latest_version(repo)
 
     patch_url = (
         f"https://github.com/{repo}/compare/{latest_version}...{current_version}.patch"
     )
-    try:
-        resp = httpx.get(patch_url, timeout=30)
-        resp.raise_for_status()
-        patch = resp.text
-    except Exception as e:
-        print(f"获取补丁内容失败: {e}", file=sys.stderr)
-        return
+    resp = httpx.get(patch_url, timeout=30)
+    resp.raise_for_status()
+    patch = resp.text
 
     if not patch.strip():
-        print("未发现代码变更内容。", file=sys.stderr)
-        return
+        sys.exit("未发现代码变更内容")
 
     prompt = """你是一个专业的软件更新日志分析助手。请阅读两个版本之间的代码变更补丁（git patch），并生成一份精炼的中文更新日志。
 
@@ -121,30 +105,30 @@ def main():
         ],
     }
 
-    try:
-        with httpx.stream(
-            "POST",
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=data,
-            timeout=180,
-        ) as resp:
-            resp.raise_for_status()
-            result, usage = read_streamed_content(resp)
+    with httpx.stream(
+        "POST",
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=data,
+        timeout=180,
+    ) as resp:
+        resp.raise_for_status()
+        result = read_streamed_content(resp)
 
-        print(f"Token 使用情况: {usage or {}}", file=sys.stderr)
+    if not result.strip():
+        sys.exit("AI 未返回更新日志内容")
 
-        release_notes = f"## 更新日志（{datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).date().strftime('%Y-%m-%d')}）\n\n{result}"
+    date = datetime.datetime.now(
+        datetime.timezone(datetime.timedelta(hours=8))
+    ).strftime("%Y-%m-%d")
+    release_notes = f"## 更新日志（{date}）\n\n{result}"
 
-        output_file = os.getenv("GITHUB_OUTPUT")
-        delimiter = f"EOF_{uuid.uuid4().hex}"
-        with open(output_file, "a", encoding="utf-8") as f:
-            f.write(f"notes<<{delimiter}\n")
-            f.write(release_notes)
-            f.write(f"\n{delimiter}\n")
-        print("已将更新日志写入 GITHUB_OUTPUT")
-    except Exception as e:
-        print(f"调用 AI 服务出错: {e}", file=sys.stderr)
+    delimiter = f"EOF_{uuid.uuid4().hex}"
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+        f.write(f"notes<<{delimiter}\n")
+        f.write(release_notes)
+        f.write(f"\n{delimiter}\n")
+    print("已将更新日志写入 GITHUB_OUTPUT")
 
 
 if __name__ == "__main__":

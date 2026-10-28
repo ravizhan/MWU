@@ -23,7 +23,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { useI18n } from "vue-i18n"
-import { useInterfaceStore } from "@/stores"
 import type { HotkeyOption } from "@/types/interfaceModel"
 import { buildHotkeyCombo, getHotkeyCaptureIssue } from "@/utils/hotkey"
 import { resolveInterfaceText } from "@/utils/interface/content"
@@ -38,13 +37,12 @@ const emit = defineEmits<{
   (event: "update:value", value: Record<string, string>): void
 }>()
 
-const { locale, t } = useI18n()
-const interfaceStore = useInterfaceStore()
+const { t } = useI18n()
 const capturingName = ref<string | null>(null)
 const captureError = ref<{ name: string; message: string } | null>(null)
 
 function resolveHotkeyLabel(label: string | undefined, fallback: string): string {
-  return resolveInterfaceText(interfaceStore.interface, locale.value, label, fallback)
+  return resolveInterfaceText(label, fallback)
 }
 
 function getHotkeyValue(name: string): string {

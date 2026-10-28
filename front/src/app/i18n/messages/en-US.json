@@ -63,8 +63,6 @@
       "title": "Runtime Settings",
       "timeout": "Timeout",
       "timeoutSuffix": "sec",
-      "reminderInterval": "Reminder Interval",
-      "reminderSuffix": "min",
       "autoRetry": "Auto Retry",
       "maxRetryCount": "Max Retries"
     },
@@ -301,7 +299,8 @@
       "incompatibleController": "Incompatible with the current controller",
       "incompatibleResource": "Incompatible with the current resource",
       "incompatibleBoth": "Incompatible with the current controller and resource"
-    }
+    },
+    "taskConfigLoadFailed": "Failed to load task configuration; auto-save is disabled"
   },
   "taskConfig": {
     "preTasks": {

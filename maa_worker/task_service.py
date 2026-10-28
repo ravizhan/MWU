@@ -1,4 +1,3 @@
-import copy
 import threading
 import time
 import traceback
@@ -93,34 +92,6 @@ class TaskService:
         if not self.worker.agents.ensure_started_once():
             return False
 
-        cleaned_options: TaskOptionsByTask = {}
-        for option_task_name, task_options in options.items():
-            if not isinstance(option_task_name, str) or not isinstance(
-                task_options, dict
-            ):
-                continue
-
-            cleaned_task_options: dict[str, TaskOptionValue] = {}
-            for key, value in task_options.items():
-                if not isinstance(key, str):
-                    continue
-                if value is None:
-                    cleaned_task_options[key] = ""
-                elif isinstance(value, list):
-                    cleaned_task_options[key] = [
-                        item for item in value if isinstance(item, str)
-                    ]
-                elif isinstance(value, dict):
-                    cleaned_task_options[key] = {
-                        input_key: input_value
-                        for input_key, input_value in value.items()
-                        if isinstance(input_key, str) and isinstance(input_value, str)
-                    }
-                else:
-                    cleaned_task_options[key] = value
-
-            cleaned_options[option_task_name] = cleaned_task_options
-
         state = self.worker.task_state
         if not state.lock.acquire(blocking=False):
             return False
@@ -138,9 +109,9 @@ class TaskService:
                 target=self.run_process,
                 args=(
                     filtered_task_list,
-                    copy.deepcopy(cleaned_options),
+                    options,
                     pre_tasks or [],
-                    copy.deepcopy(global_options or {}),
+                    global_options or {},
                 ),
                 daemon=True,
             )
@@ -163,12 +134,11 @@ class TaskService:
             time.sleep(0.5)
         return True
 
-    def _finish_stopped(self, task_list: list[str]) -> None:
+    def _finish_stopped(self) -> None:
         state = self.worker.task_state
         state.last_status = "stopped"
         state.last_error = "任务已终止"
         self.worker.events.send_log("任务已终止")
-        self.worker.events.emit_task_failed(task_list, "任务已终止")
 
     def run_process(
         self,
@@ -184,7 +154,7 @@ class TaskService:
             for queued_task_name in task_list:
                 if state.stop_flag:
                     self.worker.tasker.post_stop().wait()
-                    self._finish_stopped(task_list)
+                    self._finish_stopped()
                     return
 
                 task_definition = self._get_task_definition(queued_task_name)
@@ -210,19 +180,17 @@ class TaskService:
                     time.sleep(0.5)
                     if state.stop_flag:
                         self.worker.tasker.post_stop().wait()
-                        self._finish_stopped(task_list)
+                        self._finish_stopped()
                         return
             if state.stop_flag:
-                self._finish_stopped(task_list)
+                self._finish_stopped()
                 return
             state.last_status = "success"
             state.last_error = None
-            self.worker.events.emit_task_completed(task_list)
         except Exception as exc:
             traceback.print_exc()
             state.last_status = "failed"
             state.last_error = str(exc) or "任务执行失败"
-            self.worker.events.emit_task_failed(task_list, state.last_error)
             self.worker.events.send_log("任务出现异常，请检查终端日志")
             self.worker.events.send_log(
                 f"请将日志反馈至 {self.worker.interface.github}/issues"

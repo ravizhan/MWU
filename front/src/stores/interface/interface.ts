@@ -21,11 +21,7 @@ export const useInterfaceStore = defineStore("interface", {
   getters: {
     getTaskList: (state): TaskListItem[] => {
       if (!state.interface?.task) return []
-      return state.interface.task.map((item, index) => ({
-        id: item.name,
-        name: item.name,
-        order: index,
-      }))
+      return state.interface.task.map((item) => ({ id: item.name, name: item.name }))
     },
     getPresetList: (state): Preset[] => state.interface?.preset || [],
     getPretasks: (state): Pretask[] => state.interface?.pretask || [],
@@ -94,10 +90,6 @@ export const useInterfaceStore = defineStore("interface", {
 
     getTaskByName(name: string): Task | null {
       return this.interface?.task?.find((task) => task.name === name) || null
-    },
-
-    getPresetByName(name: string): Preset | null {
-      return this.interface?.preset?.find((preset) => preset.name === name) || null
     },
 
     getOptionList(taskName: string): Record<string, Option> {

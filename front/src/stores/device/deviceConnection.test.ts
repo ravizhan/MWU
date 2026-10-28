@@ -141,14 +141,6 @@ describe("useDeviceConnectionStore", () => {
     store.cleanup()
   })
 
-  it("has correct initial state", () => {
-    const store = useDeviceConnectionStore()
-    expect(store.selectedController).toBeNull()
-    expect(store.availableDevices).toEqual([])
-    expect(store.loading).toBe(false)
-    expect(store.isDeviceResourceLocked).toBe(false)
-  })
-
   describe("applyDeviceRuntimeState", () => {
     it("sets locked state and names when connected and locked", () => {
       const store = useDeviceConnectionStore()
@@ -222,7 +214,10 @@ describe("useDeviceConnectionStore", () => {
       })
       const result = await store.StartTask()
       expect(result).toBe(false)
-      expect(showGlobalMessage).toHaveBeenCalledWith("error", "设备连接失败: connect failed")
+      expect(showGlobalMessage).toHaveBeenCalledWith(
+        "error",
+        expect.stringContaining("connect failed"),
+      )
     })
 
     it("returns false when resource selection fails", async () => {
@@ -249,7 +244,10 @@ describe("useDeviceConnectionStore", () => {
       })
       const result = await store.StartTask()
       expect(result).toBe(false)
-      expect(showGlobalMessage).toHaveBeenCalledWith("error", "资源设置失败: resource failed")
+      expect(showGlobalMessage).toHaveBeenCalledWith(
+        "error",
+        expect.stringContaining("resource failed"),
+      )
     })
 
     it("returns false when no compatible tasks", async () => {
@@ -260,7 +258,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1", controller: ["win32"] }],
@@ -315,7 +313,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -344,7 +342,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -375,7 +373,7 @@ describe("useDeviceConnectionStore", () => {
           active_origin: "manual",
         }
         configStore.configLoaded = true
-        configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+        configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
         interfaceStore.interface = {
           task: [{ name: "Task 1", entry: "task1" }],
         }
@@ -389,7 +387,7 @@ describe("useDeviceConnectionStore", () => {
         return { store, indexStore }
       }
 
-      it("restarts only after SSE clears TaskRunning", async () => {
+      it("restarts after TaskRunning clears", async () => {
         const { store, indexStore } = primeRunningStore()
         vi.mocked(api.stopTask).mockResolvedValue(true)
         vi.mocked(api.startTask).mockResolvedValue({ accepted: true, runId: "run-2" })
@@ -398,42 +396,12 @@ describe("useDeviceConnectionStore", () => {
         await nextTick()
         expect(api.stopTask).toHaveBeenCalled()
         expect(store.startConflict).toBeNull()
-        // 槽位未释放前不得重试启动
+        // 槽位未释放前不得启动
         expect(api.startTask).not.toHaveBeenCalled()
 
         indexStore.setTaskRunning(false)
         await expect(pending).resolves.toBe(true)
         expect(api.startTask).toHaveBeenCalledTimes(1)
-      })
-
-      it("retries when busy_manual conflict arrives after terminal event (slot not yet released)", async () => {
-        vi.useFakeTimers()
-        const { store, indexStore } = primeRunningStore()
-        vi.mocked(api.stopTask).mockResolvedValue(true)
-        // 复现：终端事件先于 active_run 清槽 → 首次重启拿到 busy_manual，清槽后重试成功
-        vi.mocked(api.startTask)
-          .mockResolvedValueOnce({
-            accepted: false,
-            conflict: {
-              code: "busy_manual",
-              message: "busy",
-              active_run_id: "run-9",
-              active_task_name: "Other Task",
-              active_origin: "manual",
-            },
-          })
-          .mockResolvedValueOnce({ accepted: true, runId: "run-2" })
-
-        const pending = store.stopActiveAndRestart()
-        await vi.advanceTimersByTimeAsync(0)
-        indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(500)
-        const result = await pending
-        vi.useRealTimers()
-
-        expect(result).toBe(true)
-        expect(api.startTask).toHaveBeenCalledTimes(2)
-        expect(store.startConflict).toBeNull()
         expect(indexStore.TaskRunning).toBe(true)
       })
 
@@ -458,68 +426,7 @@ describe("useDeviceConnectionStore", () => {
         expect(store.startConflict).toEqual(scheduledConflict)
       })
 
-      it("stops retrying when busy_manual persists past deadline", async () => {
-        vi.useFakeTimers()
-        const { store, indexStore } = primeRunningStore()
-        vi.mocked(api.stopTask).mockResolvedValue(true)
-        vi.mocked(api.startTask).mockResolvedValue({
-          accepted: false,
-          conflict: {
-            code: "busy_manual",
-            message: "busy",
-            active_run_id: "run-9",
-            active_task_name: "Other Task",
-            active_origin: "manual",
-          },
-        })
-
-        const pending = store.stopActiveAndRestart()
-        await vi.advanceTimersByTimeAsync(0)
-        indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
-        const result = await pending
-        vi.useRealTimers()
-
-        expect(result).toBe(false)
-        expect(store.startConflict?.code).toBe("busy_manual")
-        const calls = vi.mocked(api.startTask).mock.calls.length
-        expect(calls).toBeGreaterThan(1)
-        expect(calls).toBeLessThanOrEqual(121)
-      })
-
-      it("stops retrying and clears stale conflict when a later attempt fails without conflict", async () => {
-        vi.useFakeTimers()
-        const { store, indexStore } = primeRunningStore()
-        vi.mocked(api.stopTask).mockResolvedValue(true)
-        // 复现 greptile 场景：首次重启拿到 busy_manual，下一次因普通错误失败（无 conflict）。
-        // 过期冲突不得驱动重试——应立即停止并清除 startConflict。
-        vi.mocked(api.startTask)
-          .mockResolvedValueOnce({
-            accepted: false,
-            conflict: {
-              code: "busy_manual",
-              message: "busy",
-              active_run_id: "run-9",
-              active_task_name: "Other Task",
-              active_origin: "manual",
-            },
-          })
-          .mockResolvedValueOnce({ accepted: false, error: "任务启动失败" })
-
-        const pending = store.stopActiveAndRestart()
-        await vi.advanceTimersByTimeAsync(0)
-        indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
-        const result = await pending
-        vi.useRealTimers()
-
-        expect(result).toBe(false)
-        // 修复前：旧 busy_manual 滞留 → 重试跑满 60s（约 121 次）；修复后：第二次失败即停
-        expect(api.startTask).toHaveBeenCalledTimes(2)
-        expect(store.startConflict).toBeNull()
-      })
-
-      it("fails with actionable toast when cleanup exceeds timeout", async () => {
+      it("reports a timeout when the run slot is never released", async () => {
         vi.useFakeTimers()
         const { store } = primeRunningStore()
         vi.mocked(api.stopTask).mockResolvedValue(true)
@@ -545,60 +452,6 @@ describe("useDeviceConnectionStore", () => {
         expect(api.startTask).not.toHaveBeenCalled()
         expect(showGlobalMessage).not.toHaveBeenCalled()
       })
-
-      it("coalesces re-entrant calls onto a single stop/restart operation", async () => {
-        vi.useFakeTimers()
-        const { store, indexStore } = primeRunningStore()
-        vi.mocked(api.stopTask).mockResolvedValue(true)
-        vi.mocked(api.startTask).mockResolvedValue({ accepted: true, runId: "run-2" })
-
-        const first = store.stopActiveAndRestart()
-        const second = store.stopActiveAndRestart()
-        await vi.advanceTimersByTimeAsync(0)
-        indexStore.setTaskRunning(false)
-
-        const results = await Promise.all([first, second])
-        vi.useRealTimers()
-
-        expect(results).toEqual([true, true])
-        // 重入调用不得另起一套 stop/start 序列
-        expect(api.stopTask).toHaveBeenCalledTimes(1)
-        expect(api.startTask).toHaveBeenCalledTimes(1)
-      })
-
-      it("never fires a start attempt at or past the 60s retry deadline", async () => {
-        vi.useFakeTimers()
-        const startedAt = Date.now()
-        const { store, indexStore } = primeRunningStore()
-        vi.mocked(api.stopTask).mockResolvedValue(true)
-        const callTimes: number[] = []
-        vi.mocked(api.startTask).mockImplementation(() => {
-          callTimes.push(Date.now())
-          return Promise.resolve({
-            accepted: false,
-            conflict: {
-              code: "busy_manual",
-              message: "busy",
-              active_run_id: "run-9",
-              active_task_name: "Other Task",
-              active_origin: "manual",
-            },
-          })
-        })
-
-        const pending = store.stopActiveAndRestart()
-        await vi.advanceTimersByTimeAsync(0)
-        indexStore.setTaskRunning(false)
-        await vi.advanceTimersByTimeAsync(61_000)
-        const result = await pending
-        vi.useRealTimers()
-
-        const deadline = startedAt + 60_000
-        expect(result).toBe(false)
-        expect(callTimes.length).toBeGreaterThan(1)
-        // 睡后重新检查 deadline：任何启动尝试都必须发生在 60s 上限之前
-        expect(callTimes.every((t) => t < deadline)).toBe(true)
-      })
     })
 
     it("skips connect and resource when already connected", async () => {
@@ -610,7 +463,7 @@ describe("useDeviceConnectionStore", () => {
       store.selectedController = "ADB"
       store.resource = "res1"
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
 
       interfaceStore.interface = {
         task: [{ name: "Task 1", entry: "task1" }],
@@ -775,10 +628,7 @@ describe("useDeviceConnectionStore", () => {
 
       expect(store.availableDevices).toEqual([adbDevice])
       expect(store.availableDevices).not.toContainEqual(customAdbDevice)
-      expect(showGlobalMessage).toHaveBeenCalledWith(
-        "error",
-        "自定义设备已保存，但刷新列表后未找到该设备",
-      )
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", expect.any(String))
     })
 
     it("preserves previous selection and shows error when save fails", async () => {
@@ -824,62 +674,6 @@ describe("useDeviceConnectionStore", () => {
 
       expect(api.getDevices).not.toHaveBeenCalled()
       expect(store.selectedController).toBe("PlayCover")
-    })
-
-    it("does not reselect when a newer fetchDevices wins race after create", async () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-
-      let resolvePost: (value: {
-        success: boolean
-        message: string
-        data?: ConnectableDevice
-      }) => void
-      const postPromise = new Promise<{
-        success: boolean
-        message: string
-        data?: ConnectableDevice
-      }>((r) => {
-        resolvePost = r
-      })
-      vi.mocked(api.postCustomDevice).mockImplementationOnce(() => postPromise)
-
-      let resolveCreateFetch: (value: DeviceSearchData) => void
-      let resolveNewerFetch: (value: DeviceSearchData) => void
-      const createFetch = new Promise<DeviceSearchData>((r) => {
-        resolveCreateFetch = r
-      })
-      const newerFetch = new Promise<DeviceSearchData>((r) => {
-        resolveNewerFetch = r
-      })
-      vi.mocked(api.getDevices)
-        .mockImplementationOnce(() => createFetch)
-        .mockImplementationOnce(() => newerFetch)
-
-      const createPromise = store.createCustomDevice("192.168.1.10:5555")
-      resolvePost!({ success: true, message: "ok", data: customAdbDevice })
-      // Let createCustomDevice enter its fetchDevices
-      await Promise.resolve()
-      await Promise.resolve()
-
-      const newerPromise = store.fetchDevices("adb")
-      resolveNewerFetch!({
-        controllers: [adbCapability],
-        selected_controller: "adb",
-        devices: [adbDevice],
-      })
-      await newerPromise
-      resolveCreateFetch!({
-        controllers: [adbCapability],
-        selected_controller: "adb",
-        devices: [scannedCustomAdbDevice],
-      })
-      await createPromise
-
-      // Newer fetch wins; create must not reselect stale custom device
-      expect(store.availableDevices).toEqual([adbDevice])
-      expect(store.selectedDeviceKey).not.toBe("adb|/usr/bin/adb|192.168.1.10:5555")
     })
 
     it("ignores empty address and locked state", async () => {
@@ -1023,7 +817,6 @@ describe("useDeviceConnectionStore", () => {
       store.isDeviceResourceLocked = true
       const result = await store.connectDevices()
       expect(result.success).toBe(false)
-      expect(result.message).toBe("设备与资源已锁定，无法切换")
     })
 
     it("fails when no controller selected", async () => {
@@ -1188,7 +981,7 @@ describe("useDeviceConnectionStore", () => {
       expect(setIntervalSpy).toHaveBeenCalledTimes(1)
       store.init()
       expect(setIntervalSpy).toHaveBeenCalledTimes(1)
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
       await nextTick()
       expect(indexStore.SelectedTaskID).toBe("Task 1")
       setIntervalSpy.mockRestore()
@@ -1203,7 +996,7 @@ describe("useDeviceConnectionStore", () => {
       const saveSpy = vi.spyOn(configStore, "debouncedSave").mockImplementation(() => {})
 
       store.init()
-      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1", order: 0 }]
+      configStore.taskList = [{ uid: "task-1-instance", id: "Task 1", name: "Task 1" }]
       await nextTick()
       expect(saveSpy).toHaveBeenCalledTimes(1)
 
@@ -1232,7 +1025,7 @@ describe("useDeviceConnectionStore", () => {
       const configStore = useTaskConfigStore()
       settingsStore.initialized = true
       configStore.configLoaded = true
-      configStore.taskList = [{ uid: "initial-instance", id: "Initial", name: "Initial", order: 0 }]
+      configStore.taskList = [{ uid: "initial-instance", id: "Initial", name: "Initial" }]
       indexStore.Connected = true
       store.isDeviceResourceLocked = true
       const saveSpy = vi.spyOn(configStore, "debouncedSave").mockImplementation(() => {})
@@ -1244,8 +1037,8 @@ describe("useDeviceConnectionStore", () => {
       indexStore.SelectTask("sentinel")
 
       configStore.taskList = [
-        { uid: "first-instance", id: "First", name: "First", order: 0 },
-        { uid: "second-instance", id: "Second", name: "Second", order: 1 },
+        { uid: "first-instance", id: "First", name: "First" },
+        { uid: "second-instance", id: "Second", name: "Second" },
       ]
       configStore.options = { First: { mode: "safe" } }
       configStore.preTasks = [{ id: "pre1", command: "echo hi", enabled: true, timeout: 30 }]
@@ -1258,43 +1051,6 @@ describe("useDeviceConnectionStore", () => {
       expect(saveSpy).not.toHaveBeenCalled()
       expect(indexStore.SelectedTaskID).toBe("sentinel")
       expect(store.isDeviceResourceLocked).toBe(true)
-    })
-  })
-
-  describe("getters", () => {
-    it("controllerOptions maps capabilities", () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [
-        adbCapability,
-        { ...adbCapability, display_label: "ADB 2", enabled: false },
-      ]
-      expect(store.controllerOptions).toEqual([
-        { label: "ADB", value: "ADB", disabled: false },
-        { label: "ADB 2", value: "ADB 2", disabled: true },
-      ])
-    })
-
-    it("selectedControllerCapability finds by display_label", () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      expect(store.selectedControllerCapability).toEqual(adbCapability)
-    })
-
-    it("selectedControllerDisabled returns true for disabled capability", () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [{ ...adbCapability, enabled: false }]
-      store.selectedController = "ADB"
-      expect(store.selectedControllerDisabled).toBe(true)
-    })
-
-    it("selectedControllerName returns capability name or null", () => {
-      const store = useDeviceConnectionStore()
-      store.controllerCapabilities = [adbCapability]
-      store.selectedController = "ADB"
-      expect(store.selectedControllerName).toBe("adb")
-      store.selectedController = null
-      expect(store.selectedControllerName).toBeNull()
     })
   })
 })

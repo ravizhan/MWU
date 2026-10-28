@@ -1,37 +1,16 @@
 import { createPinia } from "pinia"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { createApp, nextTick } from "vue"
+import { createApp } from "vue"
 import type { App } from "vue"
 import { createI18n } from "vue-i18n"
 import TaskDescriptionCard from "@/components/panel/task/TaskDescriptionCard.vue"
 import { useIndexStore, useInterfaceStore } from "@/stores"
-
-function deferredResponse(promise: Promise<string>): Response {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return { ok: true, text: () => promise } as unknown as Response
-}
-
-// tsconfig lib predates ES2024, so Promise.withResolvers is unavailable.
-function withResolvers<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => {
-    resolve = res
-  })
-  return { promise, resolve }
-}
-
-function requestUrl(input: RequestInfo | URL): string {
-  if (typeof input === "string") return input
-  return input instanceof URL ? input.href : input.url
-}
-
-// The stale continuation and the Vue render it would trigger are all queued as
-// microtasks, so flushing microtasks settles them deterministically.
-async function flushPendingWork() {
-  for (let i = 0; i < 10; i++) {
-    await nextTick()
-  }
-}
+import {
+  deferredResponse,
+  flushPendingWork,
+  requestUrl,
+  withResolvers,
+} from "@/tests/deferred-fetch"
 
 describe("TaskDescriptionCard", () => {
   const apps: App[] = []

@@ -86,7 +86,7 @@ const { controllerName = null, resourceName = null } = defineProps<Props>()
 const emit = defineEmits<Emits>()
 const showDialog = defineModel<boolean>("show", { required: true })
 
-const { locale, t } = useI18n()
+const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 
 const query = ref("")
@@ -104,7 +104,7 @@ const normalizedQuery = computed(() => query.value.trim().toLowerCase())
 function taskMatchesQuery(task: Task): boolean {
   const q = normalizedQuery.value
   if (!q) return true
-  const label = resolveInterfaceText(interfaceStore.interface, locale.value, task.label, task.name)
+  const label = resolveInterfaceText(task.label, task.name)
   return label.toLowerCase().includes(q) || task.name.toLowerCase().includes(q)
 }
 

@@ -1,26 +1,28 @@
 import type {
+  CronTriggerConfig,
+  DateTriggerConfig,
   ExecutionOrigin,
   ExecutionStatus,
+  IntervalTriggerConfig,
   TriggerConfig,
-  TriggerType,
 } from "@/types/schedulerModel"
 
-function formatCronTrigger(t: (key: string) => string, triggerConfig: TriggerConfig): string {
-  if (triggerConfig.type !== "cron") return t("common.unknown")
+function formatCronTrigger(t: (key: string) => string, triggerConfig: CronTriggerConfig): string {
   return `${t("settings.scheduler.formatter.cron")} ${triggerConfig.cron}`
 }
 
 function formatDateTrigger(
   t: (key: string) => string,
   locale: string,
-  triggerConfig: TriggerConfig,
+  triggerConfig: DateTriggerConfig,
 ): string {
-  if (triggerConfig.type !== "date") return t("common.unknown")
   return `${t("settings.scheduler.formatter.date")} ${formatDateTime(t, locale, triggerConfig.run_date)}`
 }
 
-function formatIntervalTrigger(t: (key: string) => string, triggerConfig: TriggerConfig): string {
-  if (triggerConfig.type !== "interval") return t("common.unknown")
+function formatIntervalTrigger(
+  t: (key: string) => string,
+  triggerConfig: IntervalTriggerConfig,
+): string {
   const parts: string[] = []
   if (triggerConfig.weeks)
     parts.push(`${triggerConfig.weeks}${t("settings.scheduler.formatter.week")}`)
@@ -39,18 +41,15 @@ function formatIntervalTrigger(t: (key: string) => string, triggerConfig: Trigge
 export function formatTrigger(
   t: (key: string) => string,
   locale: string,
-  triggerType: TriggerType,
   triggerConfig: TriggerConfig,
 ): string {
-  switch (triggerType) {
+  switch (triggerConfig.type) {
     case "cron":
       return formatCronTrigger(t, triggerConfig)
     case "date":
       return formatDateTrigger(t, locale, triggerConfig)
     case "interval":
       return formatIntervalTrigger(t, triggerConfig)
-    default:
-      return t("common.unknown")
   }
 }
 
@@ -87,27 +86,6 @@ export function getStatusType(
       return "warning"
     default:
       return "default"
-  }
-}
-
-export function getStatusIcon(status: ExecutionStatus): string {
-  switch (status) {
-    case "success":
-      return "i-mdi-check-circle"
-    case "failed":
-      return "i-mdi-close-circle"
-    case "running":
-      return "i-mdi-loading"
-    case "stopped":
-      return "i-mdi-pause-circle"
-    case "skipped_busy_manual":
-      return "i-mdi-account-cancel"
-    case "skipped_busy_scheduled":
-      return "i-mdi-calendar-remove"
-    case "skipped_update_in_progress":
-      return "i-mdi-update"
-    default:
-      return "i-mdi-help-circle"
   }
 }
 

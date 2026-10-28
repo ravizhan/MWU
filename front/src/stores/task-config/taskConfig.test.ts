@@ -7,10 +7,19 @@ vi.mock("@/services/api", () => ({
   resetTaskConfig: vi.fn<() => void>(),
 }))
 
+vi.mock("@/services/feedback/message", () => ({
+  showGlobalMessage: vi.fn<() => void>(),
+}))
+
+vi.mock("@/app/i18n", () => ({
+  default: { global: { t: (key: string) => key } },
+}))
+
 import { useTaskConfigStore } from "@/stores/task-config/taskConfig"
 import { useInterfaceStore } from "@/stores/interface/interface"
 import * as api from "@/services/api"
-import { CUSTOM_PRESET_NAME, type TaskPresetSnapshot } from "@/types/taskConfigModel"
+import { showGlobalMessage } from "@/services/feedback/message"
+import { CUSTOM_PRESET_NAME } from "@/types/taskConfigModel"
 import type { InterfaceModel } from "@/types/interfaceModel"
 
 function buildTestInterface(): InterfaceModel {
@@ -235,98 +244,6 @@ describe("useTaskConfigStore", () => {
     })
   })
 
-  describe("normalizeSnapshot", () => {
-    it("returns an empty queue when no tasks are provided", () => {
-      const store = initTaskConfigStore()
-      const normalized = store.normalizeSnapshot(undefined)
-
-      expect(normalized.tasks).toEqual([])
-      expect(normalized.taskOptions).toEqual({})
-      expect(normalized.preTasks).toEqual([])
-    })
-
-    it("filters unknown IDs while preserving duplicate order", () => {
-      const store = initTaskConfigStore()
-      const normalized = store.normalizeSnapshot({
-        tasks: ["Task B", "Task A", "Task B", "task-zzz"],
-        taskOptions: {
-          "Task A": { difficulty: "hard" },
-          "Task B": { mode: ["manual"] },
-        },
-        preTasks: [],
-      })
-
-      expect(normalized.tasks).toEqual(["Task B", "Task A", "Task B"])
-      expect(normalized.taskOptions).toEqual({
-        "Task B": { mode: ["manual"] },
-        "Task A": {
-          difficulty: "hard",
-          params: { host: "localhost", port: "" },
-        },
-      })
-    })
-
-    it("ignores snapshots without tasks instead of migrating their fields", () => {
-      const store = initTaskConfigStore()
-      const oldSnapshot: TaskPresetSnapshot = JSON.parse(
-        JSON.stringify({
-          taskOrder: ["task-a", "task-b"],
-          taskChecked: { "task-a": true, "task-b": false },
-          taskOptions: { "task-a": { difficulty: "hard" } },
-          preTasks: [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }],
-        }),
-      )
-
-      const normalized = store.normalizeSnapshot(oldSnapshot)
-
-      expect(normalized.tasks).toEqual([])
-      expect(normalized.taskOptions).toEqual({})
-      expect(normalized.preTasks).toEqual(oldSnapshot.preTasks)
-    })
-
-    it("filters invalid preTasks and fills in missing defaults", () => {
-      const store = initTaskConfigStore()
-      const normalized = store.normalizeSnapshot({
-        tasks: [],
-        taskOptions: {},
-        preTasks: [
-          { id: "", command: "", enabled: true, timeout: 30 },
-          { id: "", command: "valid-command", enabled: false, timeout: 10 },
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-          { id: "has-id", command: "another", enabled: "yes" as unknown as boolean, timeout: -1 },
-        ],
-      })
-
-      expect(normalized.preTasks).toHaveLength(2)
-      expect(normalized.preTasks[0]).toEqual({
-        id: "mock-uuid-1",
-        command: "valid-command",
-        enabled: false,
-        timeout: 10,
-      })
-      expect(normalized.preTasks[1]).toEqual({
-        id: "has-id",
-        command: "another",
-        enabled: true,
-        timeout: 30,
-      })
-    })
-
-    it("passes through valid preTasks as copies", () => {
-      const store = initTaskConfigStore()
-      const original = [{ id: "pt1", command: "echo ok", enabled: true, timeout: 30 }]
-      const normalized = store.normalizeSnapshot({
-        tasks: [],
-        taskOptions: {},
-        preTasks: original,
-      })
-
-      expect(normalized.preTasks).toEqual(original)
-      expect(normalized.preTasks).not.toBe(original)
-      expect(normalized.preTasks[0]).not.toBe(original[0])
-    })
-  })
-
   describe("hydrateSnapshot", () => {
     it("restores ordered duplicate instances, options and preTasks", () => {
       const store = initTaskConfigStore()
@@ -397,29 +314,6 @@ describe("useTaskConfigStore", () => {
     })
   })
 
-  describe("buildOptionsFromPersisted", () => {
-    it("merges defaults with persisted values, persisted wins when valid", () => {
-      const store = initTaskConfigStore()
-      const result = store.buildOptionsFromPersisted(["Task A"], {
-        "Task A": { difficulty: "hard" },
-      })
-
-      expect(result["Task A"]).toEqual({
-        difficulty: "hard",
-        params: { host: "localhost", port: "" },
-      })
-    })
-
-    it("filters unknown persisted keys", () => {
-      const store = initTaskConfigStore()
-      const result = store.buildOptionsFromPersisted(["Task A"], {
-        "Task A": { difficulty: "hard", unknownKey: "ignored" },
-      })
-
-      expect(result["Task A"]).not.toHaveProperty("unknownKey")
-    })
-  })
-
   describe("debouncedSave", () => {
     it("calls saveConfig after a 500ms delay", async () => {
       vi.useFakeTimers()
@@ -455,7 +349,7 @@ describe("useTaskConfigStore", () => {
   })
 
   describe("loadConfig", () => {
-    it("fetches config, seeds snapshots, hydrates selected preset and sets loaded", async () => {
+    it("trusts the server-normalized config and hydrates the selected preset", async () => {
       const store = useTaskConfigStore()
       vi.mocked(api.getTaskConfig).mockResolvedValue({
         selectedPreset: "preset2",
@@ -477,45 +371,16 @@ describe("useTaskConfigStore", () => {
       expect(store.options["Task B"]).toEqual({ mode: ["manual"] })
     })
 
-    it("falls back to the first interface preset when the API returns an empty config", async () => {
+    it("keeps autosave disabled and reports the failure when loading fails", async () => {
       const store = useTaskConfigStore()
-      vi.mocked(api.getTaskConfig).mockResolvedValue({
-        selectedPreset: "",
-        presets: {},
-      })
+      vi.mocked(api.getTaskConfig).mockRejectedValue(new Error("boom"))
 
       await store.loadConfig()
 
-      expect(store.selectedPresetName).toBe("preset1")
-      expect(store.configLoaded).toBe(true)
-      expect(store.taskList.map((task) => task.id)).toEqual(["Task A"])
-      expect(store.options["Task A"]).toEqual({
-        difficulty: "hard",
-        params: { host: "preset-host", port: "" },
-      })
-    })
-
-    it("loads an old-format persisted snapshot as an empty queue", async () => {
-      const store = useTaskConfigStore()
-      vi.mocked(api.getTaskConfig).mockResolvedValue({
-        selectedPreset: "preset1",
-        presets: {
-          preset1: JSON.parse(
-            JSON.stringify({
-              taskOrder: ["task-a", "task-b"],
-              taskChecked: { "task-a": true, "task-b": false },
-              taskOptions: { "task-a": { difficulty: "hard" } },
-              preTasks: [],
-            }),
-          ),
-        },
-      })
-
-      await store.loadConfig()
-
-      expect(store.selectedPresetName).toBe("preset1")
+      expect(store.configLoaded).toBe(false)
+      expect(store.presetSnapshots).toEqual({})
       expect(store.taskList).toEqual([])
-      expect(store.options).toEqual({})
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.taskConfigLoadFailed")
     })
   })
 

@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 import json_utils as json
 from models.interface import InterfaceModel, Option, OptionCase
 
@@ -77,42 +79,25 @@ def _raise_conflict(
 
 
 def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
-    if tasks is None:
-        return
+    """记录任务名以检测跨文件重复；字段类型/非空由 InterfaceModel 校验。"""
     if not isinstance(tasks, list):
-        raise InterfaceLoadError(f"task 字段必须是数组: {source_path}")
-
-    for index, task in enumerate(tasks):
-        if not isinstance(task, dict):
-            raise InterfaceLoadError(f"task[{index}] 必须是对象: {source_path}")
-        task_name = task.get("name")
-        task_entry = task.get("entry")
-        if not isinstance(task_name, str) or not task_name:
-            raise InterfaceLoadError(
-                f"task[{index}].name 必须是非空字符串: {source_path}"
-            )
-        if not isinstance(task_entry, str) or not task_entry:
-            raise InterfaceLoadError(
-                f"task[{index}].entry 必须是非空字符串: {source_path}"
-            )
-
+        return
+    for task in tasks:
+        if not isinstance(task, dict) or not isinstance(task.get("name"), str):
+            continue
+        task_name = task["name"]
         existing_name = state.task_names.get(task_name)
         if existing_name is not None:
             _raise_conflict("task.name", task_name, source_path, existing_name)
-
         state.task_names[task_name] = source_path
 
 
 def _register_options(options: Any, source_path: Path, state: _MergeState) -> None:
-    if options is None:
-        return
     if not isinstance(options, dict):
-        raise InterfaceLoadError(f"option 字段必须是对象: {source_path}")
-
+        return
     for option_key in options:
-        if not isinstance(option_key, str) or not option_key:
-            raise InterfaceLoadError(f"option 键必须是非空字符串: {source_path}")
-
+        if not isinstance(option_key, str):
+            continue
         existing_path = state.option_keys.get(option_key)
         if existing_path is not None:
             _raise_conflict("option", option_key, source_path, existing_path)
@@ -120,20 +105,12 @@ def _register_options(options: Any, source_path: Path, state: _MergeState) -> No
 
 
 def _register_presets(presets: Any, source_path: Path, state: _MergeState) -> None:
-    if presets is None:
-        return
     if not isinstance(presets, list):
-        raise InterfaceLoadError(f"preset 字段必须是数组: {source_path}")
-
-    for index, preset in enumerate(presets):
-        if not isinstance(preset, dict):
-            raise InterfaceLoadError(f"preset[{index}] 必须是对象: {source_path}")
-        preset_name = preset.get("name")
-        if not isinstance(preset_name, str) or not preset_name:
-            raise InterfaceLoadError(
-                f"preset[{index}].name 必须是非空字符串: {source_path}"
-            )
-
+        return
+    for preset in presets:
+        if not isinstance(preset, dict) or not isinstance(preset.get("name"), str):
+            continue
+        preset_name = preset["name"]
         existing_path = state.preset_names.get(preset_name)
         if existing_path is not None:
             _raise_conflict("preset", preset_name, source_path, existing_path)
@@ -146,19 +123,20 @@ def _seed_root_sections(
     _register_tasks(root_data.get("task"), source_path, state)
     _register_options(root_data.get("option"), source_path, state)
     _register_presets(root_data.get("preset"), source_path, state)
-    pretasks = root_data.get("pretask")
-    if pretasks is not None and not isinstance(pretasks, list):
-        root_data["pretask"] = [pretasks]
 
 
 def _merge_pretasks(target: dict[str, Any], fragment: dict[str, Any]) -> None:
-    pretasks = fragment.get("pretask")
-    if pretasks is None:
+    pretasks = _as_list(fragment.get("pretask"))
+    if not pretasks:
         return
-    if not isinstance(pretasks, list):
-        pretasks = [pretasks]
-    target.setdefault("pretask", [])
-    target["pretask"].extend(copy.deepcopy(pretasks))
+    target["pretask"] = _as_list(target.get("pretask")) + copy.deepcopy(pretasks)
+
+
+def _as_list(value: Any) -> list[Any]:
+    """interface.json 允许 pretask 为单个对象或数组。"""
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
 
 
 def _merge_fragment_sections(
@@ -206,16 +184,13 @@ def _normalize_root_relative_path(raw_path: str, *, field_name: str) -> str:
         raise ValueError(f"{field_name} 不能为空")
 
     candidate = Path(normalized_path)
+    # root 覆盖 Windows 上 "/foo"（无盘符，is_absolute() 为 False）的情况
     if (
         candidate.is_absolute()
-        or candidate.drive
         or candidate.root
         or _WIN_DRIVE_RE.match(normalized_path)
     ):
         raise ValueError(f"{field_name} 不允许使用绝对路径: {raw_path}")
-
-    if normalized_path in {".", ".."}:
-        raise ValueError(f"{field_name} 不允许包含 . 或 .. 路径段: {raw_path}")
 
     parts = normalized_path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
@@ -224,41 +199,23 @@ def _normalize_root_relative_path(raw_path: str, *, field_name: str) -> str:
     return "/".join(parts)
 
 
-def _resolve_import_path(import_path: str, base_dir: Path) -> Path:
-    normalized_import_path = _normalize_root_relative_path(
-        import_path,
-        field_name="import",
-    )
-    resolved_path = (base_dir / normalized_import_path).resolve()
-    try:
-        resolved_path.relative_to(base_dir)
-    except ValueError as exc:
-        raise ValueError(
-            f"import 越界，禁止访问软件根目录之外的路径: {import_path}"
-        ) from exc
-    return resolved_path
-
-
-def _validate_scan_dir(scan_dir: str, option_name: str) -> str:
-    return _normalize_root_relative_path(
-        scan_dir,
-        field_name=f"scan_select 选项 {option_name} 的 scan_dir",
-    )
-
-
-def _validate_scan_filter(scan_filter: str, option_name: str) -> str:
-    return _normalize_root_relative_path(
-        scan_filter,
-        field_name=f"scan_select 选项 {option_name} 的 scan_filter",
-    )
-
-
 def _is_within_base_dir(path: Path, base_dir: Path) -> bool:
     try:
         path.relative_to(base_dir)
         return True
     except ValueError:
         return False
+
+
+def _resolve_import_path(import_path: str, base_dir: Path) -> Path:
+    normalized_import_path = _normalize_root_relative_path(
+        import_path,
+        field_name="import",
+    )
+    resolved_path = (base_dir / normalized_import_path).resolve()
+    if not _is_within_base_dir(resolved_path, base_dir):
+        raise ValueError(f"import 越界，禁止访问软件根目录之外的路径: {import_path}")
+    return resolved_path
 
 
 def resolve_interface_relative_path(
@@ -311,8 +268,14 @@ def _scan_scan_select_cases(
             f"scan_select 选项 {option_name} 的 scan_filter 必须为非空字符串"
         )
 
-    normalized_scan_dir = _validate_scan_dir(scan_dir, option_name)
-    normalized_scan_filter = _validate_scan_filter(scan_filter, option_name)
+    normalized_scan_dir = _normalize_root_relative_path(
+        scan_dir,
+        field_name=f"scan_select 选项 {option_name} 的 scan_dir",
+    )
+    normalized_scan_filter = _normalize_root_relative_path(
+        scan_filter,
+        field_name=f"scan_select 选项 {option_name} 的 scan_filter",
+    )
 
     resolved_scan_dir = (base_dir / normalized_scan_dir).resolve()
     if not _is_within_base_dir(resolved_scan_dir, base_dir):
@@ -370,8 +333,11 @@ def rescan_scan_select_option(
     if option.type != "scan_select":
         raise InterfaceLoadError(f"选项 {option_name} 不是 scan_select 类型")
 
-    option_data = Option.model_validate(option).model_dump(exclude_none=False)
-    option_data["cases"] = []
+    option_data = {
+        "scan_dir": option.scan_dir,
+        "scan_filter": option.scan_filter,
+        "cases": [],
+    }
     scanned_cases = _scan_scan_select_cases(option_name, option_data, base_dir)
     option.cases = [OptionCase.model_validate(item) for item in scanned_cases]
     return scanned_cases
@@ -564,13 +530,7 @@ def _validate_task_context_constraints(interface_model: InterfaceModel) -> None:
 
 
 def _validate_pretasks(interface_model: InterfaceModel) -> None:
-    raw_pretasks = interface_model.pretask
-    if raw_pretasks is None:
-        pretasks = []
-    elif isinstance(raw_pretasks, list):
-        pretasks = raw_pretasks
-    else:
-        pretasks = [raw_pretasks]
+    pretasks = _as_list(interface_model.pretask)
 
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
@@ -683,11 +643,12 @@ def load_interface_model(base_dir: str | Path) -> InterfaceModel:
 
     try:
         interface_model = InterfaceModel.model_validate(merged_data)
-        _validate_task_context_constraints(interface_model)
-        _validate_pretasks(interface_model)
-        _validate_option_field_names(interface_model)
-        _validate_presets(interface_model)
-        _validate_setting_sections(interface_model)
-        return interface_model
-    except Exception as exc:
+    except ValidationError as exc:
         raise InterfaceLoadError(f"校验 interface 配置失败: {exc}") from exc
+
+    _validate_task_context_constraints(interface_model)
+    _validate_pretasks(interface_model)
+    _validate_option_field_names(interface_model)
+    _validate_presets(interface_model)
+    _validate_setting_sections(interface_model)
+    return interface_model

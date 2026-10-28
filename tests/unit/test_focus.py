@@ -223,9 +223,8 @@ def test_stop_during_last_task_reports_stopped_not_success():
         thread.join(5)
 
         assert worker.task_state.last_status == "stopped"
-        names = [event.event for event in drain(worker)]
-        assert names.count("task.failed") == 1
-        assert "task.completed" not in names
+        # 终端事件统一由 execution._complete_run 在清槽后发布，run_process 只落状态
+        assert "task.completed" not in [event.event for event in drain(worker)]
     finally:
         job.release_done.set()
         thread.join(5)

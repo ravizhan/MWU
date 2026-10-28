@@ -189,7 +189,7 @@ def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
     monkeypatch,
 ):
     """task_options 以任务名为键；pretask 选项跨任务聚合查找用户值，
-    缺失时回退到接口声明的 default_case/inputs/hotkeys 默认值。"""
+    其次回退全局选项值，最后回退接口声明的 default_case/inputs/hotkeys 默认值。"""
     options = {
         "mode": Option(
             type="select",
@@ -228,58 +228,26 @@ def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
     _patch_popen(monkeypatch, recorder)
 
     # 用户值挂在任务名 "Selected Task" 下（不等于 pretask 的 resource 名），
-    # 聚合查找仍应命中；未提供的选项回退声明默认值。
+    # 聚合查找仍应命中；任务未提供的 tags 回退全局值，其余回退声明默认值。
     PretaskService(worker).run_all(
         "adb",
         "main",
         {"Selected Task": {"mode": "first"}, "fallback": {"mode": "ignored"}},
         [],
+        global_options={"mode": "global-mode", "tags": ["global"]},
     )
 
     assert (
         recorder.calls[0][0][-1]
-        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""},'
+        == '{"mode":"first","tags":["global"],"prompt":{"text":"hello","num":""},'
         '"combo":{"attack":"Alt+A","defend":""}}'
     )
     # 第二个 pretask 无 resource，聚合查找同样命中用户值
     assert (
         recorder.calls[1][0][-1]
-        == '{"mode":"first","tags":["two"],"prompt":{"text":"hello","num":""},'
+        == '{"mode":"first","tags":["global"],"prompt":{"text":"hello","num":""},'
         '"combo":{"attack":"Alt+A","defend":""}}'
     )
-
-
-def test_option_values_prefer_task_then_global_then_default():
-    options = {
-        "mode": Option(
-            type="select",
-            cases=[OptionCase(name="default"), OptionCase(name="task")],
-            default_case="default",
-        ),
-        "tags": Option(
-            type="checkbox",
-            cases=[OptionCase(name="default"), OptionCase(name="global")],
-            default_case=["default"],
-        ),
-        "fallback": Option(
-            type="select",
-            cases=[OptionCase(name="default")],
-            default_case="default",
-        ),
-    }
-    service = PretaskService(_make_worker(options=options))
-
-    values = service._resolve_option_values(
-        Pretask(exec="pi-tool", option=["mode", "tags", "fallback"]),
-        {"task": {"mode": "task"}},
-        {"mode": "global-mode", "tags": ["global"]},
-    )
-
-    assert values == {
-        "mode": "task",
-        "tags": ["global"],
-        "fallback": "default",
-    }
 
 
 def test_pretask_runs_from_interface_base_dir(monkeypatch):

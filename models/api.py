@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from models.device_address import (
     DeviceType,
     canonicalize_custom_device_address,
-    canonicalize_ipv4_port,
+    canonicalize_runtime_device_address,
 )
 
 RealtimeEventName = Literal[
@@ -35,23 +35,18 @@ class DeviceModel(BaseModel):
 
     @model_validator(mode="after")
     def _validate_device_fields(self) -> "DeviceModel":
-        if self.type == "Adb":
-            if not self.address.strip():
-                raise ValueError("Adb address must not be empty")
-        elif self.type == "PlayCover":
-            self.address = canonicalize_ipv4_port(self.address)
-        elif self.type == "Linux":
-            self.address = self.address.strip()
-            if not self.address:
-                raise ValueError("Linux device address must not be empty")
+        if self.type in ("Adb", "PlayCover", "Linux"):
+            self.address = canonicalize_runtime_device_address(self.type, self.address)
         elif self.type == "Win32":
-            if self.hWnd <= 0:
-                raise ValueError("Win32 hWnd must be positive")
+            self.hWnd = int(
+                canonicalize_runtime_device_address("Win32", str(self.hWnd))
+            )
         elif self.type == "Gamepad":
-            if self.hWnd <= 0:
-                raise ValueError("Gamepad hWnd must be positive")
-            if self.gamepad_type not in (0, 1):
-                raise ValueError("Gamepad type must be 0 or 1")
+            hwnd, gamepad_type = canonicalize_runtime_device_address(
+                "Gamepad", f"{self.hWnd}|{self.gamepad_type}"
+            ).split("|")
+            self.hWnd = int(hwnd)
+            self.gamepad_type = int(gamepad_type)
         return self
 
 
@@ -62,7 +57,7 @@ class CustomDeviceCreate(BaseModel):
     type: DeviceType
     address: str = Field(..., description="Device address (format depends on type)")
 
-    @field_validator("controller_name", "address", mode="before")
+    @field_validator("controller_name", mode="before")
     @classmethod
     def strip_and_require(cls, value: Any) -> str:
         if value is None:

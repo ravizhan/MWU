@@ -32,7 +32,7 @@ def canonicalize_ipv4_port(address: str) -> str:
     host_raw, port_raw = m.group(1), m.group(2)
     try:
         ip = IPv4Address(host_raw)
-    except Exception:
+    except ValueError:
         raise ValueError(f"invalid IPv4 address: {host_raw}") from None
     if not port_raw.isascii() or not port_raw.isdigit():
         raise ValueError(f"invalid port: {port_raw}")
@@ -40,6 +40,38 @@ def canonicalize_ipv4_port(address: str) -> str:
     if not 1 <= port <= 65535:
         raise ValueError(f"port out of range: {port} (must be 1-65535)")
     return f"{ip.compressed}:{port}"
+
+
+def _canonicalize_gamepad(text: str) -> str:
+    parts = text.split("|")
+    if len(parts) != 2:
+        raise ValueError("Gamepad address must be hWnd|type")
+    hwnd_raw, type_raw = parts[0].strip(), parts[1].strip()
+    if not hwnd_raw.isdigit() or int(hwnd_raw) <= 0:
+        raise ValueError("Gamepad hWnd must be a positive integer")
+    if not type_raw.isdigit():
+        raise ValueError("Gamepad type must be 0 or 1")
+    gamepad_type = int(type_raw)
+    if gamepad_type not in (0, 1):
+        raise ValueError("Gamepad type must be 0 or 1")
+    return f"{int(hwnd_raw)}|{gamepad_type}"
+
+
+def _canonicalize_strict_type(device_type: str, text: str) -> str:
+    """Rules shared by custom and runtime addresses for non-Adb types."""
+    if device_type == "PlayCover":
+        return canonicalize_ipv4_port(text)
+    if device_type == "Linux":
+        if not text:
+            raise ValueError("Linux device address must not be empty")
+        return text
+    if device_type == "Win32":
+        if not text.isdigit() or int(text) <= 0:
+            raise ValueError("Win32 address must be a positive integer hWnd")
+        return str(int(text))
+    if device_type == "Gamepad":
+        return _canonicalize_gamepad(text)
+    raise ValueError(f"unsupported device type: {device_type}")
 
 
 def canonicalize_custom_device_address(device_type: str, address: str) -> str:
@@ -51,30 +83,9 @@ def canonicalize_custom_device_address(device_type: str, address: str) -> str:
     Gamepad: hWnd|type where type is 0 or 1.
     """
     text = str(address).strip()
-    if device_type in ("Adb", "PlayCover"):
+    if device_type == "Adb":
         return canonicalize_ipv4_port(text)
-    if device_type == "Linux":
-        if not text:
-            raise ValueError("Linux device address must not be empty")
-        return text
-    if device_type == "Win32":
-        if not text.isdigit() or int(text) <= 0:
-            raise ValueError("Win32 address must be a positive integer hWnd")
-        return str(int(text))
-    if device_type == "Gamepad":
-        parts = text.split("|")
-        if len(parts) != 2:
-            raise ValueError("Gamepad address must be hWnd|type")
-        hwnd_raw, type_raw = parts[0].strip(), parts[1].strip()
-        if not hwnd_raw.isdigit() or int(hwnd_raw) <= 0:
-            raise ValueError("Gamepad hWnd must be a positive integer")
-        if not type_raw.isdigit():
-            raise ValueError("Gamepad type must be 0 or 1")
-        gamepad_type = int(type_raw)
-        if gamepad_type not in (0, 1):
-            raise ValueError("Gamepad type must be 0 or 1")
-        return f"{int(hwnd_raw)}|{gamepad_type}"
-    raise ValueError(f"unsupported device type: {device_type}")
+    return _canonicalize_strict_type(device_type, text)
 
 
 def canonicalize_runtime_device_address(device_type: str, address: str) -> str:
@@ -91,30 +102,7 @@ def canonicalize_runtime_device_address(device_type: str, address: str) -> str:
         if not text:
             raise ValueError("Adb address must not be empty")
         return text
-    if device_type == "PlayCover":
-        return canonicalize_ipv4_port(text)
-    if device_type == "Linux":
-        if not text:
-            raise ValueError("Linux device address must not be empty")
-        return text
-    if device_type == "Win32":
-        if not text.isdigit() or int(text) <= 0:
-            raise ValueError("Win32 address must be a positive integer hWnd")
-        return str(int(text))
-    if device_type == "Gamepad":
-        parts = text.split("|")
-        if len(parts) != 2:
-            raise ValueError("Gamepad address must be hWnd|type")
-        hwnd_raw, type_raw = parts[0].strip(), parts[1].strip()
-        if not hwnd_raw.isdigit() or int(hwnd_raw) <= 0:
-            raise ValueError("Gamepad hWnd must be a positive integer")
-        if not type_raw.isdigit():
-            raise ValueError("Gamepad type must be 0 or 1")
-        gamepad_type = int(type_raw)
-        if gamepad_type not in (0, 1):
-            raise ValueError("Gamepad type must be 0 or 1")
-        return f"{int(hwnd_raw)}|{gamepad_type}"
-    raise ValueError(f"unsupported device type: {device_type}")
+    return _canonicalize_strict_type(device_type, text)
 
 
 def try_canonicalize_runtime_device_address(

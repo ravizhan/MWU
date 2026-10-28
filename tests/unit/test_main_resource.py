@@ -58,18 +58,7 @@ def test_get_resource_filters_by_controller_type(
     controller_type,
     expected_names,
 ):
-    isolated_main.app_state.worker = object()
-
     response = isolated_main.get_resource(controller_type)
 
     assert response["status"] == "success"
     assert [resource["name"] for resource in response["resource"]] == expected_names
-
-
-def test_get_resource_requires_worker(isolated_main):
-    isolated_main.app_state.worker = None
-
-    assert isolated_main.get_resource(None) == {
-        "status": "failed",
-        "message": "Worker未初始化",
-    }

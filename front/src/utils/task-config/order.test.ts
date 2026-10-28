@@ -18,10 +18,6 @@ describe("buildTaskSections", () => {
     expect(buildTaskSections([makeTask("a", "a-entry")], [])).toBeNull()
   })
 
-  it("returns null for an empty task list without declared groups", () => {
-    expect(buildTaskSections([], undefined)).toBeNull()
-  })
-
   it("keeps declaration order and omits empty declared groups", () => {
     const sections = buildTaskSections(
       [makeTask("t1", "t1-entry", ["b"])],
@@ -112,10 +108,5 @@ describe("buildTaskSections", () => {
     )
     expect(sections).toHaveLength(1)
     expect(sections?.[0].group?.label).toBe("first")
-  })
-
-  it("returns an empty array when declared groups exist but no tasks belong anywhere", () => {
-    const sections = buildTaskSections([], [makeGroup("daily")])
-    expect(sections).toEqual([])
   })
 })

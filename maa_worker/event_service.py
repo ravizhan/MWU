@@ -1,5 +1,5 @@
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import plyer
 
@@ -17,10 +17,7 @@ def current_time() -> str:
 
 
 def load_settings() -> SettingsModel:
-    try:
-        return load_settings_model(default_settings_path())
-    except Exception:
-        return SettingsModel()
+    return load_settings_model(default_settings_path())
 
 
 class EventService:
@@ -109,39 +106,20 @@ class EventService:
                         settings.notification.password,
                     )
 
-                if settings.notification.method == "POST":
-                    if settings.notification.contentType == "application/json":
-                        if auth is not None:
-                            self.worker.http_client.post(
-                                settings.notification.webhook,
-                                headers=headers,
-                                json=body,
-                                auth=auth,
-                            )
-                        else:
-                            self.worker.http_client.post(
-                                settings.notification.webhook,
-                                headers=headers,
-                                json=body,
-                            )
-                    else:
-                        if auth is not None:
-                            self.worker.http_client.post(
-                                settings.notification.webhook,
-                                headers=headers,
-                                data=body,
-                                auth=auth,
-                            )
-                        else:
-                            self.worker.http_client.post(
-                                settings.notification.webhook,
-                                headers=headers,
-                                data=body,
-                            )
-                else:
+                if settings.notification.method != "POST":
                     self.worker.http_client.get(
                         settings.notification.webhook, params=body
                     )
+                    return
+
+                kwargs: dict[str, Any] = {"headers": headers}
+                if auth is not None:
+                    kwargs["auth"] = auth
+                if settings.notification.contentType == "application/json":
+                    kwargs["json"] = body
+                else:
+                    kwargs["data"] = body
+                self.worker.http_client.post(settings.notification.webhook, **kwargs)
             except Exception as exc:
                 self.send_log(f"外部通知发送失败: {exc}")
 

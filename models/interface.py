@@ -14,6 +14,31 @@ DocumentContent = str | list[str]
 PipelineOverride = dict[str, Any]
 PresetOptionValue = str | list[str] | dict[str, str]
 
+# MaaFramework 的整型方法编码（interface.json 中以字符串书写）
+SCREENCAP_METHOD_INTS: dict[str, int] = {
+    "GDI": 1,
+    "FramePool": 2,
+    "DXGI_DesktopDup": 4,
+    "DXGI_DesktopDup_Window": 8,
+    "PrintWindow": 16,
+    "ScreenDC": 32,
+    "Foreground": 64,
+    "Background": 128,
+}
+
+INPUT_METHOD_INTS: dict[str, int] = {
+    "Seize": 1,
+    "SendMessage": 2,
+    "PostMessage": 4,
+    "LegacyEvent": 8,
+    "SendMessageWithCursorPos": 32,
+    "PostMessageWithCursorPos": 64,
+    "SendMessageWithWindowPos": 128,
+    "PostMessageWithWindowPos": 256,
+}
+
+GAMEPAD_TYPE_INTS: dict[str, int] = {"Xbox360": 0, "DualShock4": 1, "DS4": 1}
+
 
 def validate_regex(v: Any, info: ValidationInfo) -> Any:
     if v is None or isinstance(v, re.Pattern):
@@ -95,50 +120,6 @@ class Win32Controller(BaseModel):
     def check_regex(cls, v: Any, info: ValidationInfo):
         return validate_regex(v, info)
 
-    @model_validator(mode="after")
-    def method_to_int(self):
-        maps = {
-            "screencap": {
-                "GDI": 1,
-                "FramePool": 2,
-                "DXGI_DesktopDup": 4,
-                "DXGI_DesktopDup_Window": 8,
-                "PrintWindow": 16,
-                "ScreenDC": 32,
-                "Foreground": 64,
-                "Background": 128,
-            },
-            "keyboard": {
-                "Seize": 1,
-                "SendMessage": 2,
-                "PostMessage": 4,
-                "LegacyEvent": 8,
-                "SendMessageWithCursorPos": 32,
-                "PostMessageWithCursorPos": 64,
-                "SendMessageWithWindowPos": 128,
-                "PostMessageWithWindowPos": 256,
-            },
-            "mouse": {
-                "Seize": 1,
-                "SendMessage": 2,
-                "PostMessage": 4,
-                "LegacyEvent": 8,
-                "SendMessageWithCursorPos": 32,
-                "PostMessageWithCursorPos": 64,
-                "SendMessageWithWindowPos": 128,
-                "PostMessageWithWindowPos": 256,
-            },
-        }
-        # 将输入的字符串方法转换为对应的整数值
-        for field, mapping in maps.items():
-            value = getattr(self, field, None)
-            if isinstance(value, str):
-                if value in mapping:
-                    setattr(self, field, mapping[value])
-                else:
-                    raise ValueError(f"无效的 {field} 方法: {value}")
-        return self
-
 
 class PlayCoverController(BaseModel):
     """PlayCover 控制器配置（仅 macOS）"""
@@ -204,29 +185,6 @@ class GamepadController(BaseModel):
     def check_regex(cls, v: Any, info: ValidationInfo):
         return validate_regex(v, info)
 
-    @model_validator(mode="after")
-    def method_to_int(self):
-        maps = {
-            "screencap": {
-                "GDI": 1,
-                "FramePool": 2,
-                "DXGI_DesktopDup": 4,
-                "DXGI_DesktopDup_Window": 8,
-                "PrintWindow": 16,
-                "ScreenDC": 32,
-            },
-            "gamepad_type": {"Xbox360": 0, "DualShock4": 1, "DS4": 1},
-        }
-        # 将输入的字符串方法转换为对应的整数值
-        for field, mapping in maps.items():
-            value = getattr(self, field, None)
-            if isinstance(value, str):
-                if value in mapping:
-                    setattr(self, field, mapping[value])
-                else:
-                    raise ValueError(f"无效的 {field} 方法: {value}")
-        return self
-
 
 class Controller(BaseModel):
     name: str
@@ -262,6 +220,51 @@ class Controller(BaseModel):
                 "display_short_side, display_long_side 和 display_raw 必须互斥"
             )
         return self
+
+
+def _method_int(mapping: dict[str, int], value: str | None, field: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        return mapping[value]
+    except KeyError:
+        raise ValueError(f"无效的 {field} 方法: {value}") from None
+
+
+def controller_method_ints(
+    controller: "Controller | Win32Controller | GamepadController",
+) -> dict[str, int | None]:
+    """将控制器的字符串方法名转换为 MaaFramework 的整型编码。
+
+    Win32 → ``screencap`` / ``mouse`` / ``keyboard``；Gamepad →
+    ``screencap`` / ``gamepad_type``；其它类型返回空字典。未设置的字段为 None。
+    """
+    win32 = controller if isinstance(controller, Win32Controller) else None
+    if win32 is None and isinstance(controller, Controller):
+        win32 = controller.win32
+    if isinstance(win32, Win32Controller):
+        return {
+            "screencap": _method_int(
+                SCREENCAP_METHOD_INTS, win32.screencap, "screencap"
+            ),
+            "mouse": _method_int(INPUT_METHOD_INTS, win32.mouse, "mouse"),
+            "keyboard": _method_int(INPUT_METHOD_INTS, win32.keyboard, "keyboard"),
+        }
+
+    gamepad = controller if isinstance(controller, GamepadController) else None
+    if gamepad is None and isinstance(controller, Controller):
+        gamepad = controller.gamepad
+    if isinstance(gamepad, GamepadController):
+        return {
+            "screencap": _method_int(
+                SCREENCAP_METHOD_INTS, gamepad.screencap, "screencap"
+            ),
+            "gamepad_type": _method_int(
+                GAMEPAD_TYPE_INTS, gamepad.gamepad_type, "gamepad_type"
+            ),
+        }
+
+    return {}
 
 
 class Resource(BaseModel):

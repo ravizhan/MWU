@@ -1,5 +1,6 @@
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -41,49 +42,45 @@ def _normalize_portable_cron(value: Any) -> str:
     if len(fields) != 5:
         raise ValueError(f"cron expression must have 5 fields, got {len(fields)}")
 
-    # Check directly stated month/day combinations. Ranges and steps are left to
-    # CronStr, which owns the full cron grammar and semantic expansion.
-    day_field, month_field = fields[2], fields[3]
-    if day_field != "*" and month_field != "*":
-        for m_str in month_field.split(","):
-            for d_str in day_field.split(","):
-                try:
-                    m, d = int(m_str), int(d_str)
-                except ValueError:
-                    continue
-                if 1 <= m <= 12 and d > _MONTH_MAX_DAYS[m - 1]:
-                    raise ValueError(f"month {m} has no day {d}")
     return text
 
 
-def _validate_native_cron(value: CronStr) -> CronStr:
-    """Validate the strict subset shared by APScheduler and native OS schedulers.
+@dataclass(frozen=True)
+class NativeCron:
+    """严格 cron 表达式的标量字段。
+
+    minute 必填；其余字段为 None 表示 ``*``。dow 采用 Unix 约定（0=周日），
+    解析时已将 7 归一化为 0。
+    """
+
+    minute: int
+    hour: int | None
+    day: int | None
+    month: int | None
+    dow: int | None
+
+
+def _scalar_or_none(field_set: set[int], full_set: set[int], name: str) -> int | None:
+    values = sorted(field_set)
+    if set(values) == full_set:
+        return None
+    if len(values) == 1:
+        return values[0]
+    raise ValueError(f"{name} field must be * or a single value")
+
+
+def _extract_native_cron(value: CronStr) -> NativeCron:
+    """校验严格 cron 子集并一次性提取标量字段。
 
     统一 cron 校验：5 字段、单值或 *、分钟必须具体。任一遍历（APScheduler
     CronTrigger 或 OS 原生调度）都可直接消费，无需二次校验。
     """
     minute_set, hour_set, day_set, month_set, dow_set = value.cron_obj.to_list()
-    full_minute = set(range(60))
-    full_hour = set(range(24))
-    full_day = set(range(1, 32))
-    full_month = set(range(1, 13))
-    full_dow = set(range(7))
-
-    def scalar_or_none(
-        field_set: set[int], full_set: set[int], name: str
-    ) -> int | None:
-        values = sorted(field_set)
-        if set(values) == full_set:
-            return None
-        if len(values) == 1:
-            return values[0]
-        raise ValueError(f"{name} field must be * or a single value")
-
-    minute = scalar_or_none(minute_set, full_minute, "minute")
-    hour = scalar_or_none(hour_set, full_hour, "hour")
-    day = scalar_or_none(day_set, full_day, "day")
-    month = scalar_or_none(month_set, full_month, "month")
-    dow = scalar_or_none(dow_set, full_dow, "dow")
+    minute = _scalar_or_none(minute_set, set(range(60)), "minute")
+    hour = _scalar_or_none(hour_set, set(range(24)), "hour")
+    day = _scalar_or_none(day_set, set(range(1, 32)), "day")
+    month = _scalar_or_none(month_set, set(range(1, 13)), "month")
+    dow = _scalar_or_none(dow_set, set(range(7)), "dow")
     if minute is None:
         raise ValueError("minute field must be a single value, not *")
     if day is not None and dow is not None:
@@ -92,10 +89,13 @@ def _validate_native_cron(value: CronStr) -> CronStr:
         raise ValueError("when hour is *, day/month/dow must all be *")
     if month is not None and day is None:
         raise ValueError("when month is restricted, day must also be restricted")
-    if month is not None and day is not None:
-        max_day = _MONTH_MAX_DAYS
-        if day > max_day[month - 1]:
-            raise ValueError(f"month {month} has no day {day}")
+    if month is not None and day is not None and day > _MONTH_MAX_DAYS[month - 1]:
+        raise ValueError(f"month {month} has no day {day}")
+    return NativeCron(minute=minute, hour=hour, day=day, month=month, dow=dow)
+
+
+def _validate_native_cron(value: CronStr) -> CronStr:
+    _extract_native_cron(value)
     return value
 
 
@@ -104,6 +104,11 @@ PortableCronStr = Annotated[
     BeforeValidator(_normalize_portable_cron),
     AfterValidator(_validate_native_cron),
 ]
+
+
+def parse_portable_cron(cron: str | CronStr) -> NativeCron:
+    """提取严格 cron 子集的标量字段（已是 CronStr 的值不再重复解析）。"""
+    return _extract_native_cron(cron if isinstance(cron, CronStr) else CronStr(cron))
 
 
 def _validate_task_name(value: Any) -> str:

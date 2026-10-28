@@ -14,6 +14,8 @@ import {
 } from "@/utils/panel/device"
 import type {
   AdbDevice,
+  ConnectableDevice,
+  DeviceControllerCapability,
   GamepadDevice,
   LinuxDevice,
   PlayCoverDevice,
@@ -62,140 +64,76 @@ const linuxDevice: LinuxDevice = {
   address: "/run/user/1000/wayland-1",
 }
 
-describe("isAdbDevice", () => {
-  it("returns true for Adb device", () => {
+function makeStored(overrides: Partial<PanelLastConnectedDevice>): PanelLastConnectedDevice {
+  return {
+    type: "Adb",
+    controller_name: "",
+    fingerprint: "",
+    adb_path: "",
+    address: "",
+    class_name: "",
+    window_name: "",
+    hWnd: 0,
+    gamepad_type: 0,
+    uuid: "",
+    ...overrides,
+  }
+}
+
+describe("device type guards", () => {
+  it("identify each device type", () => {
     expect(isAdbDevice(adbDevice)).toBe(true)
-  })
-
-  it("returns false for non-Adb device", () => {
-    expect(isAdbDevice(win32Device)).toBe(false)
-  })
-
-  it("returns false for null", () => {
-    expect(isAdbDevice(null)).toBe(false)
-  })
-
-  it("returns false for non-object", () => {
-    expect(isAdbDevice("adb")).toBe(false)
-  })
-})
-
-describe("isWin32Device", () => {
-  it("returns true for Win32 device", () => {
     expect(isWin32Device(win32Device)).toBe(true)
-  })
-
-  it("returns false for non-Win32 device", () => {
-    expect(isWin32Device(adbDevice)).toBe(false)
-  })
-
-  it("returns false for null", () => {
-    expect(isWin32Device(null)).toBe(false)
-  })
-
-  it("returns false for non-object", () => {
-    expect(isWin32Device(12345)).toBe(false)
-  })
-})
-
-describe("isGamepadDevice", () => {
-  it("returns true for Gamepad device", () => {
     expect(isGamepadDevice(gamepadDevice)).toBe(true)
   })
 
-  it("returns false for non-Gamepad device", () => {
+  it("reject other types and non-device values", () => {
+    expect(isAdbDevice(win32Device)).toBe(false)
+    expect(isWin32Device(adbDevice)).toBe(false)
     expect(isGamepadDevice(win32Device)).toBe(false)
-  })
-
-  it("returns false for null", () => {
-    expect(isGamepadDevice(null)).toBe(false)
-  })
-
-  it("returns false for non-object", () => {
-    expect(isGamepadDevice(true)).toBe(false)
+    expect(isAdbDevice(null)).toBe(false)
+    expect(isWin32Device(12345)).toBe(false)
+    expect(isGamepadDevice("gamepad")).toBe(false)
   })
 })
 
 describe("getDeviceIdentity", () => {
-  it("returns address for Adb device", () => {
-    expect(getDeviceIdentity(adbDevice)).toBe("127.0.0.1:5555")
-  })
+  const cases: Array<[string, ConnectableDevice, string]> = [
+    ["Adb address", adbDevice, "127.0.0.1:5555"],
+    ["Win32 hWnd", win32Device, "12345"],
+    ["Gamepad hWnd|type", gamepadDevice, "67890|1"],
+    ["PlayCover address", playCoverDevice, "127.0.0.1:1717"],
+    ["Linux socket path", linuxDevice, "/run/user/1000/wayland-1"],
+  ]
 
-  it("returns hWnd string for Win32 device", () => {
-    expect(getDeviceIdentity(win32Device)).toBe("12345")
-  })
-
-  it("returns hWnd|gamepad_type for Gamepad device", () => {
-    expect(getDeviceIdentity(gamepadDevice)).toBe("67890|1")
-  })
-
-  it("returns address for PlayCover device", () => {
-    expect(getDeviceIdentity(playCoverDevice)).toBe("127.0.0.1:1717")
-  })
-
-  it("returns socket path for Linux device", () => {
-    expect(getDeviceIdentity(linuxDevice)).toBe("/run/user/1000/wayland-1")
+  it.each(cases)("uses the %s", (_label, device, expected) => {
+    expect(getDeviceIdentity(device)).toBe(expected)
   })
 })
 
 describe("getStoredDeviceIdentity", () => {
-  it("returns address for Adb stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Adb",
-      address: "127.0.0.1:5555",
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceIdentity(stored)).toBe("127.0.0.1:5555")
-  })
+  const cases: Array<[string, PanelLastConnectedDevice, string]> = [
+    ["Adb", makeStored({ type: "Adb", address: "127.0.0.1:5555" }), "127.0.0.1:5555"],
+    ["Win32", makeStored({ type: "Win32", hWnd: 12345 }), "12345"],
+    ["Gamepad", makeStored({ type: "Gamepad", hWnd: 67890, gamepad_type: 1 }), "67890|1"],
+    ["PlayCover", makeStored({ type: "PlayCover", address: "127.0.0.1:1717" }), "127.0.0.1:1717"],
+  ]
 
-  it("returns hWnd string for Win32 stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Win32",
-      hWnd: 12345,
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceIdentity(stored)).toBe("12345")
-  })
-
-  it("returns hWnd|gamepad_type for Gamepad stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Gamepad",
-      hWnd: 67890,
-      gamepad_type: 1,
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceIdentity(stored)).toBe("67890|1")
-  })
-
-  it("returns address for PlayCover stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "PlayCover",
-      address: "127.0.0.1:1717",
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceIdentity(stored)).toBe("127.0.0.1:1717")
+  it.each(cases)("uses the %s identity", (_type, stored, expected) => {
+    expect(getStoredDeviceIdentity(stored)).toBe(expected)
   })
 })
 
 describe("storedDeviceMatchesController", () => {
-  it("matches by controller_name when present", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Adb",
-      controller_name: "adb",
-    } as PanelLastConnectedDevice
+  it("matches only the stored controller name", () => {
+    const stored = makeStored({ type: "Adb", controller_name: "adb" })
     expect(storedDeviceMatchesController(stored, { name: "adb" })).toBe(true)
-    expect(storedDeviceMatchesController(stored, { name: "other" })).toBe(false)
+    expect(storedDeviceMatchesController(stored, { name: "win32" })).toBe(false)
   })
 
-  it("does not match by type when controller_name is empty", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Win32",
-      controller_name: "",
-    } as PanelLastConnectedDevice
+  it("does not fall back to the device type when controller_name is empty", () => {
+    const stored = makeStored({ type: "Win32" })
     expect(storedDeviceMatchesController(stored, { name: "win32" })).toBe(false)
-    expect(storedDeviceMatchesController(stored, { name: "adb" })).toBe(false)
   })
 })
 
@@ -206,143 +144,79 @@ describe("findDeviceByIdentityOrFingerprint", () => {
     expect(findDeviceByIdentityOrFingerprint([scanned], custom)).toEqual(scanned)
   })
 
-  it("falls back to fingerprint when identity differs", () => {
-    const other: AdbDevice = { ...adbDevice, address: "10.0.0.1:5555" }
-    expect(findDeviceByIdentityOrFingerprint([adbDevice], adbDevice)).toEqual(adbDevice)
-    expect(findDeviceByIdentityOrFingerprint([other], adbDevice)).toBeUndefined()
-  })
-
-  it("returns undefined when neither matches", () => {
+  it("returns undefined when neither identity nor fingerprint matches", () => {
     const other: AdbDevice = { ...adbDevice, address: "10.0.0.1:5555", adb_path: "/other/adb" }
     expect(findDeviceByIdentityOrFingerprint([other], adbDevice)).toBeUndefined()
   })
 })
 
 describe("buildDeviceLabel", () => {
-  it("returns name(address) for Adb device", () => {
-    expect(buildDeviceLabel(adbDevice)).toBe("adb-device(127.0.0.1:5555)")
-  })
+  const cases: Array<[string, ConnectableDevice, string]> = [
+    ["Adb with name", adbDevice, "adb-device(127.0.0.1:5555)"],
+    ["Adb without name", { ...adbDevice, name: "   " }, "127.0.0.1:5555"],
+    ["Win32", win32Device, "window-win32(class-win32)"],
+    ["Win32 without window name", { ...win32Device, window_name: "" }, "class-win32"],
+    ["Gamepad", gamepadDevice, "window-gamepad(class-gamepad)"],
+    ["PlayCover with name", playCoverDevice, "playcover-device(127.0.0.1:1717)"],
+    ["PlayCover without name", { type: "PlayCover", address: "127.0.0.1:1717" }, "127.0.0.1:1717"],
+  ]
 
-  it("returns address only when Adb name is empty", () => {
-    const device: AdbDevice = { ...adbDevice, name: "" }
-    expect(buildDeviceLabel(device)).toBe("127.0.0.1:5555")
-  })
-
-  it("returns address only when Adb name is whitespace", () => {
-    const device: AdbDevice = { ...adbDevice, name: "   " }
-    expect(buildDeviceLabel(device)).toBe("127.0.0.1:5555")
-  })
-
-  it("returns window_name(class_name) for Win32 device", () => {
-    expect(buildDeviceLabel(win32Device)).toBe("window-win32(class-win32)")
-  })
-
-  it("returns class_name when Win32 window_name is empty", () => {
-    const device: Win32Device = { ...win32Device, window_name: "" }
-    expect(buildDeviceLabel(device)).toBe("class-win32")
-  })
-
-  it("returns window_name(class_name) for Gamepad device", () => {
-    expect(buildDeviceLabel(gamepadDevice)).toBe("window-gamepad(class-gamepad)")
-  })
-
-  it("returns name(address) for PlayCover device with name", () => {
-    expect(buildDeviceLabel(playCoverDevice)).toBe("playcover-device(127.0.0.1:1717)")
-  })
-
-  it("returns address for PlayCover device without name", () => {
-    const device: PlayCoverDevice = { type: "PlayCover", address: "127.0.0.1:1717" }
-    expect(buildDeviceLabel(device)).toBe("127.0.0.1:1717")
+  it.each(cases)("labels %s", (_label, device, expected) => {
+    expect(buildDeviceLabel(device)).toBe(expected)
   })
 })
 
 describe("buildDeviceFingerprint", () => {
-  it("builds adb|adb_path|address for Adb device", () => {
-    expect(buildDeviceFingerprint(adbDevice)).toBe("adb|/usr/bin/adb|127.0.0.1:5555")
-  })
+  const cases: Array<[string, ConnectableDevice, string]> = [
+    ["Adb", adbDevice, "adb|/usr/bin/adb|127.0.0.1:5555"],
+    ["Win32", win32Device, "win32|12345"],
+    ["Gamepad", gamepadDevice, "gamepad|67890|1"],
+    ["PlayCover", playCoverDevice, "playcover|127.0.0.1:1717|uuid-001"],
+    [
+      "PlayCover without uuid",
+      { type: "PlayCover", address: "127.0.0.1:1717" },
+      "playcover|127.0.0.1:1717|",
+    ],
+    ["Linux", linuxDevice, "linux|/run/user/1000/wayland-1"],
+  ]
 
-  it("builds win32|hWnd for Win32 device", () => {
-    expect(buildDeviceFingerprint(win32Device)).toBe("win32|12345")
-  })
-
-  it("builds gamepad|hWnd|gamepad_type for Gamepad device", () => {
-    expect(buildDeviceFingerprint(gamepadDevice)).toBe("gamepad|67890|1")
-  })
-
-  it("builds playcover|address|uuid for PlayCover device", () => {
-    expect(buildDeviceFingerprint(playCoverDevice)).toBe("playcover|127.0.0.1:1717|uuid-001")
-  })
-
-  it("handles PlayCover device without uuid", () => {
-    const device: PlayCoverDevice = { type: "PlayCover", address: "127.0.0.1:1717" }
-    expect(buildDeviceFingerprint(device)).toBe("playcover|127.0.0.1:1717|")
-  })
-
-  it("builds linux|socket-path for Linux device", () => {
-    expect(buildDeviceFingerprint(linuxDevice)).toBe("linux|/run/user/1000/wayland-1")
+  it.each(cases)("builds the %s fingerprint", (_label, device, expected) => {
+    expect(buildDeviceFingerprint(device)).toBe(expected)
   })
 })
 
 describe("getPlayCoverDefaultAddress", () => {
-  it("returns default_address when PlayCover capability exists", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const capabilities = [
-      { type: "Adb", default_address: "adb-addr" },
-      { type: "PlayCover", default_address: "playcover-addr" },
-    ] as never[]
+  function capability(type: DeviceControllerCapability["type"], defaultAddress: string) {
+    const capability: DeviceControllerCapability = {
+      name: type.toLowerCase(),
+      type,
+      label: type,
+      display_label: type,
+      enabled: true,
+      reason: "",
+      search_mode: "select",
+      default_address: defaultAddress,
+    }
+    return capability
+  }
+
+  it("uses the PlayCover capability address when present", () => {
+    const capabilities = [capability("Adb", "adb-addr"), capability("PlayCover", "playcover-addr")]
     expect(getPlayCoverDefaultAddress(capabilities)).toBe("playcover-addr")
   })
 
-  it("returns fallback when PlayCover capability is absent", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const capabilities = [{ type: "Adb", default_address: "adb-addr" }] as never[]
-    expect(getPlayCoverDefaultAddress(capabilities)).toBe("127.0.0.1:1717")
+  it("falls back when no PlayCover capability exists", () => {
+    expect(getPlayCoverDefaultAddress([capability("Adb", "adb-addr")])).toBe("127.0.0.1:1717")
   })
 })
 
 describe("getStoredDeviceFingerprint", () => {
-  it("returns fingerprint when present", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = { fingerprint: "fp-001" } as PanelLastConnectedDevice
-    expect(getStoredDeviceFingerprint(stored)).toBe("fp-001")
+  it("prefers the stored fingerprint", () => {
+    expect(getStoredDeviceFingerprint(makeStored({ fingerprint: "fp-001" }))).toBe("fp-001")
   })
 
-  it("builds fingerprint for Adb stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Adb",
-      adb_path: "/usr/bin/adb",
-      address: "127.0.0.1:5555",
-    } as PanelLastConnectedDevice
+  it("rebuilds the fingerprint when absent", () => {
+    const stored = makeStored({ type: "Adb", adb_path: "/usr/bin/adb", address: "127.0.0.1:5555" })
     expect(getStoredDeviceFingerprint(stored)).toBe("adb|/usr/bin/adb|127.0.0.1:5555")
-  })
-
-  it("builds fingerprint for Win32 stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Win32",
-      hWnd: 12345,
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceFingerprint(stored)).toBe("win32|12345")
-  })
-
-  it("builds fingerprint for Gamepad stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "Gamepad",
-      hWnd: 67890,
-      gamepad_type: 1,
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceFingerprint(stored)).toBe("gamepad|67890|1")
-  })
-
-  it("builds fingerprint for PlayCover stored device", () => {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const stored = {
-      type: "PlayCover",
-      address: "127.0.0.1:1717",
-      uuid: "uuid-001",
-    } as PanelLastConnectedDevice
-    expect(getStoredDeviceFingerprint(stored)).toBe("playcover|127.0.0.1:1717|uuid-001")
   })
 })

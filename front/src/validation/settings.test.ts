@@ -8,35 +8,17 @@ import {
 } from "./settings"
 
 describe("enum schemas", () => {
-  it("updateChannelSchema accepts stable", () => {
-    expect(updateChannelSchema.safeParse("stable").success).toBe(true)
+  it.each([
+    [updateChannelSchema, "stable", "alpha"],
+    [localeSchema, "zh-CN", "fr-FR"],
+    [darkModeSchema, "auto", "dark"],
+  ])("accepts valid and rejects invalid members", (schema, accepted, rejected) => {
+    expect(schema.safeParse(accepted).success).toBe(true)
+    expect(schema.safeParse(rejected).success).toBe(false)
   })
 
-  it("updateChannelSchema accepts beta", () => {
-    expect(updateChannelSchema.safeParse("beta").success).toBe(true)
-  })
-
-  it("updateChannelSchema rejects invalid", () => {
-    expect(updateChannelSchema.safeParse("alpha").success).toBe(false)
-  })
-
-  it("localeSchema accepts zh-CN", () => {
-    expect(localeSchema.safeParse("zh-CN").success).toBe(true)
-  })
-
-  it("localeSchema accepts en-US", () => {
-    expect(localeSchema.safeParse("en-US").success).toBe(true)
-  })
-
-  it("darkModeSchema accepts auto", () => {
-    expect(darkModeSchema.safeParse("auto").success).toBe(true)
-  })
-
-  it("darkModeSchema accepts true", () => {
+  it("darkModeSchema accepts booleans", () => {
     expect(darkModeSchema.safeParse(true).success).toBe(true)
-  })
-
-  it("darkModeSchema accepts false", () => {
     expect(darkModeSchema.safeParse(false).success).toBe(true)
   })
 })
@@ -44,27 +26,18 @@ describe("enum schemas", () => {
 describe("makeRuntimeNumberSchema", () => {
   const schema = makeRuntimeNumberSchema(60, 3600)
 
-  it("returns undefined for empty string", () => {
-    expect(schema.parse("")).toBeUndefined()
-  })
-
-  it("parses valid number", () => {
+  it("parses string and number input", () => {
     expect(schema.parse("300")).toBe(300)
-  })
-
-  it("parses number input", () => {
     expect(schema.parse(300)).toBe(300)
   })
 
-  it("clamps to min", () => {
+  it("clamps into range", () => {
     expect(schema.parse("10")).toBe(60)
-  })
-
-  it("clamps to max", () => {
     expect(schema.parse("9999")).toBe(3600)
   })
 
-  it("returns undefined for NaN", () => {
+  it("returns undefined for empty or non-numeric input", () => {
+    expect(schema.parse("")).toBeUndefined()
     expect(schema.parse("abc")).toBeUndefined()
   })
 })

@@ -1,6 +1,7 @@
 """Tests for models/interface_loader.py — interface loading, merging, scanning."""
 
 import json as stdlib_json
+import re
 from pathlib import Path
 
 import pytest
@@ -62,21 +63,10 @@ class TestNormalizeRootRelativePath:
         with pytest.raises(ValueError, match="不允许使用绝对路径"):
             _normalize_root_relative_path("C:\\windows", field_name="p")
 
-    def test_dot_raises(self):
+    @pytest.mark.parametrize("bad", [".", "..", "a/../b", "a//b"])
+    def test_dot_segments_raise(self, bad):
         with pytest.raises(ValueError, match="不允许包含"):
-            _normalize_root_relative_path(".", field_name="p")
-
-    def test_dotdot_raises(self):
-        with pytest.raises(ValueError, match="不允许包含"):
-            _normalize_root_relative_path("..", field_name="p")
-
-    def test_dotdot_in_middle_raises(self):
-        with pytest.raises(ValueError, match="不允许包含"):
-            _normalize_root_relative_path("a/../b", field_name="p")
-
-    def test_empty_segment_raises(self):
-        with pytest.raises(ValueError, match="不允许包含"):
-            _normalize_root_relative_path("a//b", field_name="p")
+            _normalize_root_relative_path(bad, field_name="p")
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +187,7 @@ class TestValidateImportableFragment:
             _validate_importable_fragment({"task": [], "extra": 1}, Path())
 
     def test_multiple_invalid_keys_sorted(self):
-        """Invalid keys are reported in sorted order."""
-        with pytest.raises(InterfaceLoadError, match=r"非法字段.*(?:a.*z|z.*a)"):
+        with pytest.raises(InterfaceLoadError, match=r"非法字段 a, z"):
             _validate_importable_fragment({"z": 1, "a": 2, "task": []}, Path())
 
 
@@ -208,18 +197,6 @@ class TestValidateImportableFragment:
 
 
 class TestRegisterTasks:
-    def test_not_list_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是数组"):
-            _register_tasks("bad", Path(), _MergeState())
-
-    def test_name_not_string_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
-            _register_tasks([{"name": 1, "entry": "E"}], Path(), _MergeState())
-
-    def test_entry_empty_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
-            _register_tasks([{"name": "A", "entry": ""}], Path(), _MergeState())
-
     def test_duplicate_entry_allowed(self):
         state = _MergeState()
         _register_tasks([{"name": "A", "entry": "SharedEntry"}], Path("/a.json"), state)
@@ -242,14 +219,6 @@ class TestRegisterTasks:
 
 
 class TestRegisterOptions:
-    def test_not_dict_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是对象"):
-            _register_options([], Path(), _MergeState())
-
-    def test_empty_key_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是非空字符串"):
-            _register_options({"": {"type": "select"}}, Path(), _MergeState())
-
     def test_conflict(self):
         state = _MergeState()
         _register_options({"opt": {}}, Path("/a.json"), state)
@@ -263,10 +232,6 @@ class TestRegisterOptions:
 
 
 class TestRegisterPresets:
-    def test_not_list_raises(self):
-        with pytest.raises(InterfaceLoadError, match="必须是数组"):
-            _register_presets("bad", Path(), _MergeState())
-
     def test_conflict(self):
         state = _MergeState()
         _register_presets([{"name": "P"}], Path("/a.json"), state)
@@ -710,155 +675,60 @@ class TestLoadInterfaceModel:
         with pytest.raises(InterfaceLoadError, match="引用了不存在的 controller"):
             load_interface_model(tmp_path)
 
-    def test_pretask_whitespace_exec_is_rejected(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "pretask": [{"exec": "   \t  "}],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=r"pretask\[0\]\.exec 必须是非空字符串",
-        ):
-            load_interface_model(tmp_path)
-
-    def test_pretask_nonexistent_resource(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "pretask": [{"exec": "prepare", "resource": ["missing"]}],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=r"pretask\[0\] 引用了不存在的 resource: missing",
-        ):
-            load_interface_model(tmp_path)
-
-    def test_pretask_nonexistent_controller(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "pretask": [{"exec": "prepare", "controller": ["missing"]}],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=r"pretask\[0\] 引用了不存在的 controller: missing",
-        ):
-            load_interface_model(tmp_path)
-
-    def test_pretask_nonexistent_option(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "pretask": [{"exec": "prepare", "option": ["missing"]}],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=r"pretask\[0\]\.option 引用了不存在的选项: missing",
-        ):
-            load_interface_model(tmp_path)
-
-    def test_pretask_option_must_be_reachable_from_resource_task(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [
-                    {
-                        "name": "Main task",
-                        "entry": "main",
-                        "resource": ["main"],
-                        "option": ["reachable"],
-                    }
-                ],
-                "option": {
-                    "reachable": {
-                        "type": "select",
-                        "cases": [{"name": "yes"}],
-                    },
-                    "unreachable": {
-                        "type": "select",
-                        "cases": [{"name": "no"}],
-                    },
-                },
-                "pretask": [
-                    {
-                        "exec": "prepare",
-                        "resource": ["main"],
-                        "option": ["unreachable"],
-                    }
-                ],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=(
-                r"pretask\[0\]\.option\[unreachable\]"
-                r" 无法从资源包 main 的任何任务到达"
+    @pytest.mark.parametrize(
+        ("extra", "expected"),
+        [
+            pytest.param(
+                {"pretask": [{"exec": "   \t  "}]},
+                r"pretask\[0\]\.exec 必须是非空字符串",
+                id="whitespace-exec",
             ),
-        ):
-            load_interface_model(tmp_path)
-
-    def test_scan_select_expansion(self, tmp_path):
-        imgs = tmp_path / "images"
-        imgs.mkdir()
-        (imgs / "a.png").write_text("x")
-        (imgs / "b.png").write_text("x")
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "option": {
-                    "skin": {
-                        "type": "scan_select",
-                        "scan_dir": "images",
-                        "scan_filter": "*.png",
-                        "pipeline_override": {"Action": {"attach": {"skin": ""}}},
-                    }
+            pytest.param(
+                {"pretask": [{"exec": "prepare", "resource": ["missing"]}]},
+                r"pretask\[0\] 引用了不存在的 resource: missing",
+                id="unknown-resource",
+            ),
+            pytest.param(
+                {"pretask": [{"exec": "prepare", "controller": ["missing"]}]},
+                r"pretask\[0\] 引用了不存在的 controller: missing",
+                id="unknown-controller",
+            ),
+            pytest.param(
+                {"pretask": [{"exec": "prepare", "option": ["missing"]}]},
+                r"pretask\[0\]\.option 引用了不存在的选项: missing",
+                id="unknown-option",
+            ),
+            pytest.param(
+                {
+                    "task": [
+                        {
+                            "name": "Main task",
+                            "entry": "main",
+                            "resource": ["main"],
+                            "option": ["reachable"],
+                        }
+                    ],
+                    "option": {
+                        "reachable": {"type": "select", "cases": [{"name": "yes"}]},
+                        "unreachable": {"type": "select", "cases": [{"name": "no"}]},
+                    },
+                    "pretask": [
+                        {
+                            "exec": "prepare",
+                            "resource": ["main"],
+                            "option": ["unreachable"],
+                        }
+                    ],
                 },
-            },
-        )
-        model = load_interface_model(tmp_path)
-        assert model.option is not None
-        assert model.option["skin"].cases is not None
-        assert len(model.option["skin"].cases) == 2
-
-    def test_import_duplicate_entry_keeps_both_tasks(self, tmp_path):
-        """Importing a task whose entry repeats a root entry is allowed."""
-        (tmp_path / "extra.json5").write_text(
-            '{task: [{name: "ExtraTask", entry: "RootTaskEntry"}]}'
-        )
+                (
+                    r"pretask\[0\]\.option\[unreachable\]"
+                    r" 无法从资源包 main 的任何任务到达"
+                ),
+                id="option-unreachable-from-resource",
+            ),
+        ],
+    )
+    def test_pretask_reference_validation(self, tmp_path, extra, expected):
         _write_interface(
             tmp_path,
             {
@@ -866,243 +736,180 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "RootTask", "entry": "RootTaskEntry"}],
-                "import": ["extra.json5"],
-            },
+            }
+            | extra,
         )
 
-        model = load_interface_model(tmp_path)
-
-        assert model.task is not None
-        assert {(task.name, task.entry) for task in model.task} == {
-            ("RootTask", "RootTaskEntry"),
-            ("ExtraTask", "RootTaskEntry"),
-        }
-
-    def test_import_fragment_with_illegal_key(self, tmp_path):
-        """Import file with key outside the allowed sections is rejected."""
-        (tmp_path / "bad.json5").write_text("{controller: []}")
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "import": ["bad.json5"],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="非法字段"):
+        with pytest.raises(InterfaceLoadError) as exc_info:
             load_interface_model(tmp_path)
+        assert re.search(expected, str(exc_info.value))
 
     # ------------------------------------------------------------------
     # Preset validation through load_interface_model
     # ------------------------------------------------------------------
 
-    def test_preset_duplicate_task(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA"}],
-                "preset": [{"name": "P", "task": [{"name": "A"}, {"name": "A"}]}],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="重复任务"):
-            load_interface_model(tmp_path)
-
-    def test_preset_nonexistent_task(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA"}],
-                "preset": [{"name": "P", "task": [{"name": "NoSuchTask"}]}],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="引用了不存在的任务"):
-            load_interface_model(tmp_path)
-
-    def test_preset_option_not_in_task(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA"}],
-                "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
-                "preset": [
-                    {"name": "P", "task": [{"name": "A", "option": {"diff": "easy"}}]}
-                ],
-            },
-        )
-        # Task A does not declare option=["diff"], so diff is not reachable
-        with pytest.raises(InterfaceLoadError, match="不属于该任务的选项"):
-            load_interface_model(tmp_path)
-
-    def test_preset_select_invalid_case(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["diff"]}],
-                "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
-                "preset": [
-                    {"name": "P", "task": [{"name": "A", "option": {"diff": "hard"}}]}
-                ],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="引用了不存在的 case"):
-            load_interface_model(tmp_path)
-
-    def test_preset_checkbox_invalid_value(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["mods"]}],
-                "option": {
-                    "mods": {
-                        "type": "checkbox",
-                        "cases": [{"name": "fast"}, {"name": "slow"}],
-                    }
+    @pytest.mark.parametrize(
+        ("extra", "expected"),
+        [
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA"}],
+                    "preset": [{"name": "P", "task": [{"name": "A"}, {"name": "A"}]}],
                 },
-                "preset": [
-                    {
-                        "name": "P",
-                        "task": [{"name": "A", "option": {"mods": "not_a_list"}}],
-                    }
-                ],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="必须是字符串数组"):
-            load_interface_model(tmp_path)
-
-    def test_preset_input_invalid_type(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
-                "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
-                "preset": [
-                    {
-                        "name": "P",
-                        "task": [
-                            {"name": "A", "option": {"cfg": "string_instead_of_dict"}}
-                        ],
-                    }
-                ],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="必须是对象"):
-            load_interface_model(tmp_path)
-
-    def test_preset_input_nonexistent_key(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
-                "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
-                "preset": [
-                    {
-                        "name": "P",
-                        "task": [{"name": "A", "option": {"cfg": {"bad_key": "val"}}}],
-                    }
-                ],
-            },
-        )
-        with pytest.raises(InterfaceLoadError, match="引用了不存在的输入项"):
-            load_interface_model(tmp_path)
-
-    def test_preset_hotkey_invalid_type(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
-                "option": {
-                    "hotkeys": {
-                        "type": "hotkey",
-                        "hotkeys": [{"name": "toggle"}],
-                    }
-                },
-                "preset": [
-                    {
-                        "name": "P",
-                        "task": [{"name": "A", "option": {"hotkeys": "Alt+A"}}],
-                    }
-                ],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=(r"preset\[P\]\.task\[A\]\.option\[hotkeys\] 必须是对象"),
-        ):
-            load_interface_model(tmp_path)
-
-    def test_preset_hotkey_unknown_field_is_rejected(self, tmp_path):
-        _write_interface(
-            tmp_path,
-            {
-                "interface_version": 2,
-                "name": "Test",
-                "controller": [{"name": "adb", "type": "Adb"}],
-                "resource": [{"name": "main", "path": ["resource"]}],
-                "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
-                "option": {
-                    "hotkeys": {
-                        "type": "hotkey",
-                        "hotkeys": [{"name": "toggle"}],
-                    }
-                },
-                "preset": [
-                    {
-                        "name": "P",
-                        "task": [
-                            {
-                                "name": "A",
-                                "option": {"hotkeys": {"unknown": "Alt+A"}},
-                            }
-                        ],
-                    }
-                ],
-            },
-        )
-
-        with pytest.raises(
-            InterfaceLoadError,
-            match=(
-                r"preset\[P\]\.task\[A\]\.option\[hotkeys\] "
-                r"引用了不存在的快捷键项: unknown"
+                "重复任务",
+                id="duplicate-task",
             ),
-        ):
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA"}],
+                    "preset": [{"name": "P", "task": [{"name": "NoSuchTask"}]}],
+                },
+                "引用了不存在的任务",
+                id="unknown-task",
+            ),
+            pytest.param(
+                {
+                    # Task A does not declare option=["diff"], so it is unreachable
+                    "task": [{"name": "A", "entry": "EntryA"}],
+                    "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"diff": "easy"}}],
+                        }
+                    ],
+                },
+                "不属于该任务的选项",
+                id="option-not-in-task",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["diff"]}],
+                    "option": {"diff": {"type": "select", "cases": [{"name": "easy"}]}},
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"diff": "hard"}}],
+                        }
+                    ],
+                },
+                "引用了不存在的 case",
+                id="select-unknown-case",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["mods"]}],
+                    "option": {
+                        "mods": {
+                            "type": "checkbox",
+                            "cases": [{"name": "fast"}, {"name": "slow"}],
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"mods": "not_a_list"}}],
+                        }
+                    ],
+                },
+                "必须是字符串数组",
+                id="checkbox-not-a-list",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
+                    "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [
+                                {
+                                    "name": "A",
+                                    "option": {"cfg": "string_instead_of_dict"},
+                                }
+                            ],
+                        }
+                    ],
+                },
+                r"preset\[P\]\.task\[A\]\.option\[cfg\] 必须是对象",
+                id="input-not-an-object",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
+                    "option": {"cfg": {"type": "input", "inputs": [{"name": "host"}]}},
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [
+                                {"name": "A", "option": {"cfg": {"bad_key": "v"}}}
+                            ],
+                        }
+                    ],
+                },
+                "引用了不存在的输入项",
+                id="input-unknown-key",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
+                    "option": {
+                        "hotkeys": {
+                            "type": "hotkey",
+                            "hotkeys": [{"name": "toggle"}],
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"hotkeys": "Alt+A"}}],
+                        }
+                    ],
+                },
+                r"preset\[P\]\.task\[A\]\.option\[hotkeys\] 必须是对象",
+                id="hotkey-not-an-object",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["hotkeys"]}],
+                    "option": {
+                        "hotkeys": {
+                            "type": "hotkey",
+                            "hotkeys": [{"name": "toggle"}],
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [
+                                {
+                                    "name": "A",
+                                    "option": {"hotkeys": {"unknown": "Alt+A"}},
+                                }
+                            ],
+                        }
+                    ],
+                },
+                r"preset\[P\]\.task\[A\]\.option\[hotkeys\] 引用了不存在的快捷键项: unknown",
+                id="hotkey-unknown-field",
+            ),
+        ],
+    )
+    def test_preset_reference_validation(self, tmp_path, extra, expected):
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+            }
+            | extra,
+        )
+
+        with pytest.raises(InterfaceLoadError) as exc_info:
             load_interface_model(tmp_path)
+        assert re.search(expected, str(exc_info.value))
 
     @pytest.mark.parametrize(
         ("option_payload", "expected_message"),

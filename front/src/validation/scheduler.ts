@@ -1,6 +1,5 @@
 import { z } from "zod"
 import { cronExpressionSchema } from "./cron"
-import { runtimeDeviceAddressSchema } from "./device"
 
 const taskNameSchema = z
   .string()
@@ -64,50 +63,12 @@ export const triggerConfigSchema = z.discriminatedUnion("type", [
   intervalTriggerSchema,
 ])
 
-const preTaskCommandSchema = z.object({
-  id: z.string().optional(),
-  command: z.string(),
-  enabled: z.boolean().default(true),
-  timeout: z.number().int().min(1).max(3600).default(30),
-})
-
-const deviceConfigSchema = z
-  .object({
-    controller_name: z.string().trim().min(1),
-    device_type: z.enum(["Adb", "Win32", "Gamepad", "PlayCover"]),
-    device_address: z.string().trim().min(1),
-  })
-  .superRefine((val, ctx) => {
-    const result = runtimeDeviceAddressSchema.safeParse({
-      type: val.device_type,
-      address: val.device_address,
-    })
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        ctx.addIssue({ ...issue, path: ["device_address"] })
-      }
-    }
-  })
-
-/** Full scheduler task form payload schema. */
+/**
+ * 只校验用户可在对话框里改错的部分；description / task_options / preTasks /
+ * device 等字段由后端 pydantic 模型负责。
+ */
 export const schedulerTaskFormSchema = z.object({
   name: taskNameSchema,
-  description: z.string().max(500).optional().nullable(),
-  enabled: z.boolean().default(true),
-  wakeup_enabled: z.boolean().default(false),
   trigger_config: triggerConfigSchema,
   task_list: z.array(z.string()).min(1, "task list must not be empty"),
-  task_options: z
-    .record(
-      z.string(),
-      z.record(
-        z.string(),
-        z.union([z.string(), z.array(z.string()), z.record(z.string(), z.string())]),
-      ),
-    )
-    .default({}),
-  preTasks: z.array(preTaskCommandSchema).default([]),
-  controller_name: z.string().nullable().optional(),
-  device: deviceConfigSchema.nullable().optional(),
-  resource_name: z.string().nullable().optional(),
 })

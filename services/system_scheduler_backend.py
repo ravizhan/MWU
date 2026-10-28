@@ -241,10 +241,10 @@ class MacOSBackend(SystemSchedulerBackend):
 
     def list_registered_task_ids(self) -> set[str]:
         task_ids: set[str] = set()
+        plist_dir = self._PLIST_DIR
+        if not plist_dir.is_dir():
+            return task_ids
         try:
-            plist_dir = self._PLIST_DIR
-            if not plist_dir.is_dir():
-                return task_ids
             for plist_path in plist_dir.glob(f"{self._PLIST_PREFIX}*.plist"):
                 match = re.search(
                     r"com\.mwu\.scheduler\.([a-f0-9-]{36})\.plist", plist_path.name
@@ -252,8 +252,8 @@ class MacOSBackend(SystemSchedulerBackend):
                 if match:
                     task_ids.add(match.group(1))
         except OSError as exc:
-            logger.warning("查询 macOS 计划任务失败: %s", exc)
-            return set()
+            # 未知错误必须上抛，避免把未知状态当空而误清孤儿
+            raise RuntimeError(f"查询 macOS 计划任务失败: {exc}") from exc
         return task_ids
 
 

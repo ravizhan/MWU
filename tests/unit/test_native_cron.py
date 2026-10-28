@@ -1,12 +1,12 @@
-"""Tests for services/native_cron.py — parse + OS conversion."""
+"""Tests for services/native_cron.py — OS conversion and conflict detection."""
 
 import pytest
 
+from models.scheduler import NativeCron
+from models.scheduler import parse_portable_cron as parse_native_cron
 from services.native_cron import (
-    NativeCron,
     aps_dow_to_unix,
     native_crons_may_conflict,
-    parse_native_cron,
     to_crontab_line,
     to_launchd_calendar,
     to_schtasks_args,
@@ -38,38 +38,6 @@ class TestParseNativeCron:
         nc = parse_native_cron("45 * * * *")
         assert nc.minute == 45
         assert nc.hour is None
-
-    def test_rejects_invalid(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("*/2 * * * *")
-
-    def test_rejects_empty(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("")
-
-    def test_rejects_4_fields(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 * *")
-
-    def test_rejects_day_and_dow(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 15 * 1")
-
-    def test_rejects_hour_star_with_day(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("30 * 15 * *")
-
-    def test_rejects_month_without_day(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 * 6 *")
-
-    def test_rejects_minute_star(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("* 9 * * *")
-
-    def test_rejects_feb_30(self):
-        with pytest.raises(ValueError):
-            parse_native_cron("0 9 30 2 *")
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import type { ApiResponse } from "@/services/api/core/types"
-import { CUSTOM_PRESET_NAME, type PersistedTaskConfig } from "@/types/taskConfigModel"
+import type { PersistedTaskConfig } from "@/types/taskConfigModel"
 
 interface TaskConfigResponse {
   status: string
@@ -11,21 +11,10 @@ export function getTaskConfig(): Promise<PersistedTaskConfig> {
   return fetch("/api/task-config", { method: "GET" })
     .then((res) => res.json())
     .then((data: TaskConfigResponse) => {
-      if (data.status === "success") {
-        return data.config
+      if (data.status !== "success") {
+        throw new Error(data.message || "Failed to load task config")
       }
-      console.error("Failed to load task config:", data.message)
-      return {
-        selectedPreset: CUSTOM_PRESET_NAME,
-        presets: {},
-      }
-    })
-    .catch((error) => {
-      console.error("Failed to load task config:", error)
-      return {
-        selectedPreset: CUSTOM_PRESET_NAME,
-        presets: {},
-      }
+      return data.config
     })
 }
 

@@ -99,7 +99,7 @@ const {
 } = defineProps<Props>()
 
 const emit = defineEmits<Emits>()
-const { locale, t } = useI18n()
+const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 
 function isIncompatible(taskId: string): boolean {
@@ -115,7 +115,7 @@ const taskListData = computed({
 
 function resolveTaskLabel(taskId: string, fallback: string) {
   const task = interfaceStore.getTaskByName(taskId)
-  return resolveInterfaceText(interfaceStore.interface, locale.value, task?.label, fallback)
+  return resolveInterfaceText(task?.label, fallback)
 }
 
 function hasDocumentContent(task: Task): boolean {

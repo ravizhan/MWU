@@ -198,7 +198,8 @@ class PretaskService:
             try:
                 for line in stdout:
                     output_lines.append(line)
-            except Exception:
+            except (OSError, ValueError):
+                # 进程被强制结束时管道可能已关闭
                 pass
 
         reader_thread = threading.Thread(target=_reader, daemon=True)
@@ -268,25 +269,27 @@ class PretaskService:
         if process is not None and process.poll() is None:
             self._terminate_process(process)
 
-    @staticmethod
-    def _terminate_process(process: subprocess.Popen) -> None:
+    def _terminate_process(self, process: subprocess.Popen) -> None:
         try:
             process.terminate()
-        except Exception:
+        except OSError:
             pass
         try:
             process.wait(timeout=2)
-        except Exception:
+        except subprocess.TimeoutExpired:
+            self.worker.events.send_log(
+                f"前置任务进程未在 2 秒内退出，强制结束: {process.pid}"
+            )
             if sys.platform == "win32":
                 try:
                     subprocess.run(
                         ["taskkill", "/T", "/F", "/PID", str(process.pid)],
                         check=False,
                     )
-                except Exception:
+                except OSError:
                     pass
             else:
                 try:
                     process.kill()
-                except Exception:
+                except OSError:
                     pass

@@ -6,14 +6,12 @@
 import { computed, ref, watch } from "vue"
 import DOMPurify from "dompurify"
 import { marked } from "marked"
-import { useInterfaceStore } from "@/stores"
 import { resolveInterfaceDocumentContent } from "@/utils/interface/content"
 
 const { text } = defineProps<{
   text?: string
 }>()
 
-const interfaceStore = useInterfaceStore()
 const documentContent = ref("")
 
 watch(
@@ -23,7 +21,7 @@ watch(
     onCleanup(() => {
       stale = true
     })
-    const content = await resolveInterfaceDocumentContent(interfaceStore.interface, "", value)
+    const content = await resolveInterfaceDocumentContent(value)
     if (!stale) {
       documentContent.value = content
     }

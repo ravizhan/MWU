@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 from maa.agent_client import AgentClient
 
+from app_paths import resolve_app_root
+
 # Sink 基类名称映射 — 用于 AST 隐式继承检测
 _SINK_BASE_CLASS_MAP: dict[str, str] = {
     "ResourceEventSink": "resource",
@@ -94,9 +96,7 @@ _deps_first_finder: _DepsFirstFinder | None = None
 
 
 def _resolve_runtime_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
+    return resolve_app_root()
 
 
 def _resolve_runtime_path(path_value: str, runtime_root: Path) -> Path:

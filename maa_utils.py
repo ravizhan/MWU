@@ -1,5 +1,4 @@
 import io
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -8,6 +7,7 @@ from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 from PIL import Image
 
+from app_paths import resolve_app_root
 from app_state import WorkerContext
 from maa_worker.agent_service import AgentService
 from maa_worker.device_service import DeviceService
@@ -31,6 +31,7 @@ class MaaWorker:
         self,
         state: "AppState",
         interface: InterfaceModel,
+        interface_translations: dict[str, dict] | None = None,
     ):
         self.state = state
         self.interface = interface
@@ -39,7 +40,10 @@ class MaaWorker:
         self.tasker = Tasker()
         self.http_client = httpx.Client(timeout=30)
 
-        self.context = WorkerContext(interface_base_dir=self._resolve_app_root())
+        self.context = WorkerContext(
+            interface_base_dir=resolve_app_root(),
+            interface_translations=interface_translations,
+        )
         self.device_state = state.device
         self.task_state = state.task
         self.agent_state = state.agent
@@ -60,14 +64,6 @@ class MaaWorker:
 
         self.events.send_log("MAA初始化成功")
 
-    @staticmethod
-    def _resolve_app_root() -> Path:
-        import sys
-
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent
-
     def get_screencap_bytes(self):
         controller = self.device_state.controller
         if not self.device_state.connected or controller is None:
@@ -79,7 +75,8 @@ class MaaWorker:
                 img_byte_arr = io.BytesIO()
                 image_pil.save(img_byte_arr, format="JPEG")
                 return img_byte_arr.getvalue()
-        except Exception:
+        except Exception as e:
+            self.events.send_log(f"截图失败，已解除设备锁定: {e}")
             self.device.reset_connection_state(
                 "检测到设备连接已断开，已解除设备与资源锁定"
             )

@@ -14,6 +14,7 @@ import {
   stopTask,
   type ConnectableDevice,
   type DeviceControllerCapability,
+  type PlayCoverDevice,
   type PostDeviceResult,
   type PostResourceResult,
 } from "@/services/api"
@@ -40,10 +41,8 @@ import {
 
 let watcherStopHandles: (() => void)[] = []
 
-/** In-flight stopActiveAndRestart promise; concurrent calls coalesce onto this one operation. */
-let activeRestartPromise: Promise<boolean> | null = null
-/** Cleanup handles (release watcher / retry timers) for the currently in-flight restart op. */
-let activeRestartCleanup: (() => void)[] = []
+/** Upper bound for waiting on the backend to release its run slot after stop. */
+const STOP_WAIT_TIMEOUT_MS = 30_000
 
 export const useDeviceConnectionStore = defineStore("deviceConnection", {
   state: (): {
@@ -343,19 +342,17 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       this.selectedDeviceKey = null
     },
 
-    resetDeviceLoading(requestId: number) {
-      if (requestId === this._fetchDevicesRequestId) {
-        this.loading = false
-      }
-    },
-
     async fetchDevices(controllerName?: string, restoreStored = false) {
       const requestId = ++this._fetchDevicesRequestId
       this.loading = true
 
       const [data] = await tryCatch(() => getDevices(controllerName))
-      if (!data || requestId !== this._fetchDevicesRequestId) {
-        this.resetDeviceLoading(requestId)
+      // A newer request owns `loading`; only the latest one may clear it.
+      if (requestId !== this._fetchDevicesRequestId) {
+        return false
+      }
+      if (!data) {
+        this.loading = false
         return false
       }
 
@@ -363,7 +360,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       if (!selectedCapability) {
         this.availableDevices = []
         this.selectedDeviceKey = null
-        this.resetDeviceLoading(requestId)
+        this.loading = false
         return true
       }
 
@@ -374,7 +371,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         this.hydrateLockedSelection(this.connectedControllerName, this.connectedResourceName)
       }
 
-      this.resetDeviceLoading(requestId)
+      this.loading = false
       return true
     },
 
@@ -410,11 +407,8 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     },
 
     // --- Custom device creation ---
-    isStillOnController(controllerName: string, displayLabel: string): boolean {
-      return (
-        this.selectedControllerCapability?.name === controllerName ||
-        this.selectedController === displayLabel
-      )
+    isStillOnController(controllerName: string): boolean {
+      return this.selectedControllerCapability?.name === controllerName
     },
 
     handleCustomDeviceSaveFailure(previousKey: string | null, message?: string) {
@@ -423,17 +417,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       showGlobalMessage("error", message || "保存自定义设备失败")
     },
 
-    async selectPersistedCustomDevice(
-      persisted: ConnectableDevice,
-      controllerName: string,
-      displayLabel: string,
-    ) {
+    async selectPersistedCustomDevice(persisted: ConnectableDevice, controllerName: string) {
       const applied = await this.fetchDevices(controllerName)
       // Stale GET discarded by request-id — do not reselect on old controller
       if (!applied) {
         return
       }
-      if (!this.isStillOnController(controllerName, displayLabel)) {
+      if (!this.isStillOnController(controllerName)) {
         return
       }
 
@@ -466,7 +456,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const address = parseResult.data.address
 
       const controllerName = capability.name
-      const displayLabel = capability.display_label
       const previousKey = this.selectedDeviceKey
 
       const [result] = await tryCatch(() =>
@@ -478,7 +467,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       )
 
       // Still on the same controller after POST? (user may have switched meanwhile)
-      if (!this.isStillOnController(controllerName, displayLabel)) {
+      if (!this.isStillOnController(controllerName)) {
         return
       }
 
@@ -487,10 +476,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         return
       }
 
-      await this.selectPersistedCustomDevice(result.data, controllerName, displayLabel)
+      await this.selectPersistedCustomDevice(result.data, controllerName)
     },
 
-    buildPlayCoverDevice(): { device: ConnectableDevice } | { error: string } {
+    buildPlayCoverDevice(): { device: PlayCoverDevice } | { error: string } {
       const t = i18n.global.t
       const parseResult = playCoverAddressSchema.safeParse(this.playCoverAddress)
       if (!parseResult.success) {
@@ -555,14 +544,9 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return result
     },
 
-    resetResourceLoading(requestId: number) {
-      if (requestId === this._fetchResourcesRequestId) {
-        this.loading = false
-      }
-    },
-
     async getResourceList() {
-      if (this.isDeviceResourceLocked || !this.selectedControllerCapability) {
+      const capability = this.selectedControllerCapability
+      if (this.isDeviceResourceLocked || !capability) {
         return
       }
 
@@ -571,15 +555,12 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       this.resourcesList = []
       this.loading = true
 
-      const capability = this.selectedControllerCapability
-      if (!capability) {
-        this.resetResourceLoading(requestId)
+      const [resourceData] = await tryCatch(() => getResource(capability.type))
+      if (requestId !== this._fetchResourcesRequestId) {
         return
       }
-
-      const [resourceData] = await tryCatch(() => getResource(capability.type))
-      if (!resourceData || requestId !== this._fetchResourcesRequestId) {
-        this.resetResourceLoading(requestId)
+      if (!resourceData) {
+        this.loading = false
         return
       }
 
@@ -588,7 +569,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       if (savedResource && resourceData.some((item) => item.name === savedResource)) {
         this.resource = savedResource
       }
-      this.resetResourceLoading(requestId)
+      this.loading = false
     },
 
     async postResourceSelection(): Promise<PostResourceResult> {
@@ -672,9 +653,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
           showGlobalMessage("error", "设备连接失败: " + playCoverResult.error)
           return false
         }
-        if (playCoverResult.device.type !== "PlayCover") {
-          return false
-        }
         deviceAddress = playCoverResult.device.address
       }
 
@@ -692,7 +670,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const result = await startTask(payload)
       if (result.accepted) {
         indexStore.setTaskRunning(true)
-        // 清掉重试路径留下的过期冲突，避免 StartConflictDialog 在运行中弹出
+        // 清掉过期冲突，避免 StartConflictDialog 在运行中弹出
         this.startConflict = null
         return true
       }
@@ -701,8 +679,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         this.startConflict = result.conflict ?? null
         return false
       }
-      // 非冲突失败同样清掉过期冲突：否则 stopActiveAndRestart 的重试条件
-      // 会拿着旧的 busy_manual 继续空转，对话框也停留在已失效的冲突状态。
+      // 非冲突失败同样清掉过期冲突，避免对话框停留在已失效的冲突状态。
       this.startConflict = null
       return false
     },
@@ -712,90 +689,20 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     },
 
     async stopActiveAndRestart(): Promise<boolean> {
-      // 并发保护：双击等重入调用 coalesce 到同一操作上，避免出现两套 stop/等待/重试循环。
-      if (activeRestartPromise) {
-        return activeRestartPromise
+      const stopped = await stopTask()
+      if (!stopped) {
+        return false
       }
+      this.clearStartConflict()
 
-      const runRestart = async (): Promise<boolean> => {
-        const attempt = async (): Promise<boolean> => {
-          const stopped = await stopTask()
-          if (!stopped) {
-            return false
-          }
-          this.clearStartConflict()
-          // 等待后端工作线程结束：SSE task.completed/failed 由 dispatcher 置 TaskRunning=false。
-          // 注意：后端终端事件在 run_process 的 finally 之前发出（task_service.py），即事件
-          // 先于 active_run 清槽（execution.py 的 _complete_run 收尾），因此 TaskRunning=false
-          // 不代表准入槽位已释放，下方必须对 busy_manual 冲突做有限重试。
-          const indexStore = useIndexStore()
-          const released = await new Promise<boolean>((resolve) => {
-            if (!indexStore.TaskRunning) {
-              resolve(true)
-              return
-            }
-            const timer = window.setTimeout(() => {
-              releaseWatch?.()
-              resolve(false)
-            }, 30_000)
-            let releaseWatch: (() => void) | null = null
-            releaseWatch = watch(
-              () => indexStore.TaskRunning,
-              (running) => {
-                if (!running) {
-                  window.clearTimeout(timer)
-                  releaseWatch?.()
-                  resolve(true)
-                }
-              },
-            )
-            // 注册到 store 清理机制：导航/卸载时取消挂起的等待与定时器，并中止本次操作。
-            activeRestartCleanup.push(() => {
-              window.clearTimeout(timer)
-              releaseWatch?.()
-              resolve(false)
-            })
-          })
-          if (!released) {
-            const t = i18n.global.t
-            showGlobalMessage("error", t("settings.scheduler.conflict.stopTimeout"))
-            return false
-          }
-          // active_run 清槽晚于终端事件（落库在 asyncio.to_thread 中），轮询重试直至准入成功；
-          // 仅对 busy_manual 重试——busy_scheduled/update_in_progress 是真实占用，立即返回冲突。
-          // 上限 60s：后端收尾含 sqlite 落库，正常在数百毫秒内完成。
-          const deadline = Date.now() + 60_000
-          let restarted = await this.StartTask()
-          while (!restarted && this.startConflict?.code === "busy_manual") {
-            // 睡前的 deadline 检查：已到上限即不再重试。
-            if (Date.now() >= deadline) {
-              break
-            }
-            const slept = await new Promise<boolean>((resolve) => {
-              const timer = window.setTimeout(() => resolve(true), 500)
-              activeRestartCleanup.push(() => {
-                window.clearTimeout(timer)
-                resolve(false)
-              })
-            })
-            // 睡后再次检查 deadline，确保不会在超时之后仍发起启动尝试。
-            if (!slept || Date.now() >= deadline) {
-              break
-            }
-            restarted = await this.StartTask()
-          }
-          return restarted
-        }
-        const [result] = await tryCatch(attempt)
-        // 统一清理：无论成功/失败/异常，释放挂起的清理器与重入守卫。
-        activeRestartCleanup.forEach((fn) => fn())
-        activeRestartCleanup = []
-        activeRestartPromise = null
-        return result ?? false
+      // 后端在终端事件之前清空 active_run，因此 TaskRunning=false 即可安全重新准入。
+      const indexStore = useIndexStore()
+      const released = await waitUntilTaskStopped(() => indexStore.TaskRunning)
+      if (!released) {
+        showGlobalMessage("error", i18n.global.t("settings.scheduler.conflict.stopTimeout"))
+        return false
       }
-
-      activeRestartPromise = runRestart()
-      return activeRestartPromise
+      return this.StartTask()
     },
 
     // --- Config reset ---
@@ -890,17 +797,37 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       watcherStopHandles.forEach((stop) => stop())
       watcherStopHandles = []
 
-      // 取消进行中的 stopActiveAndRestart（释放等待 watcher、重试定时器），避免卸载后继续空转。
-      activeRestartCleanup.forEach((fn) => fn())
-      activeRestartCleanup = []
-      activeRestartPromise = null
-
       this.initialized = false
     },
   },
 })
 
 // --- Helper functions used by the store ---
+
+/**
+ * Wait (bounded) until the SSE terminal event clears TaskRunning.
+ * The backend clears `active_run` before publishing `task.completed/failed`,
+ * so a cleared flag means the next start request cannot hit busy_manual.
+ */
+function waitUntilTaskStopped(isRunning: () => boolean): Promise<boolean> {
+  if (!isRunning()) {
+    return Promise.resolve(true)
+  }
+  return new Promise<boolean>((resolve) => {
+    let stopWatching: (() => void) | null = null
+    const timer = window.setTimeout(() => {
+      stopWatching?.()
+      resolve(false)
+    }, STOP_WAIT_TIMEOUT_MS)
+    stopWatching = watch(isRunning, (running) => {
+      if (!running) {
+        window.clearTimeout(timer)
+        stopWatching?.()
+        resolve(true)
+      }
+    })
+  })
+}
 
 /** Backend device_address format per device type (mirrors maa_worker/device_service.py). */
 function buildDeviceAddress(device: ConnectableDevice | null): string {

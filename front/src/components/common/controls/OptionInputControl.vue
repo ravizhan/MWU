@@ -37,9 +37,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue"
-import { useI18n } from "vue-i18n"
 import { showGlobalMessage } from "@/services/feedback/message"
-import { useInterfaceStore } from "@/stores"
 import type { InputCase, InputOption } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { makeInterfaceInputSchema } from "@/validation/interfaceInput"
@@ -54,14 +52,12 @@ const emit = defineEmits<{
   (event: "update:value", value: Record<string, string>): void
 }>()
 
-const { locale } = useI18n()
-const interfaceStore = useInterfaceStore()
 const inputInvalidState = ref<Record<string, boolean>>({})
 
 type InputControlType = "string" | "number" | "bool" | "textarea"
 
 function resolveInputLabel(label: string | undefined, fallback: string): string {
-  return resolveInterfaceText(interfaceStore.interface, locale.value, label, fallback)
+  return resolveInterfaceText(label, fallback)
 }
 
 function getInputValue(inputName: string): string {
@@ -93,12 +89,7 @@ function handleInputChange(inputName: string, value: string, input: InputCase): 
 
   inputInvalidState.value = { ...inputInvalidState.value, [inputName]: true }
   if (!wasInvalid && input.pattern_msg) {
-    const message = resolveInterfaceText(
-      interfaceStore.interface,
-      locale.value,
-      input.pattern_msg,
-      input.pattern_msg,
-    )
+    const message = resolveInterfaceText(input.pattern_msg, input.pattern_msg)
     showGlobalMessage("error", message)
   }
 }

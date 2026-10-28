@@ -63,8 +63,6 @@
       "title": "运行设置",
       "timeout": "超时时间",
       "timeoutSuffix": "秒",
-      "reminderInterval": "提醒间隔",
-      "reminderSuffix": "分钟",
       "autoRetry": "自动重试",
       "maxRetryCount": "最大重试次数"
     },
@@ -301,7 +299,8 @@
       "incompatibleController": "与当前控制器不兼容",
       "incompatibleResource": "与当前资源不兼容",
       "incompatibleBoth": "与当前控制器和资源不兼容"
-    }
+    },
+    "taskConfigLoadFailed": "任务配置加载失败，本次不会自动保存"
   },
   "taskConfig": {
     "preTasks": {

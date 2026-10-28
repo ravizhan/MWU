@@ -76,7 +76,7 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 
 function formatTriggerText(triggerConfig: TriggerConfig): string {
-  return formatTrigger(t, locale.value, triggerConfig.type, triggerConfig)
+  return formatTrigger(t, locale.value, triggerConfig)
 }
 
 function formatDateTimeText(dateStr?: string): string {

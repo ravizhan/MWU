@@ -1,13 +1,10 @@
 import { z } from "zod"
 
 export const updateChannelSchema = z.enum(["stable", "beta"])
-export type UpdateChannel = z.output<typeof updateChannelSchema>
 
 export const localeSchema = z.enum(["zh-CN", "en-US"])
-export type Locale = z.output<typeof localeSchema>
 
 export const darkModeSchema = z.union([z.literal("auto"), z.boolean()])
-export type DarkMode = z.output<typeof darkModeSchema>
 
 /** Runtime number schema: empty string = no update, otherwise finite integer with clamp. */
 export function makeRuntimeNumberSchema(min: number, max: number) {

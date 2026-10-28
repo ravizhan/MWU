@@ -61,7 +61,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { useI18n } from "vue-i18n"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
 import type {
@@ -86,15 +85,12 @@ const { name, level } = defineProps<{
   level?: number
 }>()
 
-const { locale } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
 const scanSelectRefreshing = ref(false)
 const option = computed(() => interfaceStore.interface?.option?.[name])
 
-const resolvedLabel = computed(() =>
-  resolveInterfaceText(interfaceStore.interface, locale.value, option.value?.label, name),
-)
+const resolvedLabel = computed(() => resolveInterfaceText(option.value?.label, name))
 
 const defaultValue = computed<TaskOptionValue>(() => {
   const currentOption = option.value
@@ -150,7 +146,7 @@ const checkboxValue = computed<string[]>({
 })
 
 function resolveCaseLabel(label: string | undefined, fallback: string): string {
-  return resolveInterfaceText(interfaceStore.interface, locale.value, label, fallback)
+  return resolveInterfaceText(label, fallback)
 }
 
 const selectOptions = computed(() => {
