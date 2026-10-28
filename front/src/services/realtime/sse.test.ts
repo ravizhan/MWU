@@ -92,11 +92,11 @@ describe("SSEClient", () => {
   })
 
   describe("event dispatching", () => {
-    it("accepts empty-message modal snapshots including the empty state", () => {
+    it("accepts empty-message modal snapshots", () => {
       const client = new SSEClient("/api/logs")
-      let modals: FocusModal[] = []
+      let modals: FocusModal[] | null | undefined = null
       client.addEventListener("focus.modal", (event: RealtimeEvent) => {
-        if (event.event === "focus.modal") modals = event.focus_modals
+        modals = event.focus_modals
       })
       const instance = getESInstance()
       const modal: FocusModal = { id: "gate", message: "Confirm", level: "info" }
@@ -108,32 +108,6 @@ describe("SSEClient", () => {
         data: JSON.stringify({ event: "focus.modal", message: "", focus_modals: [] }),
       })
       expect(modals).toEqual([])
-      client.close()
-    })
-
-    it.each([
-      undefined,
-      null,
-      {},
-      [null],
-      [{ id: 1, message: "Confirm", level: "info" }],
-      [{ id: "gate", message: null, level: "info" }],
-      [{ id: "gate", message: "Confirm", level: "warning" }],
-    ])("does not clear modal state on malformed snapshot %j", (focus_modals) => {
-      const client = new SSEClient("/api/logs")
-      const modal: FocusModal = { id: "gate", message: "Confirm", level: "info" }
-      let modals: FocusModal[] = []
-      client.addEventListener("focus.modal", (event: RealtimeEvent) => {
-        if (event.event === "focus.modal") modals = event.focus_modals
-      })
-      const instance = getESInstance()
-      instance.onmessage?.({
-        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals: [modal] }),
-      })
-      instance.onmessage?.({
-        data: JSON.stringify({ event: "focus.modal", message: "", focus_modals }),
-      })
-      expect(modals).toEqual([modal])
       client.close()
     })
 

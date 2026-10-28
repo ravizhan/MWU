@@ -154,12 +154,12 @@ class TaskService:
         state = self.worker.task_state
         with self.worker.focus_state.lock:
             state.stop_flag = True
-        try:
-            if self.worker.tasker.running:
-                self.worker.tasker.post_stop()
-        finally:
-            self.worker.focus.cancel_pending()
-            self.worker.pretasks.stop_current()
+        # post_stop 同步置位 MAA 停止标志，之后放行 modal 时动作不会再执行；
+        # 不能 wait()：停止任务排在被 modal 阻塞的当前任务之后，会死锁。
+        if self.worker.tasker.running:
+            self.worker.tasker.post_stop()
+        self.worker.focus.cancel_pending()
+        self.worker.pretasks.stop_current()
         while self.worker.tasker.running:
             time.sleep(0.5)
         return True

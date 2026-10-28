@@ -43,7 +43,7 @@ class FocusTemplate:
 
         - str : 简写，等价 display=["log"]
         - dict: 完整对象 { "content": "...", "display": [...] }
-        - 其它: 空模板（content=None，display=[]）
+        - 其它或 content 非字符串: content=None，不展示
         """
         if isinstance(raw, str):
             return FocusTemplate(content=raw, display=[DISPLAY_LOG])
@@ -52,15 +52,9 @@ class FocusTemplate:
 
         content = raw.get("content")
         display = raw.get("display", DISPLAY_LOG)
-        if isinstance(display, str):
-            channels = [display]
-        elif isinstance(display, list):
-            channels = [item for item in display if isinstance(item, str)]
-        else:
-            channels = []
         return FocusTemplate(
             content=content if isinstance(content, str) else None,
-            display=channels,
+            display=display if isinstance(display, list) else [display],
         )
 
 

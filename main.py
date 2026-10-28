@@ -195,12 +195,9 @@ async def log_monitor():
         while not app_state.message_conn.empty():
             message = app_state.message_conn.get_nowait()
             if message.event == "focus.modal":
-                # 队列里只是「状态已变更」标记：按发送当时的服务端状态投影，
-                # 避免排队期间的旧快照覆盖客户端较新的状态。
-                if app_state.worker is not None and app_state.broadcaster:
-                    await app_state.broadcaster.broadcast(
-                        app_state.worker.focus.snapshot()
-                    )
+                # modal 快照是状态而非日志，不进历史；重连时由 stream_logs 补发当前快照。
+                if app_state.broadcaster:
+                    await app_state.broadcaster.broadcast(message)
                 continue
             app_state.history_message.append(message)
             if app_state.broadcaster:

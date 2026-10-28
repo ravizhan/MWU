@@ -15,7 +15,8 @@ export interface FocusModal {
   level: RealtimeEventLevel
 }
 
-interface RealtimeEventFields {
+export interface RealtimeEvent {
+  event: RealtimeEventName
   level: RealtimeEventLevel
   message: string
   time: string
@@ -23,10 +24,5 @@ interface RealtimeEventFields {
   title?: string | null
   details?: Record<string, unknown> | null
   display: boolean
+  focus_modals?: FocusModal[] | null
 }
-
-export type RealtimeEvent = RealtimeEventFields &
-  (
-    | { event: Exclude<RealtimeEventName, "focus.modal"> }
-    | { event: "focus.modal"; focus_modals: FocusModal[] }
-  )

@@ -15,11 +15,6 @@ interface FocusState {
   busy: boolean
 }
 
-export interface FocusEventReceiver {
-  enqueueDialog(message: string, level: RealtimeEventLevel): void
-  replaceModals(modals: FocusModal[]): void
-}
-
 export const useFocusStore = defineStore("focus", {
   state: (): FocusState => ({
     dialogs: [],

@@ -40,15 +40,12 @@ class FocusEventProcessor:
 
     def confirm(self, focus_id: str) -> None:
         """确认并放行指定 modal；未知或已解除的 ID 直接忽略。"""
-        state = self.worker.task_state
         focus_state = self.worker.focus_state
         with focus_state.lock:
-            if state.stop_flag or self.worker.state.is_shutting_down:
-                return
             pending = focus_state.pending.pop(focus_id, None)
             if pending is None:
                 return
-            self.worker.message_conn.put(self._state_event())
+            self.worker.message_conn.put(self._snapshot_locked())
             pending.released.set()
 
     def cancel_pending(self) -> None:
@@ -59,29 +56,34 @@ class FocusEventProcessor:
                 return
             pending = list(focus_state.pending.values())
             focus_state.pending.clear()
-            self.worker.message_conn.put(self._state_event())
+            self.worker.message_conn.put(self._snapshot_locked())
             for entry in pending:
                 entry.released.set()
 
     def snapshot(self) -> RealtimeEvent:
         """当前未确认 modal 的完整状态快照。"""
-        focus_state = self.worker.focus_state
-        with focus_state.lock:
-            return RealtimeEvent(
-                event="focus.modal",
-                message="",
-                time=current_time(),
-                display=False,
-                focus_modals=[entry.modal for entry in focus_state.pending.values()],
-            )
+        with self.worker.focus_state.lock:
+            return self._snapshot_locked()
 
     # ---- 内部方法 ------------------------------------------------------------
 
+    def _snapshot_locked(self) -> RealtimeEvent:
+        return RealtimeEvent(
+            event="focus.modal",
+            message="",
+            time=current_time(),
+            display=False,
+            focus_modals=[
+                entry.modal for entry in self.worker.focus_state.pending.values()
+            ],
+        )
+
     def _dispatch_modal(self, event: FocusDisplayEvent) -> None:
-        state = self.worker.task_state
         focus_state = self.worker.focus_state
         with focus_state.lock:
-            if state.stop_flag or self.worker.state.is_shutting_down:
+            # stop() 在同一把锁下置位 stop_flag 后才 cancel_pending，
+            # 停止之后到达的 modal 必须直接跳过，否则无人放行。
+            if self.worker.task_state.stop_flag:
                 return
             focus_id = uuid.uuid4().hex
             pending = PendingFocusModal(
@@ -92,21 +94,18 @@ class FocusEventProcessor:
                 )
             )
             focus_state.pending[focus_id] = pending
-            self.worker.message_conn.put(self._state_event())
+            self.worker.message_conn.put(self._snapshot_locked())
 
-        # 与 modal 同时出现的 dialog 不再单独展示，避免同一信息关闭两次。
-        self._emit_common(event, include_dialog=False)
+        self._emit_common(event)
         pending.released.wait()
 
-    def _emit_common(
-        self, event: FocusDisplayEvent, *, include_dialog: bool = True
-    ) -> None:
+    def _emit_common(self, event: FocusDisplayEvent) -> None:
         notify: list[str] = []
         if event.has_toast:
             notify.append(DISPLAY_TOAST)
         if event.has_notification:
             notify.append(DISPLAY_NOTIFICATION)
-        if include_dialog and event.has_dialog:
+        if event.has_dialog:
             notify.append(DISPLAY_DIALOG)
 
         if not event.has_log and not notify:
@@ -118,12 +117,4 @@ class FocusEventProcessor:
             display=event.has_log,
             notify=notify,
             level=event.level,
-        )
-
-    def _state_event(self) -> RealtimeEvent:
-        return RealtimeEvent(
-            event="focus.modal",
-            message="",
-            time=current_time(),
-            display=False,
         )

@@ -1,6 +1,6 @@
 <template>
   <NModal
-    v-for="prompt in active ? [active] : []"
+    v-if="prompt"
     :key="`${prompt.kind}:${prompt.id}`"
     :show="true"
     preset="dialog"
@@ -62,7 +62,7 @@ import { useFocusStore } from "@/stores/focus/focus"
 
 const { t } = useI18n()
 const focusStore = useFocusStore()
-const active = computed(() => focusStore.active)
+const prompt = computed(() => focusStore.active)
 
 async function handleConfirm(id: string): Promise<void> {
   const success = await focusStore.confirmModal(id)

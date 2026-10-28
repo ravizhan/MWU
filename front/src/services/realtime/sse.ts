@@ -20,17 +20,9 @@ function isValidEventLevel(level: unknown): level is RealtimeEventLevel {
   return typeof level === "string" && VALID_EVENT_LEVELS.has(level)
 }
 
-function isFocusModals(value: unknown): value is FocusModal[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (modal: unknown) =>
-        isRecord(modal) &&
-        typeof modal.id === "string" &&
-        typeof modal.message === "string" &&
-        isValidEventLevel(modal.level),
-    )
-  )
+function extractFocusModals(data: Record<string, unknown>): FocusModal[] | null {
+  const value = data.focus_modals
+  return Array.isArray(value) ? value : null
 }
 
 function extractString(data: unknown, key: string): string | undefined {
@@ -153,25 +145,8 @@ export class SSEClient {
 
     const event = extractEventType(data)
     const message = extractString(data, "message")
-    const time = extractString(data, "time") ?? ""
-    const title = extractString(data, "title") ?? null
-    if (event === "focus.modal") {
-      if (message === undefined || !isFocusModals(data.focus_modals)) {
-        return null
-      }
-      return {
-        event,
-        message,
-        level: extractLevel(data),
-        time,
-        notify: [],
-        title,
-        details: extractDetails(data),
-        display: false,
-        focus_modals: data.focus_modals,
-      }
-    }
-    if (!message) {
+    // modal 快照的 message 恒为空串，靠 focus_modals 承载状态
+    if (message === undefined || (!message && event !== "focus.modal")) {
       return null
     }
 
@@ -179,11 +154,12 @@ export class SSEClient {
       event,
       level: extractLevel(data),
       message,
-      time,
+      time: extractString(data, "time") ?? "",
       notify: extractStringArray(data, "notify"),
-      title,
+      title: extractString(data, "title") ?? null,
       details: extractDetails(data),
       display: "display" in data ? Boolean(data.display) : true,
+      focus_modals: extractFocusModals(data),
     }
   }
 

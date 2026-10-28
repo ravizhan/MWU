@@ -1,13 +1,13 @@
 import type { RealtimeEvent, RealtimeEventName } from "@/types/realtimeModel"
 import type { useIndexStore } from "@/stores/panel/session"
 import type { useSettingsStore } from "@/stores/settings/settings"
-import type { FocusEventReceiver } from "@/stores/focus/focus"
+import type { useFocusStore } from "@/stores/focus/focus"
 import { formatRealtimeLog, showBrowserRealtimeNotification, showToastMessage } from "./events"
 
 export interface RealtimeStoreRefs {
   indexStore: ReturnType<typeof useIndexStore>
   settingsStore: ReturnType<typeof useSettingsStore>
-  focusStore: FocusEventReceiver
+  focusStore: ReturnType<typeof useFocusStore>
 }
 
 /**
@@ -78,7 +78,7 @@ const typeHandlers: Partial<
  */
 export function dispatchRealtimeEvent(event: RealtimeEvent, stores: RealtimeStoreRefs): void {
   if (event.event === "focus.modal") {
-    stores.focusStore.replaceModals(event.focus_modals)
+    stores.focusStore.replaceModals(event.focus_modals ?? [])
     return
   }
   const handler = typeHandlers[event.event]
