@@ -867,3 +867,40 @@ class TestStopAndCancel:
         row = list_executions(state.scheduler_db_path)[0]
         assert row.id == admission.run_id
         assert row.status == "stopped"
+
+    async def test_cancel_during_pretask_holds_slot_until_thread_exits(
+        self, state: AppState
+    ):
+        # 停止发生在前置线程两条命令之间（尚无子进程可终止）：槽位必须保持到线程退出，
+        # 否则新运行复位共享 stop_flag 后，旧线程会继续执行下一条前置命令。
+        worker = _FakeWorker(start_result=True)
+        entered = threading.Event()
+        release = threading.Event()
+        observed_stop_flag: list[bool] = []
+
+        def blocking_run_all(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=5)
+            observed_stop_flag.append(worker.task_state.stop_flag)
+
+        worker.pretasks.run_all = blocking_run_all
+        state.worker = worker
+
+        await submit_manual(state, make_payload())
+        assert await asyncio.to_thread(entered.wait, 5)
+
+        task = state.active_execution_task
+        assert task is not None
+        task.cancel()
+        await asyncio.sleep(0.1)
+
+        assert not task.done()
+        assert state.active_run is not None
+        assert (await submit_manual(state, make_payload())).accepted is False
+
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+        assert observed_stop_flag == [True]
+        assert state.active_run is None
+        assert worker.tasks.called is False
