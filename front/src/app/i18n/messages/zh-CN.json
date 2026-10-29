@@ -235,7 +235,8 @@
       "githubIssues": "GitHub Issues",
       "telemetry": "帮助改进软件",
       "telemetryDesc": "匿名发送崩溃、运行统计及失败任务的日志与错误截图，帮助资源作者发现常见问题。不包含设备地址、密码等个人信息。",
-      "telemetryDisabledDev": "当前为开发 / 调试版本，已禁用匿名数据上报"
+      "telemetryDisabledDev": "当前为开发 / 调试版本，已禁用匿名数据上报",
+      "telemetryInitFailed": "已同意上报，但遥测初始化失败，当前不会发送数据"
     }
   },
   "option": {

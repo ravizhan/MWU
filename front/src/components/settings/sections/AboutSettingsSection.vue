@@ -19,7 +19,7 @@
       </label>
       <div class="space-y-1">
         <NSwitch
-          :value="telemetryStatus?.enabled ?? false"
+          :value="settings.telemetry.helpImproveSoftware"
           :aria-label="t('settings.about.telemetry')"
           :disabled="telemetryDisabled"
           @update:value="handleTelemetryChange"
@@ -27,6 +27,9 @@
         <div v-if="telemetryDisabled" class="text-xs opacity-60">
           {{ t("settings.about.telemetryDisabledDev") }}
         </div>
+        <NText v-if="telemetryInitFailed" type="warning" class="block text-xs">
+          {{ t("settings.about.telemetryInitFailed") }}
+        </NText>
         <div class="text-xs opacity-60">
           {{ t("settings.about.telemetryDesc") }}
         </div>
@@ -70,6 +73,7 @@ function githubOwner(github: string): string {
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
+const settings = computed(() => settingsStore.settings)
 const telemetryStatus = ref<TelemetryStatus | null>(null)
 
 const telemetryVisible = computed(
@@ -82,7 +86,14 @@ const telemetryDisabled = computed(
     telemetryStatus.value?.blocked_reason === "debug_resource",
 )
 
-/** 开关反映后端实际初始化状态；同意已持久化但初始化失败时显示为关闭。 */
+/** 开关表示用户同意；同意但 SDK 未能初始化时单独提示，保证用户始终能撤回同意。 */
+const telemetryInitFailed = computed(
+  () =>
+    settings.value.telemetry.helpImproveSoftware &&
+    telemetryStatus.value?.available === true &&
+    !telemetryStatus.value.enabled,
+)
+
 async function refreshTelemetryStatus() {
   const [data, err] = await tryCatch(() => getTelemetryStatusApi())
   if (err) return
@@ -185,11 +196,16 @@ function handleResetSettings() {
   }
 }
 
-function handleTelemetryChange(value: boolean) {
-  void settingsStore.updateSetting("telemetry", "helpImproveSoftware", value).then((success) => {
-    if (success) {
-      void refreshTelemetryStatus()
-    }
-  })
+async function handleTelemetryChange(value: boolean) {
+  const previous = settings.value.telemetry.helpImproveSoftware
+  const success = await settingsStore.updateSetting("telemetry", "helpImproveSoftware", value)
+  if (success) {
+    void refreshTelemetryStatus()
+    return
+  }
+  // 保存失败时回滚，避免残留值被后续其他设置的整文档保存带上；已被后续修改覆盖则不动。
+  if (settings.value.telemetry.helpImproveSoftware === value) {
+    settings.value.telemetry.helpImproveSoftware = previous
+  }
 }
 </script>
