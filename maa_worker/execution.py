@@ -30,6 +30,7 @@ from models.task_config import (
     normalize_global_option_values,
     normalize_task_execution_payload,
 )
+from services import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -472,12 +473,18 @@ async def _complete_run(
     # 通知标题用运行标签（定时任务为计划名）；task_state.current_task_name
     # 会在 run_process 退出时被清空，收尾阶段不能再依赖它。
     run_label = state.active_run.task_name if state.active_run is not None else None
+    trace = telemetry.start_run(
+        state.active_run.origin if state.active_run is not None else "manual"
+    )
+    failure_stage: str | None = None
     try:
         if worker is None:
+            failure_stage = "prepare"
             raise RuntimeError("Worker 未就绪")
 
         # 1. 校验设备/资源配置
         if payload is None or not payload.device or not payload.resource_name:
+            failure_stage = "prepare"
             raise RuntimeError("设备或资源配置缺失")
 
         # 2. 先规范化载荷并确认存在可运行任务，避免任务为空/失效时仍执行前置命令
@@ -490,6 +497,7 @@ async def _complete_run(
             )
         )
         if not normalized_task_list:
+            failure_stage = "prepare"
             raise RuntimeError("任务列表为空")
 
         global_values = (
@@ -525,6 +533,7 @@ async def _complete_run(
         except PretaskError as exc:
             if worker.task_state.stop_flag:
                 raise PretaskStopped(str(exc)) from exc
+            failure_stage = "pretask"
             raise RuntimeError(str(exc)) from exc
 
         # 4. 复用已匹配连接；不匹配先解锁
@@ -569,16 +578,25 @@ async def _complete_run(
                         await asyncio.sleep(retry_interval)
             if not connected:
                 await asyncio.to_thread(worker.device.reset_connection_state)
+                failure_stage = "device"
                 raise RuntimeError(f"设备连接失败: {last_err}")
 
         # 6. 启动任务线程
+        if trace is not None:
+            trace.set_context(
+                controller_type=worker.device_state.controller_type,
+                controller_name=worker.device_state.controller_name,
+                resource=payload.resource_name,
+            )
         if not worker.tasks.start(
             normalized_task_list,
             normalized_task_options,
             task_name=state.active_run.task_name if state.active_run else None,
             pre_tasks=normalized_pre_tasks,
             global_options=normalized_global_options,
+            trace=trace,
         ):
+            failure_stage = "start"
             raise RuntimeError("任务启动失败（可能已有任务在运行）")
         if state.active_run is not None and state.active_run.run_id == run_id:
             state.active_run.started = True
@@ -597,6 +615,7 @@ async def _complete_run(
         else:
             status = "failed"
             error = last_error or "任务执行失败"
+            failure_stage = "task"
 
     except PretaskStopped:
         status = "stopped"
@@ -606,6 +625,8 @@ async def _complete_run(
     except Exception as e:
         status = "failed"
         error = str(e)
+        if failure_stage is None:
+            failure_stage = "prepare"
         logger.error(f"执行运行 {run_id} 失败: {e}")
         if worker is not None:
             worker.events.send_log(f"任务执行失败: {e}")
@@ -625,6 +646,15 @@ async def _complete_run(
             pass
         except Exception as e:
             logger.error(f"收尾执行记录失败: {e}")
+        if trace is not None:
+            try:
+                await asyncio.shield(
+                    asyncio.to_thread(trace.finish, status, error, stage=failure_stage)
+                )
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"遥测上报失败: {e}")
         # 读取失败也必须发终端事件，否则前端 TaskRunning 卡住；此时仅按默认设置决定是否通知。
         notify_settings = SettingsModel()
         if worker is not None:

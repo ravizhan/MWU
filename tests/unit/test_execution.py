@@ -138,6 +138,7 @@ class _FakeTaskService:
         task_name=None,
         pre_tasks=None,
         global_options=None,
+        trace=None,
     ):
         self.called = True
         self.global_options = global_options or {}
@@ -161,6 +162,7 @@ class _FakeSuccessfulTaskService(_FakeTaskService):
         task_name=None,
         pre_tasks=None,
         global_options=None,
+        trace=None,
     ):
         self.called = True
         self.global_options = global_options or {}

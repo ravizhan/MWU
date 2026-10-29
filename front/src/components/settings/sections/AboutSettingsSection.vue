@@ -10,6 +10,29 @@
       />
     </div>
 
+    <div
+      v-if="telemetryVisible"
+      class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4"
+    >
+      <label class="text-sm font-medium md:text-right">
+        {{ t("settings.about.telemetry") }}
+      </label>
+      <div class="space-y-1">
+        <NSwitch
+          :value="settings.telemetry.helpImproveSoftware"
+          :aria-label="t('settings.about.telemetry')"
+          :disabled="telemetryDisabled"
+          @update:value="handleTelemetryChange"
+        />
+        <div v-if="telemetryDisabled" class="text-xs opacity-60">
+          {{ t("settings.about.telemetryDisabledDev") }}
+        </div>
+        <div class="text-xs opacity-60">
+          {{ t("settings.about.telemetryDesc") }}
+        </div>
+      </div>
+    </div>
+
     <NDivider />
 
     <NButton type="warning" size="small" @click="handleResetSettings">
@@ -19,13 +42,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, type Component } from "vue"
+import { computed, h, onMounted, ref, type Component } from "vue"
 import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
 import type { DataTableColumns } from "naive-ui"
 import { BugOutline, LogoGithub } from "@vicons/ionicons5"
+import { getTelemetryStatusApi, type TelemetryStatus } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
+import { tryCatch } from "@/utils/tryCatch"
 
 interface AboutRow {
   label: string
@@ -45,6 +70,23 @@ function githubOwner(github: string): string {
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
+const settings = computed(() => settingsStore.settings)
+const telemetryStatus = ref<TelemetryStatus | null>(null)
+
+const telemetryVisible = computed(
+  () => telemetryStatus.value !== null && telemetryStatus.value.blocked_reason !== "no_dsn",
+)
+
+const telemetryDisabled = computed(
+  () =>
+    telemetryStatus.value?.blocked_reason === "dev_build" ||
+    telemetryStatus.value?.blocked_reason === "debug_resource",
+)
+
+onMounted(async () => {
+  const [data] = await tryCatch(() => getTelemetryStatusApi())
+  telemetryStatus.value = data
+})
 
 const rows = computed<AboutRow[]>(() => {
   const model = interfaceStore.interface
@@ -137,5 +179,9 @@ function handleResetSettings() {
       }
     })
   }
+}
+
+function handleTelemetryChange(value: boolean) {
+  void settingsStore.updateSetting("telemetry", "helpImproveSoftware", value)
 }
 </script>

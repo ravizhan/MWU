@@ -40,6 +40,9 @@ const defaultSettings: SettingsModel = {
     recentDevices: [],
     customDevices: [],
   },
+  telemetry: {
+    helpImproveSoftware: true,
+  },
   globalOptionValues: {},
 }
 

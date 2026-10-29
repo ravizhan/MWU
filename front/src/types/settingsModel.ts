@@ -37,6 +37,11 @@ export interface RuntimeSettings {
   retryInterval: number
 }
 
+// 遥测设置
+export interface TelemetrySettings {
+  helpImproveSoftware: boolean
+}
+
 // 面板持久化设备信息
 export interface PanelLastConnectedDevice {
   type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "Linux"
@@ -73,5 +78,6 @@ export interface SettingsModel {
   ui: UISettings
   runtime: RuntimeSettings
   panel: PanelSettings
+  telemetry: TelemetrySettings
   globalOptionValues: Record<string, TaskOptionValue>
 }

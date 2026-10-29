@@ -232,7 +232,10 @@
       "reset": "Reset All Settings",
       "resetConfirm": "Are you sure you want to reset all settings? This cannot be undone.",
       "resetSuccess": "Settings have been reset to default",
-      "githubIssues": "GitHub Issues"
+      "githubIssues": "GitHub Issues",
+      "telemetry": "Help improve the software",
+      "telemetryDesc": "Anonymously send crashes, run statistics, and logs/screenshots of failed tasks to help resource authors find common issues. No device addresses, passwords, or other personal data are included.",
+      "telemetryDisabledDev": "Anonymous reporting is disabled in development / debug builds"
     }
   },
   "option": {

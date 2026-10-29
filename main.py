@@ -43,6 +43,7 @@ from models.task_config import (
     normalize_task_config,
 )
 from scheduler_manager import SchedulerManager
+from services import telemetry
 from services.system_scheduler import SystemScheduler
 from services.update_service import (
     check_github_update,
@@ -96,6 +97,7 @@ except Exception as e:
     sys.exit(1)
 
 interface_lock = threading.Lock()
+telemetry.configure(interface, APP_ROOT_DIR)
 
 
 class ScanSelectRescanRequest(BaseModel):
@@ -160,15 +162,21 @@ def delegate_native_dispatch(task_id: str) -> int:
 
 async def log_monitor():
     while not app_state.is_shutting_down:
-        while not app_state.message_conn.empty():
-            message = app_state.message_conn.get_nowait()
-            if message.event == "focus.modal":
-                # modal 快照是状态而非日志，不进历史；重连时由 stream_logs 补发当前快照。
+        try:
+            while not app_state.message_conn.empty():
+                message = app_state.message_conn.get_nowait()
+                if message.event == "focus.modal":
+                    # modal 快照是状态而非日志，不进历史；重连时由 stream_logs 补发当前快照。
+                    await app_state.broadcaster.broadcast(message)
+                    continue
+                app_state.history_message.append(message)
                 await app_state.broadcaster.broadcast(message)
-                continue
-            app_state.history_message.append(message)
-            await app_state.broadcaster.broadcast(message)
-        await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)
+        except Exception as exc:
+            # 异常退出会让 SSE 永久静默，记录后继续推送
+            telemetry.capture_exception(exc, stage="log_monitor")
+            app_state.send_log(f"日志推送异常: {exc}")
+            await asyncio.sleep(1)
 
 
 @asynccontextmanager
@@ -179,6 +187,7 @@ async def lifespan(app: FastAPI):
     app_state.settings = settings_io.load_settings_model(
         SETTINGS_FILE, context={"interface": interface}
     )
+    telemetry.apply_consent(app_state.settings.telemetry.helpImproveSoftware)
     # 初始化系统级调度
     app_state.scheduler_db_path = SCHEDULER_DB_PATH
     await asyncio.to_thread(execution.init_db, SCHEDULER_DB_PATH)
@@ -241,6 +250,7 @@ async def lifespan(app: FastAPI):
             await app_state.active_execution_task
     await app_state.scheduler_manager.shutdown()
     app_state.worker.shutdown()
+    telemetry.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -477,7 +487,13 @@ def get_settings():
 def set_settings(settings: SettingsModel):
     settings_io.write_settings_preserving_custom_devices(SETTINGS_FILE, settings)
     app_state.settings = settings
+    telemetry.apply_consent(settings.telemetry.helpImproveSoftware)
     return {"status": "success"}
+
+
+@app.get("/api/telemetry/status")
+def get_telemetry_status():
+    return {"status": "success", **telemetry.status()}
 
 
 @app.get("/api/task-config")
