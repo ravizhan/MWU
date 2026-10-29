@@ -19,7 +19,7 @@
       </label>
       <div class="space-y-1">
         <NSwitch
-          :value="settings.telemetry.helpImproveSoftware"
+          :value="telemetryStatus?.enabled ?? false"
           :aria-label="t('settings.about.telemetry')"
           :disabled="telemetryDisabled"
           @update:value="handleTelemetryChange"
@@ -70,7 +70,6 @@ function githubOwner(github: string): string {
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
-const settings = computed(() => settingsStore.settings)
 const telemetryStatus = ref<TelemetryStatus | null>(null)
 
 const telemetryVisible = computed(
@@ -83,10 +82,14 @@ const telemetryDisabled = computed(
     telemetryStatus.value?.blocked_reason === "debug_resource",
 )
 
-onMounted(async () => {
-  const [data] = await tryCatch(() => getTelemetryStatusApi())
+/** 开关反映后端实际初始化状态；同意已持久化但初始化失败时显示为关闭。 */
+async function refreshTelemetryStatus() {
+  const [data, err] = await tryCatch(() => getTelemetryStatusApi())
+  if (err) return
   telemetryStatus.value = data
-})
+}
+
+onMounted(refreshTelemetryStatus)
 
 const rows = computed<AboutRow[]>(() => {
   const model = interfaceStore.interface
@@ -175,6 +178,7 @@ function handleResetSettings() {
   if (confirm(t("settings.about.resetConfirm"))) {
     void settingsStore.resetSettings().then((success) => {
       if (success) {
+        void refreshTelemetryStatus()
         showGlobalMessage("success", t("settings.about.resetSuccess"))
       }
     })
@@ -182,6 +186,10 @@ function handleResetSettings() {
 }
 
 function handleTelemetryChange(value: boolean) {
-  void settingsStore.updateSetting("telemetry", "helpImproveSoftware", value)
+  void settingsStore.updateSetting("telemetry", "helpImproveSoftware", value).then((success) => {
+    if (success) {
+      void refreshTelemetryStatus()
+    }
+  })
 }
 </script>
