@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from "pinia"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { toRaw } from "vue"
 
 vi.mock("@/services/api", () => ({
   getSettings: vi.fn<() => void>(),
@@ -69,5 +70,35 @@ describe("settings persistence", () => {
     second.resolve(true)
     await expect(Promise.all([firstUpdate, secondUpdate])).resolves.toEqual([false, true])
     expect(store.settings.runtime.timeout).toBe(180)
+  })
+
+  it("restores the previous settings when reset persistence fails", async () => {
+    vi.mocked(api.updateSettings).mockResolvedValue(false)
+    const store = useSettingsStore()
+    store.settings.telemetry.helpImproveSoftware = false
+    store.settings.runtime.timeout = 120
+
+    await expect(store.resetSettings()).resolves.toBe(false)
+
+    expect(store.settings.telemetry.helpImproveSoftware).toBe(false)
+    expect(store.settings.runtime.timeout).toBe(120)
+  })
+
+  it("allows retrying a failed settings load without using defaults as saved consent", async () => {
+    const store = useSettingsStore()
+    const savedSettings = structuredClone(toRaw(store.settings))
+    savedSettings.telemetry.helpImproveSoftware = false
+    vi.mocked(api.getSettings)
+      .mockRejectedValueOnce(new Error("network error"))
+      .mockResolvedValueOnce(savedSettings)
+
+    await expect(store.fetchSettings()).resolves.toBe(false)
+    expect(store.initialized).toBe(false)
+    expect(store.loadFailed).toBe(true)
+
+    await expect(store.fetchSettings()).resolves.toBe(true)
+    expect(store.initialized).toBe(true)
+    expect(store.loadFailed).toBe(false)
+    expect(store.settings.telemetry.helpImproveSoftware).toBe(false)
   })
 })

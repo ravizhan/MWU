@@ -21,7 +21,7 @@
         <NSwitch
           :value="settings.telemetry.helpImproveSoftware"
           :aria-label="t('settings.about.telemetry')"
-          :disabled="telemetryDisabled"
+          :disabled="!settingsStore.initialized || telemetryDisabled"
           @update:value="handleTelemetryChange"
         />
         <div v-if="telemetryDisabled" class="text-xs opacity-60">
@@ -30,6 +30,17 @@
         <NText v-if="telemetryInitFailed" type="warning" class="block text-xs">
           {{ t("settings.about.telemetryInitFailed") }}
         </NText>
+        <NText v-if="settingsStore.loadFailed" type="error" class="block text-xs">
+          {{ t("settings.about.settingsLoadFailed") }}
+        </NText>
+        <NButton
+          v-if="settingsStore.loadFailed"
+          size="small"
+          :loading="settingsStore.loading"
+          @click="retryLoadSettings"
+        >
+          {{ t("settings.about.retryLoadSettings") }}
+        </NButton>
         <div class="text-xs opacity-60">
           {{ t("settings.about.telemetryDesc") }}
         </div>
@@ -101,6 +112,11 @@ async function refreshTelemetryStatus() {
 }
 
 onMounted(refreshTelemetryStatus)
+
+async function retryLoadSettings() {
+  const success = await settingsStore.fetchSettings()
+  if (success) await refreshTelemetryStatus()
+}
 
 const rows = computed<AboutRow[]>(() => {
   const model = interfaceStore.interface
