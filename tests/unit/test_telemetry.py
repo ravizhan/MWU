@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -21,8 +21,8 @@ def _interface(**extra) -> InterfaceModel:
 
 
 def test_before_send_scrubs_paths_and_host(monkeypatch):
-    monkeypatch.setattr(telemetry, "_app_root", Path("D:/X/MWU"))
-    monkeypatch.setattr(Path, "home", lambda: Path("D:/X"))
+    monkeypatch.setattr(telemetry, "_app_root", PureWindowsPath("D:/X/MWU"))
+    monkeypatch.setattr(Path, "home", lambda: PureWindowsPath("D:/X"))
     event: Any = {
         "server_name": "host",
         "exception": {

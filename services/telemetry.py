@@ -3,6 +3,7 @@
 DSN 由资源作者在 interface.telemetry.sentry 提供；未配置、源码运行或调试版资源时不初始化。
 """
 
+import logging
 import os
 import random
 import re
@@ -15,7 +16,7 @@ from typing import Any, Literal
 import sentry_sdk
 from sentry_sdk.integrations.argv import ArgvIntegration
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
 from sentry_sdk.integrations.modules import ModulesIntegration
 from sentry_sdk.types import Event, Hint
 
@@ -24,7 +25,11 @@ from models.scheduler import TaskOptionValue
 
 type BlockReason = Literal["no_dsn", "dev_build", "debug_resource"]
 
+logger = logging.getLogger(__name__)
+
 _DEBUG_VERSIONS = {"", "dev", "DEBUG_VERSION"}
+# 这些阶段的错误文本含用户命令、命令输出或设备地址，只上报阶段名
+_OPAQUE_FAILURE_STAGES = {"pretask", "device"}
 _MAX_VALUE_LEN = 200
 _MAX_OPTIONS_PER_TASK = 50
 _MAX_SCREENSHOTS = 4
@@ -60,11 +65,10 @@ def configure(interface: InterfaceModel, app_root: Path) -> None:
         _blocked_reason = None
 
     version_file = app_root / "version"
-    client_version = (
-        version_file.read_text(encoding="utf-8").strip()
-        if version_file.is_file()
-        else ""
-    ) or "dev"
+    try:
+        client_version = version_file.read_text(encoding="utf-8").strip() or "dev"
+    except OSError:
+        client_version = "dev"
     release = f"MWU@{client_version}+{interface.name}@{interface.version or 'unknown'}"
     _release = re.sub(r"[/\\\n\t]", "_", release)[:200]
     _environment = (sentry.environment if sentry else None) or "production"
@@ -76,7 +80,13 @@ def apply_consent(enabled: bool) -> None:
     global _initialized
     with _lock:
         if enabled and _blocked_reason is None and not _initialized:
-            _init()
+            try:
+                _init()
+            except Exception:
+                # DSN 非法或 config/ 不可写时遥测不可用，但不能阻止启动或设置保存
+                logger.exception("遥测初始化失败，本次运行不上报")
+                sentry_sdk.get_client().close(timeout=0)
+                return
             _initialized = True
         elif not enabled and _initialized:
             sentry_sdk.end_session()
@@ -111,7 +121,7 @@ def start_run(origin: str) -> "RunTrace | None":
 
 
 def _active() -> bool:
-    return sentry_sdk.get_client().is_active()
+    return _initialized
 
 
 def _init() -> None:
@@ -140,6 +150,8 @@ def _init() -> None:
         before_send_transaction=_before_send,
         shutdown_timeout=2,
     )
+    # 运行失败日志带有前置命令/设备地址原文，失败由 RunTrace 以脱敏形式单独上报
+    ignore_logger("maa_worker.execution")
     sentry_sdk.set_user({"id": _install_id()})
     sentry_sdk.start_session(session_mode="application")
 
@@ -223,6 +235,9 @@ def summarize_options(
                 else:
                     fields[case.name] = "filled" if raw else "empty"
             summary[name] = fields
+        elif option.type == "scan_select" and isinstance(value, str):
+            # 扫描得到的是用户目录下的文件名
+            summary[name] = "filled" if value else "empty"
         elif isinstance(value, str):
             summary[name] = value[:_MAX_VALUE_LEN]
     return summary
@@ -278,11 +293,28 @@ class RunTrace:
             if not succeeded and self._failed_task is None:
                 self._failed_task = task_name
 
+    def fail_open_task(self) -> None:
+        """任务循环抛异常时，把已开始未结束的任务记为失败。"""
+        with self._lock:
+            if not self._task_spans or self._task_spans[-1]["end"] is not None:
+                return
+            record = self._task_spans[-1]
+            record["end"] = time.time()
+            record["ok"] = False
+            if self._failed_task is None:
+                self._failed_task = record["name"]
+
     def finish(self, status: str, error: str | None, *, stage: str | None) -> None:
         if not _active():
             return
         with self._lock:
             records = list(self._task_spans)
+            failed_task = self._failed_task
+        # MAA 任务 succeeded=False 不会让整批运行失败，但遥测按失败上报
+        if status == "success" and failed_task is not None:
+            status = "failed"
+            stage = "task"
+            error = f"任务未成功: {failed_task}"
         with sentry_sdk.new_scope() as scope:
             scope.set_tag("run.origin", self._origin)
             scope.set_tag("run.status", status)
@@ -314,13 +346,18 @@ class RunTrace:
             scope.fingerprint = [
                 "mwu.run.failed",
                 failure_stage,
-                self._failed_task or "-",
+                failed_task or "-",
             ]
             if failure_stage == "task" and random.random() < _failure_rate:
-                self._attach_failure_files(scope)
-            sentry_sdk.capture_message(
-                f"Run failed: {error or 'unknown'}"[:500], level="error"
-            )
+                try:
+                    self._attach_failure_files(scope)
+                except OSError as exc:
+                    logger.warning(f"遥测附件读取失败: {exc}")
+            if failure_stage in _OPAQUE_FAILURE_STAGES:
+                message = f"Run failed at {failure_stage}"
+            else:
+                message = f"Run failed: {error or 'unknown'}"
+            sentry_sdk.capture_message(message[:500], level="error")
 
     def _attach_failure_files(self, scope: sentry_sdk.Scope) -> None:
         on_error = _debug_dir / "on_error"

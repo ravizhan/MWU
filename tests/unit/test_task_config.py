@@ -1,7 +1,6 @@
 """Tests for models/task_config.py — config normalization and snapshot building."""
 
 import pytest
-from pydantic import ValidationError
 
 from models.interface import (
     Controller,

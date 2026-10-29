@@ -543,6 +543,8 @@ class TestSubmitScheduled:
     ):
         # ready worker + 阻塞的 start：首个运行持续占槽，跳过判定不受清槽时序影响
         worker = _FakeWorker(start_result=True, ready=True)
+        # 手动运行的标签取首个任务名，它必须是有效任务，否则首个运行会立即失败清槽
+        worker.interface = _FakeInterface(["Startup", blocker_name])
         worker.tasks.block = threading.Event()
         state.worker = worker
 

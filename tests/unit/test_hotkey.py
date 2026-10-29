@@ -184,7 +184,7 @@ def test_saved_global_value_is_not_shadowed_by_task_default():
         ),
         device=SimpleNamespace(
             get_active_controller_names=lambda: set(),
-            get_active_controller_definitions=lambda: [],
+            get_active_controller_definitions=list,
             get_current_resource_definition=lambda: None,
         ),
         device_state=SimpleNamespace(current_resource_name=None),
