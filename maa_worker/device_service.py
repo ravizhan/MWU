@@ -18,14 +18,14 @@ from models.api import CustomDeviceCreate, DeviceModel
 from models.device_address import (
     try_canonicalize_runtime_device_address,
 )
-from models.interface import controller_method_ints
+from models.interface import INPUT_METHOD_INTS, controller_method_ints
 from settings_io import SETTINGS_LOCK, atomic_write_settings, read_settings_raw
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
 
 _LINUX_SCREENCAP_METHODS = {"Wlr": 1, "PipeWire": 4}
-_LINUX_INPUT_METHODS = {"Wlr": 1, "Libei": 4}
+_LINUX_INPUT_METHODS = {"Wlr": 1, "UInput": 2, "Libei": 4}
 
 
 def is_controller_supported(controller) -> tuple[bool, str]:
@@ -627,11 +627,14 @@ class DeviceService:
                 )
                 status = controller.post_connection().wait().succeeded
             case "Win32":
+                # 鼠标与键盘方式分别取自控制器定义（AnchoredTouch 仅支持鼠标），
+                # 未配置时沿用 MaaFramework 默认的 Seize。
+                methods = controller_method_ints(selected_controller)
                 controller = Win32Controller(
                     hWnd=device_config.hWnd,
                     screencap_method=int(device_config.screencap_methods or 0),
-                    mouse_method=int(device_config.input_methods or 0),
-                    keyboard_method=int(device_config.input_methods or 0),
+                    mouse_method=methods["mouse"] or INPUT_METHOD_INTS["Seize"],
+                    keyboard_method=methods["keyboard"] or INPUT_METHOD_INTS["Seize"],
                 )
                 status = controller.post_connection().wait().succeeded
             case "Gamepad":
@@ -777,6 +780,12 @@ class DeviceService:
                 return None
             config["wlr_socket_path"] = socket_path
         # 3) 输入方式附加参数
+        if input_method == "UInput":
+            fail(
+                "Linux 控制器 input=UInput 需要屏幕宽高（uinput_screen_width/height），"
+                "MWU 暂不支持该输入方式"
+            )
+            return None
         if input_method == "Libei":
             if gamescope_instance is not None and gamescope_instance.eis_socket_path:
                 config["eis_socket_path"] = gamescope_instance.eis_socket_path

@@ -2,7 +2,7 @@ export type DocumentationContent = string | string[]
 
 export type PipelineOverride = Record<string, unknown>
 
-export type Win32MouseKeyboard =
+export type Win32Keyboard =
   | "Seize"
   | "SendMessage"
   | "PostMessage"
@@ -11,6 +11,9 @@ export type Win32MouseKeyboard =
   | "PostMessageWithCursorPos"
   | "SendMessageWithWindowPos"
   | "PostMessageWithWindowPos"
+  | "Interception"
+
+export type Win32Mouse = Win32Keyboard | "AnchoredTouch"
 
 export type Win32Screencap =
   | "GDI"
@@ -33,8 +36,8 @@ export type GamepadScreencap =
 export interface Win32Controller {
   class_regex?: string
   window_regex?: string
-  mouse?: Win32MouseKeyboard
-  keyboard?: Win32MouseKeyboard
+  mouse?: Win32Mouse
+  keyboard?: Win32Keyboard
   screencap?: Win32Screencap
 }
 
@@ -52,7 +55,7 @@ export interface PlayCoverController {
   uuid?: string
 }
 
-export type LinuxInput = "Wlr" | "Libei"
+export type LinuxInput = "Wlr" | "UInput" | "Libei"
 export type LinuxScreencap = "Wlr" | "PipeWire"
 export type LinuxPipewireSource = "Gamescope" | "Portal"
 
@@ -88,6 +91,7 @@ export interface Controller {
   gamepad?: GamepadController
   display_short_side?: number
   display_long_side?: number
+  display_expand?: [number, number]
   display_raw?: boolean
   permission_required?: boolean
   attach_resource_path?: string[]
@@ -166,15 +170,18 @@ export interface OptionCase {
 }
 
 export type InputPipelineType = "string" | "int" | "bool"
+export type InputControlKind = "text" | "file" | "directory"
 
 export interface InputCase {
   name: string
   label?: string
   description?: string
   default?: string
+  input_type?: InputControlKind
   pipeline_type?: InputPipelineType
   verify?: string
   pattern_msg?: string
+  password?: boolean
 }
 
 export interface HotkeyCase {
@@ -213,6 +220,8 @@ export interface CheckboxOption extends OptionBase {
   type: "checkbox"
   cases: OptionCase[]
   default_case?: string[]
+  min_count?: number
+  max_count?: number
 }
 
 export interface SwitchOption extends OptionBase {
@@ -245,12 +254,32 @@ export interface PresetTask {
   option?: Record<string, PresetTaskOptionValue>
 }
 
+export interface PresetPretask {
+  name: string
+  enabled?: boolean
+  option?: Record<string, PresetTaskOptionValue>
+}
+
 export interface Preset {
   name: string
   label?: string
   description?: string
   icon?: string
+  controller?: string[]
   task?: PresetTask[]
+  pretask?: PresetPretask[]
+}
+
+export interface SentryTelemetry {
+  dsn: string
+  tracing?: boolean
+  traces_sample_rate?: number
+  failure_attachments_sample_rate?: number
+  environment?: string
+}
+
+export interface Telemetry {
+  sentry?: SentryTelemetry
 }
 
 export interface InterfaceModel {
@@ -267,8 +296,9 @@ export interface InterfaceModel {
   version?: string
   contact?: string
   license?: string
-  welcome?: string
+  welcome?: string | string[]
   description?: string
+  telemetry?: Telemetry
   controller: Controller[]
   resource: Resource[]
   group?: Group[]

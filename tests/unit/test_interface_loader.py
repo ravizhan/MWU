@@ -929,6 +929,14 @@ class TestLoadInterfaceModel:
                 r"preset\[P\]\.task\[A\]\.option\[hotkeys\] 引用了不存在的快捷键项: unknown",
                 id="hotkey-unknown-field",
             ),
+            pytest.param(
+                {
+                    "pretask": [{"name": "Prep", "exec": "prep"}],
+                    "preset": [{"name": "P", "pretask": [{"name": "Missing"}]}],
+                },
+                r"preset\[P\]\.pretask\[Missing\] 引用了不存在的预任务",
+                id="unknown-pretask",
+            ),
         ],
     )
     def test_preset_reference_validation(self, tmp_path, extra, expected):

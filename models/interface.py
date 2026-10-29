@@ -35,6 +35,8 @@ INPUT_METHOD_INTS: dict[str, int] = {
     "PostMessageWithCursorPos": 64,
     "SendMessageWithWindowPos": 128,
     "PostMessageWithWindowPos": 256,
+    "Interception": 512,
+    "AnchoredTouch": 1024,
 }
 
 GAMEPAD_TYPE_INTS: dict[str, int] = {"Xbox360": 0, "DualShock4": 1, "DS4": 1}
@@ -85,6 +87,8 @@ class Win32Controller(BaseModel):
             "PostMessageWithCursorPos",
             "SendMessageWithWindowPos",
             "PostMessageWithWindowPos",
+            "Interception",
+            "AnchoredTouch",
         ]
         | None
     ) = None
@@ -98,6 +102,7 @@ class Win32Controller(BaseModel):
             "PostMessageWithCursorPos",
             "SendMessageWithWindowPos",
             "PostMessageWithWindowPos",
+            "Interception",
         ]
         | None
     ) = None
@@ -143,7 +148,7 @@ class MacOSController(BaseModel):
 class LinuxController(BaseModel):
     """Linux 控制器配置（仅 Linux）"""
 
-    input: Literal["Wlr", "Libei"] | None = None
+    input: Literal["Wlr", "UInput", "Libei"] | None = None
     screencap: Literal["Wlr", "PipeWire"] | None = None
     pipewire_source: Literal["Gamescope", "Portal"] | None = "Gamescope"
     use_win32_vk_code: bool | None = False
@@ -194,6 +199,7 @@ class Controller(BaseModel):
     type: Literal["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
     display_short_side: int | None = 720
     display_long_side: int | None = None
+    display_expand: tuple[int, int] | None = None
     display_raw: bool | None = False
     permission_required: bool | None = False
     attach_resource_path: list[str] | None = None
@@ -213,11 +219,13 @@ class Controller(BaseModel):
             fields_set.append("display_short_side")
         if self.display_long_side is not None:
             fields_set.append("display_long_side")
+        if self.display_expand is not None:
+            fields_set.append("display_expand")
         if self.display_raw is True:
             fields_set.append("display_raw")
         if len(fields_set) > 1:
             raise ValueError(
-                "display_short_side, display_long_side 和 display_raw 必须互斥"
+                "display_short_side、display_long_side、display_expand 和 display_raw 必须互斥"
             )
         return self
 
@@ -275,7 +283,7 @@ class Resource(BaseModel):
     path: list[str]
     controller: list[str] | None = None
     option: list[str] | None = None
-    hash: str | None = None
+    hash: str | None = Field(None, min_length=1)
 
 
 class Agent(BaseModel):
@@ -344,9 +352,17 @@ class InputCase(BaseModel):
     label: str | None = None
     description: str | None = None
     default: str | None = None
+    input_type: Literal["text", "file", "directory"] | None = "text"
     pipeline_type: Literal["string", "int", "bool"] | None = None
     verify: str | None = None
     pattern_msg: str | None = None
+    password: bool | None = False
+
+    @model_validator(mode="after")
+    def check_password_default(self):
+        if self.password and self.default is not None:
+            raise ValueError(f"输入项 {self.name} 为 password 时不能设置 default")
+        return self
 
 
 class HotkeyCase(BaseModel):
@@ -372,6 +388,8 @@ class Option(BaseModel):
     scan_filter: str | None = None
     pipeline_override: PipelineOverride | None = None
     default_case: str | list[str] | None = None
+    min_count: int | None = Field(None, ge=0)
+    max_count: int | None = Field(None, ge=0)
 
     @model_validator(mode="after")
     def check_type_fields(self):
@@ -391,6 +409,9 @@ class Option(BaseModel):
                 raise ValueError(
                     "当 type 为 checkbox 时，default_case 必须为字符串数组"
                 )
+            self._check_checkbox_counts()
+        elif self.min_count is not None or self.max_count is not None:
+            raise ValueError("min_count / max_count 仅适用于 checkbox")
         if self.type == "input" and not self.inputs:
             raise ValueError("当 type 为 input 时，inputs 不能为空")
         if self.type == "hotkey" and not self.hotkeys:
@@ -414,8 +435,33 @@ class Option(BaseModel):
             )
         return self
 
+    def _check_checkbox_counts(self) -> None:
+        min_count = self.min_count or 0
+        case_count = len(self.cases or [])
+        if self.max_count is not None and self.max_count < min_count:
+            raise ValueError("checkbox 的 max_count 不能小于 min_count")
+        if min_count > case_count or (
+            self.max_count is not None and self.max_count > case_count
+        ):
+            raise ValueError("checkbox 的 min_count / max_count 不能大于 cases 数量")
+        if self.default_case is None:
+            return
+        default_count = len(self.default_case)
+        if default_count < min_count or (
+            self.max_count is not None and default_count > self.max_count
+        ):
+            raise ValueError(
+                "checkbox 的 default_case 数量必须满足 min_count / max_count"
+            )
+
 
 class PresetTask(BaseModel):
+    name: str
+    enabled: bool | None = True
+    option: dict[str, PresetOptionValue] | None = None
+
+
+class PresetPretask(BaseModel):
     name: str
     enabled: bool | None = True
     option: dict[str, PresetOptionValue] | None = None
@@ -426,7 +472,21 @@ class Preset(BaseModel):
     label: str | None = None
     description: str | None = None
     icon: str | None = None
+    controller: list[str] | None = None
     task: list[PresetTask] | None = None
+    pretask: list[PresetPretask] | None = None
+
+
+class SentryTelemetry(BaseModel):
+    dsn: str
+    tracing: bool | None = None
+    traces_sample_rate: float | None = Field(None, ge=0, le=1)
+    failure_attachments_sample_rate: float | None = Field(None, ge=0, le=1)
+    environment: str | None = None
+
+
+class Telemetry(BaseModel):
+    sentry: SentryTelemetry | None = None
 
 
 class InterfaceModel(BaseModel):
@@ -444,8 +504,9 @@ class InterfaceModel(BaseModel):
     version: str | None = None
     contact: str | None = None
     license: str | None = None
-    welcome: str | None = None
+    welcome: str | list[str] | None = None
     description: str | None = None
+    telemetry: Telemetry | None = None
     controller: list[Controller]
     resource: list[Resource]
     group: list[Group] | None = None

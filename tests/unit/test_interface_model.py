@@ -271,6 +271,11 @@ class TestOption:
         with pytest.raises(ValidationError, match="default_case 必须为字符串数组"):
             Option(type="checkbox", cases=[OptionCase(name="a")], default_case="a")
 
+    def test_checkbox_default_case_respects_counts(self):
+        cases = [OptionCase(name="a"), OptionCase(name="b")]
+        with pytest.raises(ValidationError, match="min_count / max_count"):
+            Option(type="checkbox", cases=cases, default_case=[], min_count=1)
+
     def test_input_requires_inputs(self):
         with pytest.raises(ValidationError, match="inputs 不能为空"):
             Option(type="input")

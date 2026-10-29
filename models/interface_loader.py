@@ -12,6 +12,7 @@ IMPORTABLE_KEYS = {
     "task",
     "option",
     "preset",
+    "group",
     "pretask",
     "import",
     "global_option",
@@ -64,11 +65,11 @@ def _validate_importable_fragment(data: dict[str, Any], source_path: Path) -> No
     invalid_keys = sorted(set(data) - IMPORTABLE_KEYS)
     if invalid_keys:
         raise InterfaceLoadError(
-            "导入文件只允许包含 task、option、preset、pretask、import、"
+            "导入文件只允许包含 task、option、preset、group、pretask、import、"
             f"global_option、setting 字段: {source_path}，"
             f"发现非法字段 {', '.join(invalid_keys)}"
         )
-    for key in ("global_option", "setting"):
+    for key in ("group", "global_option", "setting"):
         value = data.get(key)
         if value is not None and not isinstance(value, list):
             raise InterfaceLoadError(f"{key} 字段必须是数组: {source_path}")
@@ -182,6 +183,11 @@ def _merge_fragment_sections(
     if presets:
         target.setdefault("preset", [])
         target["preset"].extend(copy.deepcopy(presets))
+
+    groups = fragment.get("group")
+    if groups:
+        target.setdefault("group", [])
+        target["group"].extend(copy.deepcopy(groups))
 
     global_options = fragment.get("global_option")
     if global_options:
@@ -381,13 +387,10 @@ def _collect_reachable_option_names(
 
 
 def _validate_preset_option_value(
-    preset_name: str,
-    task_name: str,
-    option_name: str,
+    location: str,
     option: Option,
     value: Any,
 ) -> None:
-    location = f"preset[{preset_name}].task[{task_name}].option[{option_name}]"
     case_names = {case.name for case in option.cases or []}
 
     if option.type in {"select", "switch", "scan_select"}:
@@ -439,6 +442,12 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
     tasks = interface_model.task or []
     option_map = interface_model.option or {}
     task_name_map = {task.name: task for task in tasks}
+    controller_names = {controller.name for controller in interface_model.controller}
+    pretask_map = {
+        pretask.name: pretask
+        for pretask in _as_list(interface_model.pretask)
+        if pretask.name
+    }
     reachable_options_by_task: dict[str, set[str]] = {}
 
     for task in tasks:
@@ -447,6 +456,12 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
         reachable_options_by_task[task.name] = collected
 
     for preset in presets:
+        invalid_controllers = sorted(set(preset.controller or []) - controller_names)
+        if invalid_controllers:
+            raise InterfaceLoadError(
+                f"preset[{preset.name}] 引用了不存在的 controller: {', '.join(invalid_controllers)}"
+            )
+
         seen_task_names: set[str] = set()
         for preset_task in preset.task or []:
             if preset_task.name in seen_task_names:
@@ -473,10 +488,34 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
                         f"preset[{preset.name}] 引用了不存在的选项: {option_name}"
                     )
                 _validate_preset_option_value(
-                    preset.name,
-                    task.name,
-                    option_name,
+                    f"preset[{preset.name}].task[{task.name}].option[{option_name}]",
                     option,
+                    option_value,
+                )
+
+        seen_pretask_names: set[str] = set()
+        for preset_pretask in preset.pretask or []:
+            location = f"preset[{preset.name}].pretask[{preset_pretask.name}]"
+            if preset_pretask.name in seen_pretask_names:
+                raise InterfaceLoadError(f"{location} 重复")
+            seen_pretask_names.add(preset_pretask.name)
+
+            pretask = pretask_map.get(preset_pretask.name)
+            if pretask is None:
+                raise InterfaceLoadError(f"{location} 引用了不存在的预任务")
+
+            reachable_options: set[str] = set()
+            _collect_reachable_option_names(
+                pretask.option or [], option_map, reachable_options
+            )
+            for option_name, option_value in (preset_pretask.option or {}).items():
+                if option_name not in reachable_options:
+                    raise InterfaceLoadError(
+                        f"{location} 引用了不属于该预任务的选项: {option_name}"
+                    )
+                _validate_preset_option_value(
+                    f"{location}.option[{option_name}]",
+                    option_map[option_name],
                     option_value,
                 )
 
