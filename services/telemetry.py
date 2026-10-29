@@ -67,7 +67,7 @@ def configure(interface: InterfaceModel, app_root: Path) -> None:
     version_file = app_root / "version"
     try:
         client_version = version_file.read_text(encoding="utf-8").strip() or "dev"
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         client_version = "dev"
     release = f"MWU@{client_version}+{interface.name}@{interface.version or 'unknown'}"
     _release = re.sub(r"[/\\\n\t]", "_", release)[:200]
@@ -376,7 +376,5 @@ class RunTrace:
         if log_file.is_file():
             with log_file.open("rb") as f:
                 f.seek(max(0, log_file.stat().st_size - _LOG_TAIL_BYTES))
-                tail = f.read().decode("utf-8", "replace")
-            scope.add_attachment(
-                bytes=_scrub_text(tail).encode("utf-8"), filename="maafw.log"
-            )
+                tail = f.read()
+            scope.add_attachment(bytes=tail, filename="maafw.log")
