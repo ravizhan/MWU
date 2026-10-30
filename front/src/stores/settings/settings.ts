@@ -40,6 +40,9 @@ const defaultSettings: SettingsModel = {
     recentDevices: [],
     customDevices: [],
   },
+  telemetry: {
+    helpImproveSoftware: true,
+  },
   globalOptionValues: {},
 }
 
@@ -89,6 +92,7 @@ export const useSettingsStore = defineStore("settings", {
     return {
       settings,
       loading: false,
+      loadFailed: false,
       pendingSaveCount: 0,
       initialized: false,
       systemPrefersDark:
@@ -122,17 +126,20 @@ export const useSettingsStore = defineStore("settings", {
 
     async fetchSettings() {
       this.loading = true
+      this.loadFailed = false
       const [data, err] = await tryCatch(() => getSettings())
       if (err) {
         console.error("Failed to fetch settings:", err)
+        this.loadFailed = true
         this.loading = false
-        return
+        return false
       }
       this.settings = data
       // 确保本地缓存与服务器设置同步
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
       this.initialized = true
       this.loading = false
+      return true
     },
 
     /**
@@ -194,10 +201,14 @@ export const useSettingsStore = defineStore("settings", {
     },
 
     async resetSettings() {
-      // 重置时也要更新缓存
-      localStorage.setItem(DARK_MODE_KEY, "auto")
+      const previousSettings = deepClone(this.settings)
       this.settings = deepClone(defaultSettings)
-      return this.saveSettings()
+      const success = await this.saveSettings()
+      if (success) return true
+
+      this.settings = previousSettings
+      localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
+      return false
     },
   },
 })

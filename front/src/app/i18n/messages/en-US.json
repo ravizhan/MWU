@@ -232,7 +232,14 @@
       "reset": "Reset All Settings",
       "resetConfirm": "Are you sure you want to reset all settings? This cannot be undone.",
       "resetSuccess": "Settings have been reset to default",
-      "githubIssues": "GitHub Issues"
+      "githubIssues": "GitHub Issues",
+      "telemetry": "Help improve the software",
+      "telemetryDesc": "Anonymously send crashes, run statistics, and logs/screenshots of failed tasks to help resource authors find common issues. No device addresses, passwords, or other personal data are included.",
+      "telemetryNoDsn": "This resource has no telemetry service configured, so no data is sent",
+      "telemetryDisabledDev": "Anonymous reporting is disabled in development / debug builds",
+      "telemetryInitFailed": "Reporting is allowed, but telemetry failed to initialize, so no data is being sent",
+      "settingsLoadFailed": "Settings could not be loaded. The telemetry switch is unavailable.",
+      "retryLoadSettings": "Reload settings"
     }
   },
   "option": {

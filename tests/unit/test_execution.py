@@ -127,7 +127,6 @@ class _FakeTaskService:
     def __init__(self, result: bool, task_state: "_FakeTaskState | None" = None):
         self.result = result
         self.called = False
-        self.block: threading.Event | None = None
         self._task_state = task_state
         self.global_options = {}
 
@@ -138,12 +137,10 @@ class _FakeTaskService:
         task_name=None,
         pre_tasks=None,
         global_options=None,
+        trace=None,
     ):
         self.called = True
         self.global_options = global_options or {}
-        if self.block is not None:
-            # 阻塞至测试放行，模拟任务长时间占槽
-            self.block.wait(timeout=5)
         if self.result and self._task_state is not None:
             # 对齐真实 TaskService.start：成功时置 running=True
             self._task_state.running = True
@@ -161,6 +158,7 @@ class _FakeSuccessfulTaskService(_FakeTaskService):
         task_name=None,
         pre_tasks=None,
         global_options=None,
+        trace=None,
     ):
         self.called = True
         self.global_options = global_options or {}
@@ -539,9 +537,10 @@ class TestSubmitScheduled:
         expected_status: str,
         blocker_name: str,
     ):
-        # ready worker + 阻塞的 start：首个运行持续占槽，跳过判定不受清槽时序影响
+        # ready worker + 启动成功：首个运行在 running 置回 False 前持续占槽
         worker = _FakeWorker(start_result=True, ready=True)
-        worker.tasks.block = threading.Event()
+        # 手动运行的标签取首个任务名，它必须是有效任务，否则首个运行会立即失败清槽
+        worker.interface = _FakeInterface(["Startup", blocker_name])
         state.worker = worker
 
         if blocker_origin == "manual":
@@ -567,8 +566,14 @@ class TestSubmitScheduled:
         assert skip.task_id == task.id
         assert skip.origin == "in_app"
         assert skip.blocker_task_name == blocker_name
-        # 放行 start 并结束任务（last_status 默认非 success → failed），清槽
-        worker.tasks.block.set()
+        # 必须等任务真正启动后再结束：前置任务在线程池中执行，过早置 running=False
+        # 会被随后的 start() 覆盖，运行协程将永远轮询下去
+        for _ in range(500):
+            if worker.task_state.running:
+                break
+            await asyncio.sleep(0.01)
+        assert worker.task_state.running
+        # 结束任务（last_status 默认非 success → failed），清槽
         worker.task_state.running = False
         await _await_active_task(state)
         assert state.active_run is None

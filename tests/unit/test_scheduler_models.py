@@ -40,7 +40,7 @@ class TestCronStr:
             result = _portable_adapter.validate_python(case["input"])
             valid = True
             canonical = str(result)
-        except Exception:
+        except ValidationError:
             valid = False
             canonical = None
         assert valid == case["valid"]

@@ -10,6 +10,43 @@
       />
     </div>
 
+    <div
+      v-if="telemetryStatus"
+      class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4"
+    >
+      <label class="text-sm font-medium md:text-right">
+        {{ t("settings.about.telemetry") }}
+      </label>
+      <div class="space-y-1">
+        <NSwitch
+          :value="settings.telemetry.helpImproveSoftware"
+          :aria-label="t('settings.about.telemetry')"
+          :disabled="!settingsStore.initialized || !telemetryStatus.available"
+          @update:value="handleTelemetryChange"
+        />
+        <div v-if="telemetryBlockedHint" class="text-xs opacity-60">
+          {{ telemetryBlockedHint }}
+        </div>
+        <NText v-if="telemetryInitFailed" type="warning" class="block text-xs">
+          {{ t("settings.about.telemetryInitFailed") }}
+        </NText>
+        <NText v-if="settingsStore.loadFailed" type="error" class="block text-xs">
+          {{ t("settings.about.settingsLoadFailed") }}
+        </NText>
+        <NButton
+          v-if="settingsStore.loadFailed"
+          size="small"
+          :loading="settingsStore.loading"
+          @click="retryLoadSettings"
+        >
+          {{ t("settings.about.retryLoadSettings") }}
+        </NButton>
+        <div class="text-xs opacity-60">
+          {{ t("settings.about.telemetryDesc") }}
+        </div>
+      </div>
+    </div>
+
     <NDivider />
 
     <NButton type="warning" size="small" @click="handleResetSettings">
@@ -19,13 +56,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, type Component } from "vue"
+import { computed, h, onMounted, ref, type Component } from "vue"
 import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
 import type { DataTableColumns } from "naive-ui"
 import { BugOutline, LogoGithub } from "@vicons/ionicons5"
+import { getTelemetryStatusApi, type TelemetryStatus } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
+import { tryCatch } from "@/utils/tryCatch"
 
 interface AboutRow {
   label: string
@@ -45,6 +84,38 @@ function githubOwner(github: string): string {
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const settingsStore = useSettingsStore()
+const settings = computed(() => settingsStore.settings)
+const telemetryStatus = ref<TelemetryStatus | null>(null)
+
+const telemetryBlockedHint = computed(() => {
+  const reason = telemetryStatus.value?.blocked_reason
+  if (reason === "no_dsn") return t("settings.about.telemetryNoDsn")
+  if (reason === "dev_build" || reason === "debug_resource") {
+    return t("settings.about.telemetryDisabledDev")
+  }
+  return ""
+})
+
+/** 开关表示用户同意；同意但 SDK 未能初始化时单独提示，保证用户始终能撤回同意。 */
+const telemetryInitFailed = computed(
+  () =>
+    settings.value.telemetry.helpImproveSoftware &&
+    telemetryStatus.value?.available === true &&
+    !telemetryStatus.value.enabled,
+)
+
+async function refreshTelemetryStatus() {
+  const [data, err] = await tryCatch(() => getTelemetryStatusApi())
+  if (err) return
+  telemetryStatus.value = data
+}
+
+onMounted(refreshTelemetryStatus)
+
+async function retryLoadSettings() {
+  const success = await settingsStore.fetchSettings()
+  if (success) await refreshTelemetryStatus()
+}
 
 const rows = computed<AboutRow[]>(() => {
   const model = interfaceStore.interface
@@ -133,9 +204,23 @@ function handleResetSettings() {
   if (confirm(t("settings.about.resetConfirm"))) {
     void settingsStore.resetSettings().then((success) => {
       if (success) {
+        void refreshTelemetryStatus()
         showGlobalMessage("success", t("settings.about.resetSuccess"))
       }
     })
+  }
+}
+
+async function handleTelemetryChange(value: boolean) {
+  const previous = settings.value.telemetry.helpImproveSoftware
+  const success = await settingsStore.updateSetting("telemetry", "helpImproveSoftware", value)
+  if (success) {
+    void refreshTelemetryStatus()
+    return
+  }
+  // 保存失败时回滚，避免残留值被后续其他设置的整文档保存带上；已被后续修改覆盖则不动。
+  if (settings.value.telemetry.helpImproveSoftware === value) {
+    settings.value.telemetry.helpImproveSoftware = previous
   }
 }
 </script>

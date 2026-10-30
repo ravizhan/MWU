@@ -4,9 +4,11 @@ import traceback
 from typing import TYPE_CHECKING
 
 from models.scheduler import PreTaskCommand, TaskOptionsByTask, TaskOptionValue
+from services import telemetry
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
+    from services.telemetry import RunTrace
 
 
 class TaskService:
@@ -58,6 +60,7 @@ class TaskService:
         task_name: str | None = None,
         pre_tasks: list[PreTaskCommand] | None = None,
         global_options: dict[str, TaskOptionValue] | None = None,
+        trace: "RunTrace | None" = None,
     ) -> bool:
         self.worker.task_state.last_error = None
         if not self.worker.device_state.connected:
@@ -112,6 +115,7 @@ class TaskService:
                     options,
                     pre_tasks or [],
                     global_options or {},
+                    trace,
                 ),
                 daemon=True,
             )
@@ -146,6 +150,7 @@ class TaskService:
         options: TaskOptionsByTask,
         pre_tasks: list[PreTaskCommand] | None = None,
         global_options: dict[str, TaskOptionValue] | None = None,
+        trace: "RunTrace | None" = None,
     ):
         state = self.worker.task_state
         state.pre_tasks = pre_tasks or []
@@ -169,6 +174,13 @@ class TaskService:
                     options.get(queued_task_name, {}),
                     global_options or {},
                 )
+                if trace is not None:
+                    trace.task_started(
+                        queued_task_name,
+                        telemetry.summarize_options(
+                            options.get(queued_task_name, {}), self.worker.interface
+                        ),
+                    )
                 if pipeline_override:
                     task_result = self.worker.tasker.post_task(
                         task_definition.entry, pipeline_override
@@ -182,12 +194,16 @@ class TaskService:
                         self.worker.tasker.post_stop().wait()
                         self._finish_stopped()
                         return
+                if trace is not None:
+                    trace.task_finished(queued_task_name, bool(task_result.succeeded))
             if state.stop_flag:
                 self._finish_stopped()
                 return
             state.last_status = "success"
             state.last_error = None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - 任务线程边界：任何异常都记为本次运行失败
+            if trace is not None:
+                trace.fail_open_task()
             traceback.print_exc()
             state.last_status = "failed"
             state.last_error = str(exc) or "任务执行失败"

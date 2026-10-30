@@ -82,10 +82,15 @@ class Panel(BaseModel):
         return v
 
 
+class TelemetrySettings(BaseModel):
+    helpImproveSoftware: bool = True
+
+
 class SettingsModel(BaseModel):
     update: Update = Update()
     notification: Notification = Notification()
     ui: UI = UI()
     runtime: Runtime = Runtime()
     panel: Panel = Panel()
+    telemetry: TelemetrySettings = TelemetrySettings()
     globalOptionValues: dict[str, TaskOptionValue] = Field(default_factory=dict)
