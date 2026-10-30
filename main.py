@@ -1,3 +1,40 @@
+# Nuitka 编译参数：第三方包以字节码打包，只把项目代码编译成 C，大幅缩短构建时间和产物体积。
+# 新增运行时依赖时在此补一行，漏写不会报错，只会让该包回到 C 编译。
+# 字节码模块缓存在 Nuitka 4.3 热缓存下会崩溃（UncompiledPythonModule 缺少 getCompilationMode），必须禁用。
+# nuitka-project: --disable-cache=bytecode
+# nuitka-project: --noinclude-custom-mode=annotated_doc:bytecode
+# nuitka-project: --noinclude-custom-mode=annotated_types:bytecode
+# nuitka-project: --noinclude-custom-mode=anyio:bytecode
+# nuitka-project: --noinclude-custom-mode=apscheduler:bytecode
+# nuitka-project: --noinclude-custom-mode=certifi:bytecode
+# nuitka-project: --noinclude-custom-mode=click:bytecode
+# nuitka-project: --noinclude-custom-mode=cron_converter:bytecode
+# nuitka-project: --noinclude-custom-mode=dateutil:bytecode
+# nuitka-project: --noinclude-custom-mode=fastapi:bytecode
+# nuitka-project: --noinclude-custom-mode=h11:bytecode
+# nuitka-project: --noinclude-custom-mode=httpcore:bytecode
+# nuitka-project: --noinclude-custom-mode=httpx:bytecode
+# nuitka-project: --noinclude-custom-mode=idna:bytecode
+# nuitka-project: --noinclude-custom-mode=json5:bytecode
+# nuitka-project: --noinclude-custom-mode=maa:bytecode
+# nuitka-project: --noinclude-custom-mode=numpy:bytecode
+# nuitka-project: --noinclude-custom-mode=opentelemetry:bytecode
+# nuitka-project: --noinclude-custom-mode=PIL:bytecode
+# nuitka-project: --noinclude-custom-mode=plyer:bytecode
+# nuitka-project: --noinclude-custom-mode=pydantic:bytecode
+# nuitka-project: --noinclude-custom-mode=pydantic_core:bytecode
+# nuitka-project: --noinclude-custom-mode=pydantic_extra_types:bytecode
+# nuitka-project: --noinclude-custom-mode=sentry_sdk:bytecode
+# nuitka-project: --noinclude-custom-mode=six:bytecode
+# nuitka-project: --noinclude-custom-mode=sqlalchemy:bytecode
+# nuitka-project: --noinclude-custom-mode=starlette:bytecode
+# nuitka-project: --noinclude-custom-mode=strenum:bytecode
+# nuitka-project: --noinclude-custom-mode=typing_extensions:bytecode
+# nuitka-project: --noinclude-custom-mode=typing_inspection:bytecode
+# nuitka-project: --noinclude-custom-mode=tzdata:bytecode
+# nuitka-project: --noinclude-custom-mode=tzlocal:bytecode
+# nuitka-project: --noinclude-custom-mode=urllib3:bytecode
+# nuitka-project: --noinclude-custom-mode=uvicorn:bytecode
 import argparse
 import asyncio
 import hashlib

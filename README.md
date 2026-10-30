@@ -269,8 +269,10 @@ Nuitka 位于 `build` 分组，编译后端前需运行 `uv sync --locked --grou
 ```bash
 cd front && pnpm run build   # 前端构建
 cd updater && go build       # 更新器构建
-uv run python -m nuitka --standalone --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py # 后端构建
+uv run python -m nuitka --standalone --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --nofollow-import-to=zstandard --output-filename=MWU main.py # 后端构建
 ```
+
+第三方依赖以字节码打包，只有项目代码编译为 C，对应参数写在 `main.py` 顶部的 `# nuitka-project:` 注释里，Nuitka 会自动读取。新增运行时依赖时需在那里补一行 `--noinclude-custom-mode=<顶层包名>:bytecode`，否则该包会退回 C 编译、拖慢构建。输出文件名必须写成 `--output-filename=MWU`：使用 `-o MWU` 时 Nuitka 会把 `MWU` 当成主程序文件名，导致 `main.py` 中的参数不生效。
 
 #### 📁 项目文件目录
 

@@ -2,9 +2,15 @@ name: Release Build
 run-name: Building for ${{ github.ref_name }}
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 jobs:
   vite-build:
@@ -134,7 +140,7 @@ jobs:
           echo "PYTHON_VERSION=$(python --version | awk '{print $2}' | cut -d '.' -f 1,2)" >> $GITHUB_ENV
 
       - name: Cache Nuitka cache directory
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: nuitka-${{ runner.os }}-${{ runner.arch }}-python-${{ env.PYTHON_VERSION }}-nuitka-${{ github.sha }}
@@ -144,15 +150,27 @@ jobs:
 
       - name: Build Executable
         if: ${{ matrix.os == 'windows-11-arm' || matrix.os == 'windows-2025' }}
-        run: uv run python -m nuitka --standalone --lto=yes --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --windows-icon-from-ico=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --nofollow-import-to=zstandard --output-filename=MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'linux' }}
-        run: uv run python -m nuitka --standalone --lto=yes --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --linux-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --nofollow-import-to=zstandard --output-filename=MWU main.py
 
       - name: Build Executable
         if: ${{ matrix.platform == 'macos' }}
-        run: uv run python -m nuitka --standalone --lto=yes --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa -o MWU main.py
+        run: uv run python -m nuitka --standalone --lto=yes --macos-app-icon=logo.jpg --assume-yes-for-downloads --user-package-configuration-file=nuitka-package.config.yml --output-dir=build --include-package=PIL --include-package=maa --nofollow-import-to=zstandard --output-filename=MWU main.py
+
+      # 发版 tag 不能互相读取缓存，只能读取默认分支的缓存，所以只在 main 上保存
+      - name: Save Nuitka cache directory
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.NUITKA_CACHE_DIR }}
+          key: nuitka-${{ runner.os }}-${{ runner.arch }}-python-${{ env.PYTHON_VERSION }}-nuitka-${{ github.sha }}
+
+      - name: Strip Debug Info
+        if: ${{ matrix.platform == 'linux' }}
+        run: find build/main.dist -type f -name '*.so*' -exec strip --strip-debug {} +
 
       - name: Build Updater
         if: ${{ matrix.platform != 'win' }}
@@ -190,7 +208,8 @@ jobs:
         shell: bash
         run: |
           cp -r "page" "build/main.dist/page"
-          git clone "https://github.com/MaaXYZ/MaaAgentBinary" "build/main.dist/MaaAgentBinary"
+          git clone --depth 1 "https://github.com/MaaXYZ/MaaAgentBinary" "build/main.dist/MaaAgentBinary"
+          rm -rf "build/main.dist/MaaAgentBinary/.git"
 
       - name: Create Version file
         run: echo "${{ github.ref_name }}" >> build/main.dist/version
