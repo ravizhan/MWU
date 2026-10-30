@@ -11,7 +11,7 @@
     </div>
 
     <div
-      v-if="telemetryVisible"
+      v-if="telemetryStatus"
       class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4"
     >
       <label class="text-sm font-medium md:text-right">
@@ -21,11 +21,11 @@
         <NSwitch
           :value="settings.telemetry.helpImproveSoftware"
           :aria-label="t('settings.about.telemetry')"
-          :disabled="!settingsStore.initialized || telemetryDisabled"
+          :disabled="!settingsStore.initialized || !telemetryStatus.available"
           @update:value="handleTelemetryChange"
         />
-        <div v-if="telemetryDisabled" class="text-xs opacity-60">
-          {{ t("settings.about.telemetryDisabledDev") }}
+        <div v-if="telemetryBlockedHint" class="text-xs opacity-60">
+          {{ telemetryBlockedHint }}
         </div>
         <NText v-if="telemetryInitFailed" type="warning" class="block text-xs">
           {{ t("settings.about.telemetryInitFailed") }}
@@ -87,15 +87,14 @@ const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
 const telemetryStatus = ref<TelemetryStatus | null>(null)
 
-const telemetryVisible = computed(
-  () => telemetryStatus.value !== null && telemetryStatus.value.blocked_reason !== "no_dsn",
-)
-
-const telemetryDisabled = computed(
-  () =>
-    telemetryStatus.value?.blocked_reason === "dev_build" ||
-    telemetryStatus.value?.blocked_reason === "debug_resource",
-)
+const telemetryBlockedHint = computed(() => {
+  const reason = telemetryStatus.value?.blocked_reason
+  if (reason === "no_dsn") return t("settings.about.telemetryNoDsn")
+  if (reason === "dev_build" || reason === "debug_resource") {
+    return t("settings.about.telemetryDisabledDev")
+  }
+  return ""
+})
 
 /** 开关表示用户同意；同意但 SDK 未能初始化时单独提示，保证用户始终能撤回同意。 */
 const telemetryInitFailed = computed(

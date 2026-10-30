@@ -143,6 +143,8 @@ def _init() -> None:
         max_request_body_size="never",
         auto_session_tracking=False,
         traces_sampler=_traces_sampler,
+        # 自动启用集成会按名称动态导入几十个模块；Nuitka 打包产物不含这些模块，导入失败会让 init 整体失败
+        auto_enabling_integrations=False,
         # 日志只作为 breadcrumb；运行失败由 RunTrace 统一上报，避免重复事件
         integrations=[LoggingIntegration(event_level=None)],
         disabled_integrations=[ArgvIntegration, ModulesIntegration, AsyncioIntegration],

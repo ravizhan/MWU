@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -103,3 +104,21 @@ def test_configure_gate(tmp_path, monkeypatch, extra, force, expected):
         "blocked_reason": expected,
         "enabled": False,
     }
+
+
+def test_consent_initializes_without_optional_integrations(tmp_path, monkeypatch):
+    # Nuitka 打包产物只包含实际导入的 sentry 集成，自动启用集成的模块不存在
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.aiohttp", None)
+    monkeypatch.setenv("MWU_TELEMETRY_FORCE", "1")
+    telemetry.configure(
+        _interface(
+            telemetry={"sentry": {"dsn": "http://k@127.0.0.1:9/1"}}, version="v1"
+        ),
+        tmp_path,
+    )
+
+    telemetry.apply_consent(True)
+    try:
+        assert telemetry.status()["enabled"] is True
+    finally:
+        telemetry.shutdown()
