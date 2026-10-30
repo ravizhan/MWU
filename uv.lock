@@ -206,7 +206,7 @@ wheels = [
 
 [[package]]
 name = "mwu"
-version = "0.19.0"
+version = "0.20.0"
 source = { virtual = "." }
 dependencies = [
     { name = "apscheduler" },
@@ -253,7 +253,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-build = [{ name = "nuitka", extras = ["all"], specifier = ">=4.3.1" }]
+build = [{ name = "nuitka", extras = ["all"], specifier = ">=4.3.3" }]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -263,9 +263,9 @@ dev = [
 
 [[package]]
 name = "nuitka"
-version = "4.3.1"
+version = "4.3.3"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple/" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/da/0f/db5cfdebf906a6de141bfdadcd72a7417ba710ba9c9d307be185a69a7c8d/nuitka-4.3.1.tar.gz", hash = "sha256:b9c87a694acc424cfffa06abf149fddbdfa85f6daac998df67411b5f4269df0f", size = 4771037, upload-time = "2026-10-17T16:34:00.545Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c0/5b/b3ec9a3373f1f1ad546d31101b41fb07befee7ecf734bab6c75a935b43bf/nuitka-4.3.3.tar.gz", hash = "sha256:3bed65735d5cfc53dc13070f9f17c52dbe584c0f03de32b6ef011f5db674add9", size = 4779258, upload-time = "2026-10-29T19:25:50.668Z" }
 
 [package.optional-dependencies]
 all = [
