@@ -175,7 +175,7 @@ class _FakePretaskService:
         task_state: "_FakeTaskState | None" = None,
         ordering: list[str] | None = None,
     ):
-        self.calls: list[tuple[str, str, dict, list, dict]] = []
+        self.calls: list[tuple[str, str, list, dict]] = []
         self.stop_flags: list[bool] = []
         self.error: PretaskError | None = None
         self.set_stop_flag_on_error = False
@@ -186,18 +186,11 @@ class _FakePretaskService:
         self,
         controller_name,
         resource_name,
-        task_options,
         user_pre_tasks,
-        global_options=None,
+        option_values,
     ):
         self.calls.append(
-            (
-                controller_name,
-                resource_name,
-                task_options,
-                user_pre_tasks,
-                global_options or {},
-            )
+            (controller_name, resource_name, user_pre_tasks, option_values)
         )
         self.stop_flags.append(
             self._task_state.stop_flag if self._task_state is not None else False
@@ -673,11 +666,8 @@ class TestPretaskAdmission:
         assert worker.tasks.called is True
         assert list_executions(state.scheduler_db_path)[0].status == "success"
 
-    async def test_pretask_receives_normalized_options_and_pre_tasks(
-        self, state: AppState
-    ):
-        # pretask 使用规范化后的选项/前置命令（按规范化任务列表过滤、
-        # 剔除禁用与空命令）。
+    async def test_pretask_receives_normalized_pre_tasks(self, state: AppState):
+        # pretask 使用规范化后的前置命令（剔除禁用与空命令）。
         worker = _FakeWorker(start_result=True, ready=True)
         worker.tasks = _FakeSuccessfulTaskService(
             result=True, task_state=worker.task_state
@@ -685,7 +675,6 @@ class TestPretaskAdmission:
         state.worker = worker
 
         payload = make_payload()
-        payload.task_options = {"Startup": {"mode": "safe"}, "Ghost": {"x": "y"}}
         payload.preTasks = [
             PreTaskCommand(command="echo ok"),
             PreTaskCommand(command="disabled", enabled=False),
@@ -694,13 +683,10 @@ class TestPretaskAdmission:
         assert admission.accepted is True
         await _await_active_task(state)
 
-        controller, resource, options, pre_tasks, global_options = (
-            worker.pretasks.calls[0]
-        )
+        controller, resource, pre_tasks, option_values = worker.pretasks.calls[0]
         assert (controller, resource) == ("AdbController", "main")
-        assert list(options) == ["Startup"]
         assert [p.command for p in pre_tasks] == ["echo ok"]
-        assert global_options == {}
+        assert option_values == {}
 
     async def test_global_option_values_reach_pretask_and_task_pipeline_separately(
         self, state: AppState
@@ -733,8 +719,7 @@ class TestPretaskAdmission:
         await _await_active_task(state)
 
         assert len(worker.pretasks.calls) == 1
-        assert worker.pretasks.calls[0][2] == {"Startup": {}, "Second": {}}
-        assert worker.pretasks.calls[0][4] == {"global_setting": "from-settings"}
+        assert worker.pretasks.calls[0][3] == {"global_setting": "from-settings"}
         assert worker.tasks.global_options == {"global_setting": "from-settings"}
 
     async def test_pretask_runs_before_device_connection(

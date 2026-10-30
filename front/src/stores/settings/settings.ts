@@ -3,6 +3,7 @@ import { tryCatch } from "@/utils/tryCatch"
 import { getSettings, updateSettings } from "@/services/api"
 import type { TaskOptionValue } from "@/types/schedulerModel"
 import type { PanelLastConnectedDevice, SettingsModel } from "@/types/settingsModel"
+import { localeSchema } from "@/validation/settings"
 
 const defaultSettings: SettingsModel = {
   update: {
@@ -27,6 +28,7 @@ const defaultSettings: SettingsModel = {
   },
   ui: {
     darkMode: "auto",
+    language: "zh-CN",
   },
   runtime: {
     timeout: 300,
@@ -67,6 +69,12 @@ function getCachedDarkMode(): "auto" | boolean {
   return "auto"
 }
 
+function getCachedLocale(): SettingsModel["ui"]["language"] {
+  if (typeof localStorage === "undefined") return "zh-CN"
+  const parsed = localeSchema.safeParse(localStorage.getItem("locale"))
+  return parsed.success ? parsed.data : "zh-CN"
+}
+
 // TS cannot write through generic indexed access (`settings[category][key] = value`),
 // so the assignment lives in one typed helper instead of a cast at each call site.
 function assignSetting<K extends keyof SettingsModel, P extends keyof SettingsModel[K]>(
@@ -87,7 +95,7 @@ export const useSettingsStore = defineStore("settings", {
   state: () => {
     const settings: SettingsModel = {
       ...deepClone(defaultSettings),
-      ui: { darkMode: getCachedDarkMode() },
+      ui: { darkMode: getCachedDarkMode(), language: getCachedLocale() },
     }
     return {
       settings,

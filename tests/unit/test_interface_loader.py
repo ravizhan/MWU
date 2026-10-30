@@ -14,7 +14,6 @@ from models.interface_loader import (
     _normalize_import_list,
     _normalize_root_relative_path,
     _read_json_dict,
-    _register_options,
     _register_presets,
     _register_tasks,
     _resolve_import_path,
@@ -211,19 +210,6 @@ class TestRegisterTasks:
         _register_tasks([{"name": "A", "entry": "E1"}], Path("/a.json"), state)
         with pytest.raises(InterfaceLoadError, match="冲突"):
             _register_tasks([{"name": "A", "entry": "E2"}], Path("/b.json"), state)
-
-
-# ---------------------------------------------------------------------------
-# _register_options — conflict detection
-# ---------------------------------------------------------------------------
-
-
-class TestRegisterOptions:
-    def test_conflict(self):
-        state = _MergeState()
-        _register_options({"opt": {}}, Path("/a.json"), state)
-        with pytest.raises(InterfaceLoadError, match="冲突"):
-            _register_options({"opt": {}}, Path("/b.json"), state)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +413,54 @@ class TestLoadInterfaceModel:
         model = load_interface_model(tmp_path)
         assert model.task is not None
         assert {t.name for t in model.task} == {"Extra"}
+
+    def test_imported_fragment_option_overrides_root(self, tmp_path):
+        (tmp_path / "options.json5").write_text(
+            stdlib_json.dumps(
+                {"option": {"opt": {"type": "select", "cases": [{"name": "b"}]}}}
+            )
+        )
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "option": {"opt": {"type": "select", "cases": [{"name": "a"}]}},
+                "import": ["options.json5"],
+            },
+        )
+
+        model = load_interface_model(tmp_path)
+
+        assert model.option is not None
+        assert [case.name for case in model.option["opt"].cases or []] == ["b"]
+
+    def test_imported_fragment_groups_dedupe_by_name_root_wins(self, tmp_path):
+        (tmp_path / "groups.json5").write_text(
+            stdlib_json.dumps(
+                {"group": [{"name": "general", "label": "Fragment label"}]}
+            )
+        )
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "group": [{"name": "general", "label": "Root label"}],
+                "import": ["groups.json5"],
+            },
+        )
+
+        model = load_interface_model(tmp_path)
+
+        assert model.group is not None
+        assert [(group.name, group.label) for group in model.group] == [
+            ("general", "Root label")
+        ]
 
     def test_import_global_options_are_deduped_and_settings_appended(self, tmp_path):
         (tmp_path / "first.json5").write_text(
@@ -734,34 +768,6 @@ class TestLoadInterfaceModel:
                 r"pretask\[0\]\.option 引用了不存在的选项: missing",
                 id="unknown-option",
             ),
-            pytest.param(
-                {
-                    "task": [
-                        {
-                            "name": "Main task",
-                            "entry": "main",
-                            "resource": ["main"],
-                            "option": ["reachable"],
-                        }
-                    ],
-                    "option": {
-                        "reachable": {"type": "select", "cases": [{"name": "yes"}]},
-                        "unreachable": {"type": "select", "cases": [{"name": "no"}]},
-                    },
-                    "pretask": [
-                        {
-                            "exec": "prepare",
-                            "resource": ["main"],
-                            "option": ["unreachable"],
-                        }
-                    ],
-                },
-                (
-                    r"pretask\[0\]\.option\[unreachable\]"
-                    r" 无法从资源包 main 的任何任务到达"
-                ),
-                id="option-unreachable-from-resource",
-            ),
         ],
     )
     def test_pretask_reference_validation(self, tmp_path, extra, expected):
@@ -885,6 +891,48 @@ class TestLoadInterfaceModel:
                 },
                 "引用了不存在的输入项",
                 id="input-unknown-key",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["cfg"]}],
+                    "option": {
+                        "cfg": {
+                            "type": "input",
+                            "inputs": [{"name": "secret", "password": True}],
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"cfg": {"secret": "x"}}}],
+                        }
+                    ],
+                },
+                (
+                    r"preset\[P\]\.task\[A\]\.option\[cfg\]\.secret"
+                    r" 是 password 字段，不能写入 preset"
+                ),
+                id="input-password",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["mods"]}],
+                    "option": {
+                        "mods": {
+                            "type": "checkbox",
+                            "cases": [{"name": "fast"}, {"name": "slow"}],
+                            "min_count": 2,
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [{"name": "A", "option": {"mods": ["fast"]}}],
+                        }
+                    ],
+                },
+                "选择数量必须满足 min_count / max_count",
+                id="checkbox-count",
             ),
             pytest.param(
                 {

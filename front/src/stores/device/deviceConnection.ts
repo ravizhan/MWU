@@ -25,6 +25,7 @@ import { useSettingsStore } from "@/stores/settings/settings"
 import { useTaskConfigStore } from "@/stores/task-config/taskConfig"
 import type { ManualStartPayload, StartConflict } from "@/types/schedulerModel"
 import type { PanelLastConnectedDevice } from "@/types/settingsModel"
+import { resolveInterfaceText } from "@/utils/interface/content"
 import {
   buildDeviceFingerprint,
   buildDeviceLabel,
@@ -101,11 +102,14 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
   // ---------------------------------------------------------------------------
   getters: {
     controllerOptions(state) {
-      return state.controllerCapabilities.map((item) => ({
-        label: item.display_label,
-        value: item.display_label,
-        disabled: !item.enabled,
-      }))
+      return state.controllerCapabilities.map((item) => {
+        const label = resolveInterfaceText(item.label, item.name)
+        return {
+          label: item.display_label === item.label ? label : `${label}(${item.name})`,
+          value: item.display_label,
+          disabled: !item.enabled,
+        }
+      })
     },
 
     selectedControllerCapability(state): DeviceControllerCapability | null {
@@ -579,7 +583,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         return
       }
 
-      this.resourcesList = resourceData.map((item) => ({ label: item.name, value: item.name }))
+      this.resourcesList = resourceData.map((item) => ({
+        label: item.label || item.name,
+        value: item.name,
+      }))
       const savedResource = settingsStore.settings.panel.lastResource
       if (savedResource && resourceData.some((item) => item.name === savedResource)) {
         this.resource = savedResource

@@ -523,9 +523,22 @@ class InterfaceModel(BaseModel):
     def set_variable_if_none(self):
         if self.label is None:
             self.label = self.name
-        if self.title is None and self.label and self.version:
-            self.title = f"{self.label} {self.version}"
         return self
+
+    @field_validator("welcome")
+    @classmethod
+    def check_welcome(cls, value: str | list[str] | None) -> str | list[str] | None:
+        if value is None:
+            return value
+        if isinstance(value, str):
+            if not value.strip():
+                raise ValueError("welcome 不能包含空字符串")
+            return value
+        if not value:
+            raise ValueError("welcome 数组不能为空")
+        if any(not item.strip() for item in value):
+            raise ValueError("welcome 不能包含空字符串")
+        return value
 
     @model_validator(mode="after")
     def check_scan_select_pipeline_override_placeholder(self):

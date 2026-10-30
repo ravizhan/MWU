@@ -7,7 +7,7 @@ import pytest
 
 import maa_worker.pretask_service as pretask_module
 from maa_worker.pretask_service import PretaskError, PretaskService
-from models.interface import HotkeyCase, InputCase, Option, OptionCase, Pretask
+from models.interface import InputCase, Option, OptionCase, Pretask
 from models.scheduler import PreTaskCommand
 
 
@@ -86,6 +86,7 @@ def _make_worker(*, pretasks=(), options=None, stop_flag=False):
     return SimpleNamespace(
         interface=SimpleNamespace(pretask=list(pretasks), option=options or {}),
         context=SimpleNamespace(interface_base_dir=Path("C:/app-root")),
+        text=SimpleNamespace(resolve=lambda value: value),
         task_state=SimpleNamespace(
             stop_flag=stop_flag,
             current_pre_task_process=None,
@@ -113,7 +114,7 @@ def test_run_all_skips_controller_and_resource_mismatches(monkeypatch):
     recorder = _PopenRecorder([_FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    PretaskService(worker).run_all("adb", "main", {}, [])
+    PretaskService(worker).run_all("adb", "main", [], {})
 
     assert [call[0] for call in recorder.calls] == [["allowed"]]
     assert recorder.calls[0][1]["shell"] is False
@@ -131,7 +132,7 @@ def test_run_all_executes_pi_pretasks_before_enabled_user_commands(monkeypatch):
         PreTaskCommand(command="   "),
     ]
 
-    PretaskService(worker).run_all("adb", "main", {}, user_pre_tasks)
+    PretaskService(worker).run_all("adb", "main", user_pre_tasks, {})
 
     assert [call[0] for call in recorder.calls] == [
         ["pi-first"],
@@ -173,8 +174,8 @@ def test_pi_argv_preserves_args_and_appends_compact_option_json(monkeypatch):
     PretaskService(worker).run_all(
         "adb",
         "main",
-        {"main": {"mode": "safe", "tags": ["red"]}},
         [],
+        {"mode": "safe", "tags": ["red"]},
     )
 
     assert recorder.calls[0][0] == [
@@ -185,69 +186,33 @@ def test_pi_argv_preserves_args_and_appends_compact_option_json(monkeypatch):
     ]
 
 
-def test_option_values_aggregate_task_name_values_and_honor_declared_defaults(
+def test_option_json_includes_selected_sub_options_and_skips_inapplicable(
     monkeypatch,
 ):
-    """task_options 以任务名为键；pretask 选项跨任务聚合查找用户值，
-    其次回退全局选项值，最后回退接口声明的 default_case/inputs/hotkeys 默认值。"""
     options = {
         "mode": Option(
             type="select",
-            cases=[OptionCase(name="first"), OptionCase(name="second")],
-            default_case="second",
+            cases=[OptionCase(name="fast"), OptionCase(name="deep", option=["level"])],
         ),
-        "tags": Option(
-            type="checkbox",
-            cases=[OptionCase(name="one"), OptionCase(name="two")],
-            default_case=["two"],
-        ),
-        "prompt": Option(
-            type="input",
-            inputs=[InputCase(name="text", default="hello"), InputCase(name="num")],
-        ),
-        "combo": Option(
-            type="hotkey",
-            hotkeys=[
-                HotkeyCase(name="attack", default="Alt+A"),
-                HotkeyCase(name="defend"),
-            ],
+        "level": Option(type="input", inputs=[InputCase(name="n")]),
+        "pc_only": Option(
+            type="switch",
+            controller=["win"],
+            cases=[OptionCase(name="Yes"), OptionCase(name="No")],
         ),
     }
     worker = _make_worker(
-        pretasks=[
-            Pretask(
-                exec="resource-values",
-                resource=["main", "fallback"],
-                option=["mode", "tags", "prompt", "combo"],
-            ),
-            Pretask(exec="defaults", option=["mode", "tags", "prompt", "combo"]),
-        ],
+        pretasks=[Pretask(exec="pi-tool", option=["mode", "pc_only"])],
         options=options,
     )
-    recorder = _PopenRecorder([_FakeProcess(), _FakeProcess()])
+    recorder = _PopenRecorder([_FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    # 用户值挂在任务名 "Selected Task" 下（不等于 pretask 的 resource 名），
-    # 聚合查找仍应命中；任务未提供的 tags 回退全局值，其余回退声明默认值。
     PretaskService(worker).run_all(
-        "adb",
-        "main",
-        {"Selected Task": {"mode": "first"}, "fallback": {"mode": "ignored"}},
-        [],
-        global_options={"mode": "global-mode", "tags": ["global"]},
+        "adb", "main", [], {"mode": "deep", "level": {"n": "3"}}
     )
 
-    assert (
-        recorder.calls[0][0][-1]
-        == '{"mode":"first","tags":["global"],"prompt":{"text":"hello","num":""},'
-        '"combo":{"attack":"Alt+A","defend":""}}'
-    )
-    # 第二个 pretask 无 resource，聚合查找同样命中用户值
-    assert (
-        recorder.calls[1][0][-1]
-        == '{"mode":"first","tags":["global"],"prompt":{"text":"hello","num":""},'
-        '"combo":{"attack":"Alt+A","defend":""}}'
-    )
+    assert recorder.calls[0][0][-1] == '{"mode":"deep","level":{"n":"3"}}'
 
 
 def test_pretask_runs_from_interface_base_dir(monkeypatch):
@@ -256,7 +221,7 @@ def test_pretask_runs_from_interface_base_dir(monkeypatch):
     recorder = _PopenRecorder([_FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    PretaskService(worker).run_all("adb", "main", {}, [])
+    PretaskService(worker).run_all("adb", "main", [], {})
 
     assert recorder.calls[0][1]["cwd"] == str(Path("C:/app-root"))
 
@@ -267,7 +232,7 @@ def test_nonzero_exit_raises_pretask_error_with_output(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError) as exc_info:
-        PretaskService(worker).run_all("adb", "main", {}, [])
+        PretaskService(worker).run_all("adb", "main", [], {})
 
     message = str(exc_info.value)
     assert "退出码 7" in message
@@ -281,18 +246,17 @@ def test_missing_pi_program_raises_pretask_error(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError, match="前置任务程序未找到: missing-program"):
-        PretaskService(worker).run_all("adb", "main", {}, [])
+        PretaskService(worker).run_all("adb", "main", [], {})
 
     assert len(recorder.calls) == 1
     assert worker.events.notifications[-1][0] == "前置程序执行失败"
 
 
-def test_running_pi_pretask_times_out_and_is_terminated(monkeypatch):
-    worker = _make_worker(pretasks=[Pretask(exec="slow")])
+def test_running_user_pre_task_times_out_and_is_terminated(monkeypatch):
+    worker = _make_worker()
     process = _FakeProcess(running=True)
     recorder = _PopenRecorder([process])
     _patch_popen(monkeypatch, recorder)
-    monkeypatch.setattr(pretask_module, "PI_PRETASK_TIMEOUT", 1)
 
     clock_values = iter((10.0, 11.1))
     monkeypatch.setattr(
@@ -303,7 +267,9 @@ def test_running_pi_pretask_times_out_and_is_terminated(monkeypatch):
     monkeypatch.setattr(pretask_module.time, "sleep", lambda _: None)
 
     with pytest.raises(PretaskError, match="前置任务执行超时（1s）: slow"):
-        PretaskService(worker).run_all("adb", "main", {}, [])
+        PretaskService(worker).run_all(
+            "adb", "main", [PreTaskCommand(command="slow", timeout=1)], {}
+        )
 
     assert process.terminate_calls == 1
     assert worker.task_state.current_pre_task_process is None
@@ -322,7 +288,7 @@ def test_stop_flag_during_pretask_terminates_process_and_raises(monkeypatch):
     monkeypatch.setattr(pretask_module.time, "sleep", stop_after_poll)
 
     with pytest.raises(PretaskError, match="前置任务已停止: interruptible"):
-        PretaskService(worker).run_all("adb", "main", {}, [])
+        PretaskService(worker).run_all("adb", "main", [], {})
 
     assert process.terminate_calls == 1
     assert worker.task_state.current_pre_task_process is None
@@ -334,6 +300,6 @@ def test_stop_flag_before_start_raises_without_spawning_process(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError, match="前置任务已停止: not-started"):
-        PretaskService(worker).run_all("adb", "main", {}, [])
+        PretaskService(worker).run_all("adb", "main", [], {})
 
     assert recorder.calls == []

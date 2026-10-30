@@ -329,7 +329,7 @@ class TestOption:
 
 
 # ---------------------------------------------------------------------------
-# InterfaceModel — label/title defaults, import alias, scan_select placeholder
+# InterfaceModel — label defaults, welcome, import alias, scan_select placeholder
 # ---------------------------------------------------------------------------
 
 
@@ -348,10 +348,9 @@ class TestInterfaceModel:
         model = InterfaceModel(**_base_iface_data)
         assert model.label == "Test"
 
-    def test_title_set_when_label_and_version_present(self, _base_iface_data):
-        data = {**_base_iface_data, "label": "My Game", "version": "1.0.0"}
-        model = InterfaceModel.model_validate(data)
-        assert model.title == "My Game 1.0.0"
+    def test_welcome_list_must_not_be_empty(self, _base_iface_data):
+        with pytest.raises(ValidationError, match="welcome 数组不能为空"):
+            InterfaceModel(**_base_iface_data, welcome=[])
 
     def test_import_alias(self, _base_iface_data):
         model = InterfaceModel(**_base_iface_data, **{"import": ["tasks.json5"]})

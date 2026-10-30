@@ -40,7 +40,7 @@ class EventService:
         notify_func(
             title=title,
             message=message,
-            app_name=self.worker.interface.label,
+            app_name=self.worker.text.app_name(),
             timeout=30,
         )
 
@@ -80,7 +80,7 @@ class EventService:
         if settings.notification.systemNotification:
             try:
                 self.show_system_notification(
-                    title or self.worker.interface.label or "MWU", message
+                    title or self.worker.text.app_name(), message
                 )
             except Exception as exc:
                 self.send_log(f"系统通知发送失败: {exc}")
@@ -96,7 +96,7 @@ class EventService:
                     )
                 else:
                     body = {
-                        "title": title or self.worker.interface.label,
+                        "title": title or self.worker.text.app_name(),
                         "message": message,
                     }
 

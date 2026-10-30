@@ -32,7 +32,6 @@ class InterfaceLoadError(ValueError):
 class _MergeState:
     def __init__(self):
         self.task_names: dict[str, Path] = {}
-        self.option_keys: dict[str, Path] = {}
         self.preset_names: dict[str, Path] = {}
 
 
@@ -105,7 +104,7 @@ def _register_tasks(tasks: Any, source_path: Path, state: _MergeState) -> None:
         state.task_names[task_name] = source_path
 
 
-def _register_options(options: Any, source_path: Path, state: _MergeState) -> None:
+def _register_options(options: Any, source_path: Path) -> None:
     if options is None:
         return
     if not isinstance(options, dict):
@@ -113,10 +112,6 @@ def _register_options(options: Any, source_path: Path, state: _MergeState) -> No
     for option_key in options:
         if not isinstance(option_key, str) or not option_key:
             raise InterfaceLoadError(f"option 键必须是非空字符串: {source_path}")
-        existing_path = state.option_keys.get(option_key)
-        if existing_path is not None:
-            _raise_conflict("option", option_key, source_path, existing_path)
-        state.option_keys[option_key] = source_path
 
 
 def _register_presets(presets: Any, source_path: Path, state: _MergeState) -> None:
@@ -142,7 +137,7 @@ def _seed_root_sections(
     root_data: dict[str, Any], source_path: Path, state: _MergeState
 ) -> None:
     _register_tasks(root_data.get("task"), source_path, state)
-    _register_options(root_data.get("option"), source_path, state)
+    _register_options(root_data.get("option"), source_path)
     _register_presets(root_data.get("preset"), source_path, state)
 
 
@@ -171,7 +166,7 @@ def _merge_fragment_sections(
     presets = fragment.get("preset")
 
     _register_tasks(tasks, source_path, state)
-    _register_options(options, source_path, state)
+    _register_options(options, source_path)
     _register_presets(presets, source_path, state)
 
     if tasks:
@@ -186,8 +181,17 @@ def _merge_fragment_sections(
 
     groups = fragment.get("group")
     if groups:
-        target.setdefault("group", [])
-        target["group"].extend(copy.deepcopy(groups))
+        target_groups = target.setdefault("group", [])
+        group_names = {
+            group.get("name") for group in target_groups if isinstance(group, dict)
+        }
+        for group in copy.deepcopy(groups):
+            group_name = group.get("name") if isinstance(group, dict) else None
+            if group_name is not None and group_name in group_names:
+                continue
+            target_groups.append(group)
+            if group_name is not None:
+                group_names.add(group_name)
 
     global_options = fragment.get("global_option")
     if global_options:
@@ -410,16 +414,27 @@ def _validate_preset_option_value(
             raise InterfaceLoadError(
                 f"{location} 引用了不存在的 case: {', '.join(invalid_cases)}"
             )
+        if len(value) < (option.min_count or 0) or (
+            option.max_count is not None and len(value) > option.max_count
+        ):
+            raise InterfaceLoadError(
+                f"{location} 选择数量必须满足 min_count / max_count"
+            )
         return
 
     if option.type == "input":
         if not isinstance(value, dict):
             raise InterfaceLoadError(f"{location} 必须是对象")
-        input_names = {input_item.name for input_item in option.inputs or []}
+        input_map = {input_item.name: input_item for input_item in option.inputs or []}
         for input_name, input_value in value.items():
-            if input_name not in input_names:
+            input_item = input_map.get(input_name)
+            if input_item is None:
                 raise InterfaceLoadError(
                     f"{location} 引用了不存在的输入项: {input_name}"
+                )
+            if input_item.password:
+                raise InterfaceLoadError(
+                    f"{location}.{input_name} 是 password 字段，不能写入 preset"
                 )
             if not isinstance(input_value, str):
                 raise InterfaceLoadError(f"{location}.{input_name} 必须是字符串")
@@ -594,8 +609,6 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
     option_map = interface_model.option or {}
-    tasks = interface_model.task or []
-    reachable_options_by_resource: dict[str, set[str]] = {}
 
     for index, pretask in enumerate(pretasks):
         pretask_ref = f"pretask[{index}]"
@@ -631,23 +644,6 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
                 raise InterfaceLoadError(
                     f"{pretask_ref}.option 引用了不存在的选项: {option_name}"
                 )
-
-            for resource_name in pretask.resource or []:
-                reachable_options = reachable_options_by_resource.get(resource_name)
-                if reachable_options is None:
-                    reachable_options = set()
-                    for task in tasks:
-                        if task.resource and resource_name not in task.resource:
-                            continue
-                        _collect_reachable_option_names(
-                            task.option or [], option_map, reachable_options
-                        )
-                    reachable_options_by_resource[resource_name] = reachable_options
-
-                if option_name not in reachable_options:
-                    raise InterfaceLoadError(
-                        f"{pretask_ref}.option[{option_name}] 无法从资源包 {resource_name} 的任何任务到达"
-                    )
 
     interface_model.pretask = pretasks
 

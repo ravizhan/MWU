@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 from models.interface import Option, Pretask
-from models.scheduler import PreTaskCommand, TaskOptionsByTask, TaskOptionValue
+from models.scheduler import PreTaskCommand, TaskOptionValue
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 PRE_TASK_OUTPUT_MAX_LINES = 1000
 PRE_TASK_OUTPUT_MAX_CHARS = 8000
-PI_PRETASK_TIMEOUT = 30
 
 
 class PretaskError(RuntimeError):
@@ -33,9 +32,8 @@ class PretaskService:
         self,
         controller_name: str,
         resource_name: str,
-        task_options: TaskOptionsByTask,
         user_pre_tasks: list[PreTaskCommand],
-        global_options: dict[str, TaskOptionValue] | None = None,
+        option_values: dict[str, TaskOptionValue],
     ) -> None:
         """Run matching PI pretasks first, then enabled user shell commands."""
         raw_pretasks = self.worker.interface.pretask
@@ -52,27 +50,28 @@ class PretaskService:
             if pretask.resource and resource_name not in pretask.resource:
                 continue
 
-            display_name = pretask.label or pretask.name or pretask.exec
+            display_name = (
+                self.worker.text.resolve(pretask.label) or pretask.name or pretask.exec
+            )
             argv = [pretask.exec, *(pretask.args or [])]
             if pretask.option:
-                option_values = self._resolve_option_values(
-                    pretask,
-                    task_options,
-                    global_options or {},
+                pretask_values: dict[str, TaskOptionValue] = {}
+                self._collect_option_values(
+                    pretask.option,
+                    option_values,
+                    controller_name,
+                    resource_name,
+                    pretask_values,
                 )
                 argv.append(
                     json.dumps(
-                        option_values,
+                        pretask_values,
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
                 )
-            self._run_one(
-                argv,
-                display_name,
-                PI_PRETASK_TIMEOUT,
-                is_shell=False,
-            )
+            # PI 规范要求等待前置程序结束，不设超时；停止请求仍会终止进程。
+            self._run_one(argv, display_name, None, is_shell=False)
 
         for pre_task in user_pre_tasks:
             if not pre_task.enabled or not pre_task.command.strip():
@@ -84,39 +83,40 @@ class PretaskService:
                 is_shell=True,
             )
 
-    def _resolve_option_values(
+    def _collect_option_values(
         self,
-        pretask: Pretask,
-        task_options: TaskOptionsByTask,
-        global_options: dict[str, TaskOptionValue],
-    ) -> dict[str, TaskOptionValue]:
+        names: list[str],
+        option_values: dict[str, TaskOptionValue],
+        controller_name: str,
+        resource_name: str,
+        out: dict[str, TaskOptionValue],
+    ) -> None:
+        """按声明顺序收集适用于当前 controller/resource 的选项值，并递归进入已选 case 的子选项。"""
         option_map = self.worker.interface.option or {}
-        values: dict[str, TaskOptionValue] = {}
-        for option_name in pretask.option or []:
-            resolved_value = self._find_option_value(task_options, option_name)
-            if resolved_value is not None:
-                values[option_name] = resolved_value
+        for name in names:
+            option = option_map.get(name)
+            if name in out or option is None:
                 continue
-            global_value = global_options.get(option_name)
-            if global_value is not None:
-                values[option_name] = global_value
+            if option.controller and controller_name not in option.controller:
                 continue
-            option = option_map.get(option_name)
-            values[option_name] = (
-                self._default_option_value(option) if option is not None else ""
-            )
-        return values
+            if option.resource and resource_name not in option.resource:
+                continue
 
-    @staticmethod
-    def _find_option_value(
-        task_options: TaskOptionsByTask, option_name: str
-    ) -> TaskOptionValue | None:
-        """task_options 按任务条目 ID 分组；pretask.option 所列 option 为全局声明，
-        从所有选中任务的已提交选项中查找该 option 的用户配置值。"""
-        for per_task in task_options.values():
-            if isinstance(per_task, dict) and option_name in per_task:
-                return per_task[option_name]
-        return None
+            value = option_values.get(name)
+            if value is None:
+                value = self._default_option_value(option)
+            out[name] = value
+
+            selected = value if isinstance(value, list) else [value]
+            for case in option.cases or []:
+                if case.option and case.name in selected:
+                    self._collect_option_values(
+                        case.option,
+                        option_values,
+                        controller_name,
+                        resource_name,
+                        out,
+                    )
 
     @staticmethod
     def _default_option_value(option: Option) -> TaskOptionValue:
@@ -143,7 +143,7 @@ class PretaskService:
         self,
         argv_or_command: list[str] | str,
         display_name: str,
-        timeout: int,
+        timeout: int | None,
         *,
         is_shell: bool,
     ) -> None:
@@ -213,7 +213,7 @@ class PretaskService:
                 if state.stop_flag:
                     stopped = True
                     break
-                if time.monotonic() - started_at > timeout:
+                if timeout is not None and time.monotonic() - started_at > timeout:
                     timed_out = True
                     break
                 time.sleep(0.1)

@@ -152,12 +152,15 @@ def normalize_global_option_values(
     raw_global_options: dict[str, Any] | None,
     interface_model: InterfaceModel,
 ) -> dict[str, TaskOptionValue]:
-    all_options = interface_model.option or {}
-    option_map = {
-        option_name: all_options[option_name]
-        for option_name in (interface_model.global_option or [])
-        if option_name in all_options
-    }
+    """global_option 与 pretask.option（含嵌套子选项）共用 globalOptionValues。"""
+    pretasks = interface_model.pretask or []
+    if not isinstance(pretasks, list):
+        pretasks = [pretasks]
+    names = (interface_model.global_option or []) + [
+        name for pretask in pretasks for name in (pretask.option or [])
+    ]
+    option_map: dict[str, Option] = {}
+    _collect_task_options(names, interface_model.option or {}, option_map)
     defaults, value_types = _build_option_defaults(option_map)
     case_name_sets = _build_option_case_name_sets(option_map)
     return _normalize_options_for_task(

@@ -1,9 +1,45 @@
+import { shallowRef } from "vue"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
 
 const textFilePattern = /^(?:\.\/)?(?:[^/]+[/])*[^/]+\.(?:md|markdown|txt|html?)$/i
 const invalidPathNotified = new Set<string>()
 const windowsDrivePattern = /^[A-Za-z]:/
+const activeTranslations = shallowRef<Record<string, unknown>>({})
+
+export function setInterfaceTranslations(
+  translations: Record<string, Record<string, unknown>> | undefined,
+  locale: string,
+): void {
+  const localeKey = locale.replace("-", "_").toLowerCase()
+  const entry = translations
+    ? Object.entries(translations).find(
+        ([key]) => key.replace("-", "_").toLowerCase() === localeKey,
+      )
+    : undefined
+  activeTranslations.value = entry ? entry[1] : {}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function lookupTranslation(key: string): string | undefined {
+  const translations = activeTranslations.value
+  const flatValue = translations[key]
+  if (typeof flatValue === "string") {
+    return flatValue
+  }
+
+  let current: unknown = translations
+  for (const segment of key.split(".")) {
+    if (!isRecord(current)) {
+      return undefined
+    }
+    current = current[segment]
+  }
+  return typeof current === "string" ? current : undefined
+}
 
 export function isExternalUrl(value: string): boolean {
   return /^(?:https?:)?\/\//i.test(value) || /^(?:data|blob):/i.test(value)
@@ -73,7 +109,7 @@ export function resolveInterfaceText(value?: string | null, fallback = ""): stri
   }
 
   if (value.startsWith("$")) {
-    return fallback
+    return lookupTranslation(value.slice(1)) ?? fallback
   }
 
   return value

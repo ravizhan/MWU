@@ -13,6 +13,7 @@ from maa_worker.agent_service import AgentService
 from maa_worker.device_service import DeviceService
 from maa_worker.event_service import EventService
 from maa_worker.focus_processor import FocusEventProcessor
+from maa_worker.interface_text import InterfaceText
 from maa_worker.pipeline_override import PipelineOverrideService
 from maa_worker.pretask_service import PretaskService
 from maa_worker.sink_service import SinkHandler, SinkService
@@ -44,6 +45,7 @@ class MaaWorker:
             interface_base_dir=resolve_app_root(),
             interface_translations=interface_translations,
         )
+        self.text = InterfaceText(self)
         self.device_state = state.device
         self.task_state = state.task
         self.agent_state = state.agent
@@ -59,7 +61,7 @@ class MaaWorker:
         self.pretasks = PretaskService(self)
         self.tasks = TaskService(self)
 
-        self.sinks = SinkService(SinkHandler(self.focus))
+        self.sinks = SinkService(SinkHandler(self.focus, self.text.resolve))
         self.sinks.register_all(self.resource, self.tasker)
 
         self.events.send_log("MAA初始化成功")

@@ -61,6 +61,7 @@ import { useI18n } from "vue-i18n"
 import { NButton, NIcon } from "naive-ui"
 import type { DataTableColumns } from "naive-ui"
 import { BugOutline, LogoGithub } from "@vicons/ionicons5"
+import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
 import { getTelemetryStatusApi, type TelemetryStatus } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
@@ -68,7 +69,8 @@ import { tryCatch } from "@/utils/tryCatch"
 
 interface AboutRow {
   label: string
-  value: string
+  value?: string
+  doc?: string
   href?: string
   icon?: Component
 }
@@ -135,7 +137,7 @@ const rows = computed<AboutRow[]>(() => {
     },
     {
       label: t("settings.about.license"),
-      value: model.license || "MIT",
+      doc: model.license || "MIT",
     },
     {
       label: t("settings.about.homepage"),
@@ -154,13 +156,13 @@ const rows = computed<AboutRow[]>(() => {
   if (model.contact) {
     result.push({
       label: t("settings.about.contact"),
-      value: model.contact,
+      doc: model.contact,
     })
   }
 
   result.push({
     label: t("settings.about.description"),
-    value: model.description || t("settings.about.defaultDescription"),
+    doc: model.description || t("settings.about.defaultDescription"),
   })
 
   return result
@@ -177,6 +179,10 @@ const columns = computed<DataTableColumns<AboutRow>>(() => [
     key: "value",
     title: "",
     render: (row) => {
+      if (row.doc !== undefined) {
+        return h(InterfaceDescription, { text: row.doc })
+      }
+
       if (!row.href) {
         return row.value
       }

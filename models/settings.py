@@ -32,6 +32,7 @@ class Notification(BaseModel):
 
 class UI(BaseModel):
     darkMode: bool | str | None = "auto"
+    language: Literal["zh-CN", "en-US"] = "zh-CN"
 
 
 class Runtime(BaseModel):

@@ -67,15 +67,38 @@ import FeedbackBridge from "@/services/feedback/FeedbackBridge.vue"
 import FocusDialogHost from "@/services/feedback/FocusDialogHost.vue"
 import { useNaiveTheme } from "@/app/theme"
 import { useInterfaceStore, useSettingsStore, useTaskConfigStore } from "@/stores"
+import { localeSchema } from "@/validation/settings"
 import { tryCatch } from "@/utils/tryCatch"
+import {
+  resolveInterfaceAssetUrl,
+  resolveInterfaceText,
+  setInterfaceTranslations,
+} from "@/utils/interface/content"
 
-const { t } = useI18n()
+const { t, locale: uiLocale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const settingsStore = useSettingsStore()
-const name = computed(() => interfaceStore.interface?.name || "MWU")
+const iface = computed(() => interfaceStore.interface)
+const name = computed(() => resolveInterfaceText(iface.value.label, iface.value.name || "MWU"))
+
+watchEffect(() => {
+  setInterfaceTranslations(interfaceStore.interface.translations, uiLocale.value)
+})
+
+watchEffect(() => {
+  const title = resolveInterfaceText(iface.value.title)
+  document.title = title || [name.value, iface.value.version].filter(Boolean).join(" ")
+})
+
+watchEffect(() => {
+  const href = resolveInterfaceAssetUrl(iface.value.icon)
+  if (!href) return
+  const iconLink = document.querySelector<HTMLLinkElement>("link[rel='icon']")
+  if (iconLink) iconLink.href = href
+})
 
 const { theme, themeOverrides, locale, dateLocale } = useNaiveTheme()
 
@@ -158,6 +181,11 @@ onMounted(async () => {
   await configStore.loadConfig()
   if (!settingsStore.initialized) {
     await settingsStore.fetchSettings()
+  }
+
+  const parsedLocale = localeSchema.safeParse(uiLocale.value)
+  if (parsedLocale.success && parsedLocale.data !== settingsStore.settings.ui.language) {
+    void settingsStore.updateSetting("ui", "language", parsedLocale.data)
   }
 
   void checkForUpdatesOnLoad()

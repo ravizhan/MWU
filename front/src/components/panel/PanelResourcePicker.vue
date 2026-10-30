@@ -1,7 +1,7 @@
 <template>
   <NSelect
     :value="resource"
-    :options="resourcesList"
+    :options="options"
     :placeholder="t('panel.selectResource')"
     :disabled="disabled"
     class="w-full"
@@ -10,9 +10,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue"
 import { useI18n } from "vue-i18n"
+import { resolveInterfaceText } from "@/utils/interface/content"
 
-defineProps<{
+const { resourcesList } = defineProps<{
   resource: string | null
   resourcesList: Array<{ label: string; value: string }>
   disabled: boolean
@@ -23,4 +25,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const options = computed(() =>
+  resourcesList.map((item) => ({
+    label: resolveInterfaceText(item.label, item.value),
+    value: item.value,
+  })),
+)
 </script>
