@@ -245,7 +245,8 @@
   "option": {
     "hotkeyCapturing": "Press shortcut keys...",
     "hotkeyTooManyModifiers": "Shortcuts support at most two modifier keys",
-    "hotkeyUnsupportedKey": "This key is not supported, please pick another one"
+    "hotkeyUnsupportedKey": "This key is not supported, please pick another one",
+    "checkboxCount": "{count} selected, choose {min}–{max}"
   },
   "panel": {
     "device": "Connect Device",
@@ -329,5 +330,8 @@
     "confirmAndContinue": "Confirm and continue",
     "stopTask": "Stop task",
     "confirmFailed": "Confirmation request failed. Try again."
+  },
+  "welcome": {
+    "title": "Announcements"
   }
 }

@@ -36,6 +36,13 @@
 
           <!-- Update dialog -->
           <UpdateDialog v-model:show="showUpdateDialog" :update-info="updateInfo" />
+
+          <!-- Welcome dialog -->
+          <WelcomeDialog
+            v-model:show="showWelcomeDialog"
+            :contents="welcomeContents"
+            @confirm="confirmWelcome"
+          />
         </NEl>
       </NDialogProvider>
     </NMessageProvider>
@@ -61,6 +68,7 @@ import markdownLightHref from "github-markdown-css/github-markdown-light.css?url
 import AppDock from "@/app/AppDock.vue"
 import AppMain from "@/app/AppMain.vue"
 import AppNavbar from "@/app/AppNavbar.vue"
+import WelcomeDialog from "@/components/common/WelcomeDialog.vue"
 import UpdateDialog from "@/components/settings/dialogs/UpdateDialog.vue"
 import { checkUpdateApi, type UpdateInfo } from "@/services/api"
 import FeedbackBridge from "@/services/feedback/FeedbackBridge.vue"
@@ -70,9 +78,11 @@ import { useInterfaceStore, useSettingsStore, useTaskConfigStore } from "@/store
 import { tryCatch } from "@/utils/tryCatch"
 import {
   resolveInterfaceAssetUrl,
+  resolveInterfaceDocumentContent,
   resolveInterfaceText,
   setInterfaceTranslations,
 } from "@/utils/interface/content"
+import { welcomeFingerprint } from "@/utils/interface/welcome"
 
 const { t, locale: uiLocale } = useI18n()
 const route = useRoute()
@@ -142,6 +152,8 @@ function toggleDarkMode() {
 
 const showUpdateDialog = ref(false)
 const updateInfo = ref<UpdateInfo | null>(null)
+const showWelcomeDialog = ref(false)
+const welcomeContents = ref<string[]>([])
 
 function ensureMarkdownStylesheet(href: string) {
   const id = "github-markdown-theme"
@@ -174,12 +186,32 @@ const checkForUpdatesOnLoad = async () => {
   }
 }
 
+const confirmWelcome = () => {
+  localStorage.setItem("mwu.welcome.ack", welcomeFingerprint(welcomeContents.value))
+  showWelcomeDialog.value = false
+  void checkForUpdatesOnLoad()
+}
+
 onMounted(async () => {
   settingsStore.initSystemThemeListener()
   await interfaceStore.setInterface()
   await configStore.loadConfig()
   if (!settingsStore.initialized) {
     await settingsStore.fetchSettings()
+  }
+
+  const welcome = interfaceStore.interface.welcome
+  const welcomeEntries = typeof welcome === "string" ? [welcome] : (welcome ?? [])
+  const contents = (
+    await Promise.all(welcomeEntries.map((entry) => resolveInterfaceDocumentContent(entry)))
+  ).filter((content) => content.trim())
+  if (
+    contents.length > 0 &&
+    localStorage.getItem("mwu.welcome.ack") !== welcomeFingerprint(contents)
+  ) {
+    welcomeContents.value = contents
+    showWelcomeDialog.value = true
+    return
   }
 
   void checkForUpdatesOnLoad()

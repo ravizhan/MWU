@@ -130,6 +130,9 @@ jobs:
           go-version-file: 'updater/go.mod'
           cache-dependency-path: "updater/go.sum"
 
+      - name: Setup cryptography build deps
+        uses: ./.github/actions/cryptography-deps
+
       - name: Install Dependencies
         run: uv sync --group build
 

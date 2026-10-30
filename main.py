@@ -9,6 +9,7 @@
 # nuitka-project: --noinclude-custom-mode=certifi:bytecode
 # nuitka-project: --noinclude-custom-mode=click:bytecode
 # nuitka-project: --noinclude-custom-mode=cron_converter:bytecode
+# nuitka-project: --noinclude-custom-mode=cryptography:bytecode
 # nuitka-project: --noinclude-custom-mode=dateutil:bytecode
 # nuitka-project: --noinclude-custom-mode=fastapi:bytecode
 # nuitka-project: --noinclude-custom-mode=h11:bytecode
@@ -57,6 +58,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import json_utils as json
+import secret_store
 import settings_io
 from app_paths import resolve_app_root
 from app_state import AppState, LogBroadcaster
@@ -135,6 +137,7 @@ except Exception as e:
 
 interface_lock = threading.Lock()
 telemetry.configure(interface, APP_ROOT_DIR)
+secret_store.configure(interface)
 
 
 class ScanSelectRescanRequest(BaseModel):
@@ -320,12 +323,20 @@ app.mount("/assets", StaticFiles(directory=str(APP_ROOT_DIR / "page/assets")))
 app.mount("/resource", StaticFiles(directory=str(APP_ROOT_DIR / "resource")))
 
 
+def _dump_task_config(config: TaskConfigModel) -> dict:
+    """序列化任务配置，写盘前加密各预设中的密码字段。"""
+    data = config.model_dump()
+    for preset in data["presets"].values():
+        preset["taskOptions"] = secret_store.seal_task_options(preset["taskOptions"])
+    return data
+
+
 def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
     config_exists = TASK_CONFIG_FILE.exists()
 
     if config_exists:
         with TASK_CONFIG_FILE.open("r", encoding="utf-8") as f:
-            config_data = json.load(f)
+            config_data = secret_store.reveal(json.load(f))
     else:
         config_data = TaskConfigModel().model_dump()
 
@@ -336,7 +347,12 @@ def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
     should_write_back = (not config_exists) or config_data != normalized_data
     if should_write_back:
         with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
-            json.dump(normalized_data, f, indent=4, ensure_ascii=False)
+            json.dump(
+                _dump_task_config(normalized_config),
+                f,
+                indent=4,
+                ensure_ascii=False,
+            )
 
     return normalized_config, should_write_back
 
@@ -548,7 +564,12 @@ def save_task_config(config: TaskConfigModel):
     try:
         normalized_config = normalize_task_config(config, interface)
         with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
-            json.dump(normalized_config.model_dump(), f, indent=4, ensure_ascii=False)
+            json.dump(
+                _dump_task_config(normalized_config),
+                f,
+                indent=4,
+                ensure_ascii=False,
+            )
         return {"status": "success"}
     except Exception as e:
         app_state.send_log(f"保存任务配置失败: {e}")

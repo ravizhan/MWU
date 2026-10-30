@@ -45,6 +45,7 @@ _blocked_reason: BlockReason | None = "no_dsn"
 _failure_rate = 1.0
 _initialized = False
 _lock = threading.Lock()
+_current_run: "RunTrace | None" = None
 
 
 def configure(interface: InterfaceModel, app_root: Path) -> None:
@@ -115,9 +116,19 @@ def capture_exception(exc: BaseException, *, stage: str) -> None:
 
 
 def start_run(origin: str) -> "RunTrace | None":
+    global _current_run
     if not _active():
         return None
-    return RunTrace(origin)
+    _current_run = RunTrace(origin)
+    return _current_run
+
+
+def trace_node(msg: str, details: dict[str, Any]) -> None:
+    """记录 focus.trace 指定的节点结果；只取节点名与 task_id，不转发原始 details。"""
+    run = _current_run
+    if not _initialized or _config is None or _config.tracing is False or run is None:
+        return
+    run.node_result(msg, str(details.get("name", "")), str(details.get("task_id", "")))
 
 
 def _active() -> bool:
@@ -259,6 +270,7 @@ class RunTrace:
         self._origin = origin
         self._lock = threading.Lock()
         self._task_spans: list[dict[str, Any]] = []
+        self._nodes: list[dict[str, Any]] = []
         self._failed_task: str | None = None
         self._context: dict[str, str | None] = {}
 
@@ -306,11 +318,26 @@ class RunTrace:
             if self._failed_task is None:
                 self._failed_task = record["name"]
 
+    def node_result(self, msg: str, name: str, task_id: str) -> None:
+        with self._lock:
+            self._nodes.append(
+                {"msg": msg, "name": name, "task_id": task_id, "at": time.time()}
+            )
+
     def finish(self, status: str, error: str | None, *, stage: str | None) -> None:
+        global _current_run
+        try:
+            self._finish(status, error, stage=stage)
+        finally:
+            if _current_run is self:
+                _current_run = None
+
+    def _finish(self, status: str, error: str | None, *, stage: str | None) -> None:
         if not _active():
             return
         with self._lock:
             records = list(self._task_spans)
+            nodes = list(self._nodes)
             failed_task = self._failed_task
         # MAA 任务 succeeded=False 不会让整批运行失败，但遥测按失败上报
         if status == "success" and failed_task is not None:
@@ -336,6 +363,16 @@ class RunTrace:
                 span.set_data("options", record["options"])
                 span.set_status(_span_status(record["ok"]))
                 span.finish(end_timestamp=record["end"] or time.time())
+            for node in nodes:
+                span = tx.start_child(
+                    op="mwu.node", description=node["msg"], start_timestamp=node["at"]
+                )
+                span.set_data("node", node["name"])
+                span.set_data("task_id", node["task_id"])
+                span.set_status(
+                    "internal_error" if node["msg"].endswith(".Failed") else "ok"
+                )
+                span.finish(end_timestamp=node["at"])
             tx.set_status(
                 {"success": "ok", "stopped": "cancelled"}.get(status, "internal_error")
             )

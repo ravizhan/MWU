@@ -4,7 +4,8 @@ from typing import Any
 
 import pytest
 
-from models.interface import InterfaceModel
+from maa_worker.focus_protocol import UnifiedFocusResolver
+from models.interface import InterfaceModel, SentryTelemetry
 from services import telemetry
 
 
@@ -122,3 +123,33 @@ def test_consent_initializes_without_optional_integrations(tmp_path, monkeypatch
         assert telemetry.status()["enabled"] is True
     finally:
         telemetry.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("msg", "focus", "expected"),
+    [
+        ("Node.PipelineNode.Failed", None, True),
+        ("Node.PipelineNode.Succeeded", None, False),
+        ("Node.PipelineNode.Succeeded", {"trace": True}, True),
+        ("Node.PipelineNode.Failed", {"content": "x", "trace": False}, False),
+    ],
+)
+def test_effective_trace(msg, focus, expected):
+    details = {"focus": {msg: focus}} if focus is not None else {}
+    assert UnifiedFocusResolver.effective_trace(msg, details) is expected
+
+
+def test_trace_node_records_only_during_active_run(monkeypatch):
+    monkeypatch.setattr(telemetry, "_initialized", True)
+    monkeypatch.setattr(telemetry, "_config", SentryTelemetry(dsn="x"))
+    monkeypatch.setattr(telemetry, "_current_run", None)
+    details = {"name": "Node", "task_id": 7, "focus": {"secret": "x"}}
+
+    telemetry.trace_node("Node.PipelineNode.Failed", details)
+    run = telemetry.start_run("manual")
+    assert run is not None
+    telemetry.trace_node("Node.PipelineNode.Failed", details)
+
+    assert [{k: v for k, v in node.items() if k != "at"} for node in run._nodes] == [
+        {"msg": "Node.PipelineNode.Failed", "name": "Node", "task_id": "7"}
+    ]

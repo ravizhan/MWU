@@ -1,3 +1,4 @@
+import ctypes
 import os
 import re
 import sys
@@ -26,6 +27,12 @@ if TYPE_CHECKING:
 
 _LINUX_SCREENCAP_METHODS = {"Wlr": 1, "PipeWire": 4}
 _LINUX_INPUT_METHODS = {"Wlr": 1, "UInput": 2, "Libei": 4}
+
+
+def _is_elevated() -> bool:
+    if sys.platform == "win32":
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    return os.geteuid() == 0
 
 
 def is_controller_supported(controller) -> tuple[bool, str]:
@@ -225,9 +232,11 @@ class DeviceService:
         return merged
 
     def _load_resource_bundle(self, path: str) -> str:
-        resolved_path = os.path.realpath(path.replace("{PROJECT_DIR}", os.getcwd()))
-        self.worker.resource.post_bundle(resolved_path).wait()
-        return resolved_path
+        base = self.worker.context.interface_base_dir
+        resolved = (base / path.replace("{PROJECT_DIR}", str(base))).resolve()
+        if not self.worker.resource.post_bundle(str(resolved)).wait().succeeded:
+            raise RuntimeError(f"资源加载失败: {resolved}")
+        return str(resolved)
 
     def _append_controller_resource_paths(self, controller) -> list[str]:
         loaded_paths: list[str] = []
@@ -590,6 +599,18 @@ class DeviceService:
         else:
             raise ValueError(f"不支持的设备类型: {device_type}")
 
+    def _apply_screenshot_target(self, controller, definition) -> None:
+        if definition.display_raw:
+            controller.set_screenshot_use_raw_size(True)
+        elif definition.display_expand:
+            controller.set_screenshot_target_expand(*definition.display_expand)
+        elif definition.display_long_side:
+            controller.set_screenshot_target_long_side(definition.display_long_side)
+        else:
+            controller.set_screenshot_target_short_side(
+                definition.display_short_side or 720
+            )
+
     def connect(self, device_config: DeviceModel) -> bool:
         state = self.worker.device_state
         if state.configuration_locked:
@@ -614,7 +635,17 @@ class DeviceService:
             self.worker.events.send_log(state.last_device_error)
             return False
 
-        status = False
+        if selected_controller.permission_required and not _is_elevated():
+            label = (
+                self.worker.text.resolve(selected_controller.label)
+                or selected_controller.name
+            )
+            state.last_device_error = (
+                f"控制器 {label} 需要管理员权限，请以管理员身份重新启动 MWU"
+            )
+            self.worker.events.send_log(state.last_device_error)
+            return False
+
         controller = None
         match device_type:
             case "Adb":
@@ -625,7 +656,6 @@ class DeviceService:
                     input_methods=int(device_config.input_methods or 0),
                     config=device_config.config or {},
                 )
-                status = controller.post_connection().wait().succeeded
             case "Win32":
                 # 鼠标与键盘方式分别取自控制器定义（AnchoredTouch 仅支持鼠标），
                 # 未配置时沿用 MaaFramework 默认的 Seize。
@@ -636,27 +666,26 @@ class DeviceService:
                     mouse_method=methods["mouse"] or INPUT_METHOD_INTS["Seize"],
                     keyboard_method=methods["keyboard"] or INPUT_METHOD_INTS["Seize"],
                 )
-                status = controller.post_connection().wait().succeeded
             case "Gamepad":
                 controller = GamepadController(
                     hWnd=device_config.hWnd,
                     gamepad_type=int(device_config.gamepad_type or 0),
                     screencap_method=int(device_config.screencap_methods or 0),
                 )
-                status = controller.post_connection().wait().succeeded
             case "PlayCover":
                 controller = PlayCoverController(
                     address=device_config.address or "127.0.0.1:1717",
                     uuid=device_config.uuid,
                 )
-                status = controller.post_connection().wait().succeeded
             case "Linux":
                 controller = self._create_linux_controller(
                     selected_controller, device_config
                 )
                 if controller is None:
                     return False
-                status = controller.post_connection().wait().succeeded
+
+        self._apply_screenshot_target(controller, selected_controller)
+        status = controller.post_connection().wait().succeeded
 
         conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
@@ -815,9 +844,21 @@ class DeviceService:
             if resource_config.name != resource_name:
                 continue
 
-            loaded_paths = [
-                self._load_resource_bundle(path) for path in resource_config.path
-            ]
+            if not self.worker.resource.clear():
+                state.last_resource_error = "资源清理失败，请稍后重试"
+                self.worker.events.send_log(state.last_resource_error)
+                return False
+
+            controller = self.get_controller_definition(state.controller_name)
+            try:
+                loaded_paths = [
+                    self._load_resource_bundle(path) for path in resource_config.path
+                ]
+                attached_paths = self._append_controller_resource_paths(controller)
+            except RuntimeError as e:
+                state.last_resource_error = str(e)
+                self.worker.events.send_log(state.last_resource_error)
+                return False
 
             if (
                 resource_config.hash
@@ -828,8 +869,6 @@ class DeviceService:
                 )
 
             state.current_resource_name = resource_config.name
-            controller = self.get_controller_definition(state.controller_name)
-            attached_paths = self._append_controller_resource_paths(controller)
             if loaded_paths:
                 self.worker.events.send_log(
                     f"资源主路径已加载: {', '.join(loaded_paths)}"

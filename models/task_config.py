@@ -462,6 +462,12 @@ def _normalize_options_for_task(
                 normalized_items = [
                     item for item in normalized_items if item in allowed_cases
                 ]
+            option = option_map[option_key]
+            if len(normalized_items) < (option.min_count or 0) or (
+                option.max_count is not None
+                and len(normalized_items) > option.max_count
+            ):
+                continue
             normalized_options[option_key] = normalized_items
             continue
 

@@ -245,7 +245,8 @@
   "option": {
     "hotkeyCapturing": "请按下快捷键…",
     "hotkeyTooManyModifiers": "快捷键最多支持两个修饰键",
-    "hotkeyUnsupportedKey": "该按键不受支持，请换一个键"
+    "hotkeyUnsupportedKey": "该按键不受支持，请换一个键",
+    "checkboxCount": "已选 {count} 项，需选择 {min}–{max} 项"
   },
   "panel": {
     "device": "设备连接",
@@ -329,5 +330,8 @@
     "confirmAndContinue": "确认并继续",
     "stopTask": "停止任务",
     "confirmFailed": "确认请求失败，请重试"
+  },
+  "welcome": {
+    "title": "公告"
   }
 }

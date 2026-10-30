@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import json_utils as json
+import secret_store
 from app_paths import resolve_app_root
 from models.settings import SettingsModel
 
@@ -61,6 +62,7 @@ def atomic_write_settings(path: Path, data: dict[str, Any]) -> None:
 def load_settings_model(path: Path, **validate_kwargs: Any) -> SettingsModel:
     """Load settings from path; missing/corrupt/invalid → defaults (logged)."""
     raw = read_settings_raw(path)
+    raw["globalOptionValues"] = secret_store.reveal(raw.get("globalOptionValues", {}))
     try:
         return SettingsModel.model_validate(raw, **validate_kwargs)
     except ValueError as exc:
@@ -86,4 +88,7 @@ def write_settings_preserving_custom_devices(
                 panel = {}
                 payload["panel"] = panel
             panel["customDevices"] = disk_panel["customDevices"]
+        payload["globalOptionValues"] = secret_store.seal_option_map(
+            payload["globalOptionValues"]
+        )
         atomic_write_settings(path, payload)

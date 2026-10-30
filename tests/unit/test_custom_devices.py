@@ -25,6 +25,11 @@ def _controller(name: str, type_: str) -> SimpleNamespace:
         name=name,
         type=type_,
         label=name,
+        display_short_side=720,
+        display_long_side=None,
+        display_expand=None,
+        display_raw=False,
+        permission_required=False,
         win32=None,
         gamepad=None,
         linux=None,
@@ -177,8 +182,11 @@ def test_custom_record_to_device(record: dict[str, Any], expected: dict[str, Any
     assert custom_record_to_device(record) == expected
 
 
-def _fake_linux_controller(captured: dict[str, Any]):
-    """替代 maa.controller.LinuxController，捕获构造参数。"""
+def _fake_linux_controller(
+    captured: dict[str, Any],
+    screenshot_calls: list[tuple[Any, ...]] | None = None,
+):
+    """替代 maa.controller.LinuxController，捕获构造参数与截图参数。"""
 
     class _FakeLinuxController:
         connected = True
@@ -189,6 +197,13 @@ def _fake_linux_controller(captured: dict[str, Any]):
         @staticmethod
         def post_connection():
             return SimpleNamespace(wait=lambda: SimpleNamespace(succeeded=True))
+
+        def set_screenshot_target_expand(self, width: int, height: int) -> None:
+            if screenshot_calls is not None:
+                screenshot_calls.append(("expand", width, height))
+
+        def set_screenshot_target_short_side(self, short_side: int) -> None:
+            pass
 
     return _FakeLinuxController
 
@@ -419,6 +434,52 @@ class TestLinuxSupport:
 
         assert connected is False
         assert "Wlr" in worker.device_state.last_device_error
+
+    def test_connect_applies_display_expand(self, app_root: Path):
+        captured: dict[str, Any] = {}
+        screenshot_calls: list[tuple[Any, ...]] = []
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap=None,
+            input=None,
+            pipewire_source=None,
+            use_win32_vk_code=False,
+        )
+        controller.display_expand = (1280, 720)
+        worker = self._linux_worker(app_root, controller)
+
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController",
+            "Linux",
+            "/run/user/1000/wayland-1",
+        )
+        with (
+            patch(
+                "maa_worker.device_service.LinuxController",
+                _fake_linux_controller(captured, screenshot_calls),
+            ),
+            patch("maa_worker.device_service.time.sleep"),
+        ):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is True
+        assert screenshot_calls == [("expand", 1280, 720)]
+
+    def test_connect_requires_elevation(self, app_root: Path):
+        controller = _controller("LinuxController", "Linux")
+        controller.permission_required = True
+        worker = self._linux_worker(app_root, controller)
+
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController",
+            "Linux",
+            "/run/user/1000/wayland-1",
+        )
+        with patch("maa_worker.device_service._is_elevated", return_value=False):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is False
+        assert "管理员权限" in worker.device_state.last_device_error
 
 
 class TestCustomDevicePersistence:

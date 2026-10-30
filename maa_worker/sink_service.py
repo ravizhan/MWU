@@ -12,6 +12,7 @@ from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
 from maa_worker.focus_protocol import UnifiedFocusResolver
+from services import telemetry
 
 # ---------------------------------------------------------------------------
 # Sink 实例类 — 继承 EventSink，转发到共享 handler
@@ -69,6 +70,8 @@ class SinkHandler:
         1. UnifiedFocusResolver 解析 (msg, details) → FocusDisplayEvent
         2. FocusEventProcessor 按 display_channels 分发到 SSE / 系统通知
         """
+        if UnifiedFocusResolver.effective_trace(msg, details):
+            telemetry.trace_node(msg, details)
         event = self._resolver.resolve(msg, details, self._translate)
         if event is None:
             return
