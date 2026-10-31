@@ -27,9 +27,13 @@ function normalizeObjectValue(value: unknown): Record<string, string> {
   return normalized
 }
 
-function buildSelectDefault(option: SelectOption | ScanSelectOption): string {
-  const defaultValue = option.default_case ?? option.cases[0]?.name ?? ""
-  return typeof defaultValue === "string" ? defaultValue : ""
+// 与后端 _build_option_defaults 一致：default_case 不属于 cases 时回退到第一个 case
+function buildSingleCaseDefault(option: SelectOption | ScanSelectOption | SwitchOption): string {
+  const defaultCase = option.default_case
+  if (typeof defaultCase === "string" && option.cases.some((item) => item.name === defaultCase)) {
+    return defaultCase
+  }
+  return option.cases[0]?.name ?? ""
 }
 
 function buildInputDefault(option: InputOption): Record<string, string> {
@@ -48,11 +52,6 @@ function buildHotkeyDefault(option: HotkeyOption): Record<string, string> {
   return hotkeyDefaults
 }
 
-function buildSwitchDefault(option: SwitchOption): string {
-  const defaultValue = option.default_case ?? option.cases[0]?.name ?? ""
-  return typeof defaultValue === "string" ? defaultValue : ""
-}
-
 // 根据选项定义生成默认值
 export function buildDefaultsFromOptionMap(
   optionMap: Record<string, Option>,
@@ -61,8 +60,8 @@ export function buildDefaultsFromOptionMap(
   for (const key in optionMap) {
     const option = optionMap[key]
 
-    if (option.type === "select" || option.type === "scan_select") {
-      options[key] = buildSelectDefault(option)
+    if (option.type === "select" || option.type === "scan_select" || option.type === "switch") {
+      options[key] = buildSingleCaseDefault(option)
       continue
     }
 
@@ -73,11 +72,6 @@ export function buildDefaultsFromOptionMap(
 
     if (option.type === "hotkey") {
       options[key] = buildHotkeyDefault(option)
-      continue
-    }
-
-    if (option.type === "switch") {
-      options[key] = buildSwitchDefault(option)
       continue
     }
 
