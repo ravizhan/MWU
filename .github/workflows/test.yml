@@ -39,6 +39,9 @@ jobs:
         with:
           python-version-file: ".python-version"
 
+      - name: Setup cryptography build deps
+        uses: ./.github/actions/cryptography-deps
+
       - name: Install Dependencies
         run: uv sync --dev
 

@@ -27,6 +27,7 @@ from models.scheduler import (
 )
 from models.settings import SettingsModel
 from models.task_config import (
+    find_unmet_checkbox_minimums,
     normalize_global_option_values,
     normalize_task_execution_payload,
 )
@@ -507,12 +508,26 @@ async def _complete_run(
             global_values,
             worker.interface,
         )
+        # 与设备连接一致，以实际连接的控制器为准（顶层 controller_name 可能与之不一致）
+        effective_controller = payload.device.controller_name
+        unmet_options = find_unmet_checkbox_minimums(
+            worker.interface,
+            normalized_task_list,
+            normalized_task_options,
+            normalized_global_options,
+            effective_controller,
+            payload.resource_name,
+        )
+        if unmet_options:
+            failure_stage = "prepare"
+            raise RuntimeError(
+                f"以下多选选项未达到最少选择数量: {', '.join(unmet_options)}"
+            )
 
         # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
         # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。
         # stop_flag 只在准入占槽时复位（_claim_slot）；此处不得重置，
         # 否则 stop_active() 在准入后、本阶段前设置的停止请求会被吞掉。
-        effective_controller = payload.controller_name or payload.device.controller_name
         pretask_future = asyncio.ensure_future(
             asyncio.to_thread(
                 worker.pretasks.run_all,

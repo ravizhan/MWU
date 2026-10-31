@@ -5,6 +5,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PositiveInt,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -197,9 +198,9 @@ class Controller(BaseModel):
     description: str | None = None
     icon: str | None = None
     type: Literal["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
-    display_short_side: int | None = 720
-    display_long_side: int | None = None
-    display_expand: tuple[int, int] | None = None
+    display_short_side: PositiveInt | None = 720
+    display_long_side: PositiveInt | None = None
+    display_expand: tuple[PositiveInt, PositiveInt] | None = None
     display_raw: bool | None = False
     permission_required: bool | None = False
     attach_resource_path: list[str] | None = None
@@ -444,15 +445,11 @@ class Option(BaseModel):
             self.max_count is not None and self.max_count > case_count
         ):
             raise ValueError("checkbox 的 min_count / max_count 不能大于 cases 数量")
-        if self.default_case is None:
-            return
-        default_count = len(self.default_case)
-        if default_count < min_count or (
-            self.max_count is not None and default_count > self.max_count
+        # 低于 min_count 的默认值允许加载，由启动前校验拦截（PI 规范）
+        if self.max_count is not None and len(set(self.default_case or [])) > (
+            self.max_count
         ):
-            raise ValueError(
-                "checkbox 的 default_case 数量必须满足 min_count / max_count"
-            )
+            raise ValueError("checkbox 的 default_case 数量不能大于 max_count")
 
 
 class PresetTask(BaseModel):

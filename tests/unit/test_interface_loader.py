@@ -968,17 +968,20 @@ class TestLoadInterfaceModel:
                         "mods": {
                             "type": "checkbox",
                             "cases": [{"name": "fast"}, {"name": "slow"}],
-                            "min_count": 2,
+                            "default_case": ["fast"],
+                            "max_count": 1,
                         }
                     },
                     "preset": [
                         {
                             "name": "P",
-                            "task": [{"name": "A", "option": {"mods": ["fast"]}}],
+                            "task": [
+                                {"name": "A", "option": {"mods": ["fast", "slow"]}}
+                            ],
                         }
                     ],
                 },
-                "选择数量必须满足 min_count / max_count",
+                "选择数量不能大于 max_count",
                 id="checkbox-count",
             ),
             pytest.param(
@@ -988,6 +991,7 @@ class TestLoadInterfaceModel:
                         "mods": {
                             "type": "checkbox",
                             "cases": [{"name": "fast"}, {"name": "slow"}],
+                            "default_case": ["fast", "slow"],
                             "min_count": 2,
                         }
                     },

@@ -18,6 +18,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, TypeAdapter
 from tzlocal import get_localzone
 
+import secret_store
 from app_state import AppState
 from maa_worker.event_service import load_settings
 from models.scheduler import (
@@ -81,7 +82,7 @@ def _build_task_from_kwargs(
         wakeup_enabled=bool(kwargs.get("wakeup_enabled", False)),
         trigger_config=trigger_config,
         task_list=kwargs.get("task_list", []) or [],
-        task_options=kwargs.get("task_options", {}) or {},
+        task_options=secret_store.reveal(kwargs.get("task_options", {}) or {}),
         preTasks=kwargs.get("pre_tasks", []) or [],
         controller_name=kwargs.get("controller_name"),
         device=device,
@@ -331,7 +332,9 @@ class SchedulerManager:
                     "task_name": task.name,
                     "task_description": task.description or "",
                     "task_list": normalized_task_list,
-                    "task_options": normalized_task_options,
+                    "task_options": secret_store.seal_task_options(
+                        normalized_task_options
+                    ),
                     "pre_tasks": [pt.model_dump() for pt in normalized_pre_tasks],
                     "controller_name": task.controller_name,
                     "device": task.device.model_dump() if task.device else None,
@@ -448,7 +451,7 @@ class SchedulerManager:
         new_options = (
             task_update.task_options
             if task_update.task_options is not None
-            else current_kwargs.get("task_options", {})
+            else secret_store.reveal(current_kwargs.get("task_options", {}))
         )
         new_pre_tasks = (
             task_update.preTasks
@@ -533,7 +536,7 @@ class SchedulerManager:
                 "task_name": new_name,
                 "task_description": new_description,
                 "task_list": normalized_task_list,
-                "task_options": normalized_task_options,
+                "task_options": secret_store.seal_task_options(normalized_task_options),
                 "pre_tasks": [pt.model_dump() for pt in normalized_pre_tasks],
                 "controller_name": new_controller_name,
                 "device": new_device,

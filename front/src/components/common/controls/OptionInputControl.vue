@@ -3,8 +3,17 @@
     <div v-for="input in option.inputs" :key="input.name" class="flex flex-col gap-1">
       <span class="text-xs opacity-60">{{ resolveInputLabel(input.label, input.name) }}</span>
       <InterfaceDescription :text="input.description" />
+      <NInput
+        v-if="input.password"
+        type="password"
+        size="small"
+        :input-props="{ autocomplete: 'new-password' }"
+        :value="getInputValue(input.name)"
+        :status="isInputError(input.name, input.verify) ? 'error' : undefined"
+        @update:value="handleInputChange(input.name, $event, input)"
+      />
       <NInputNumber
-        v-if="getInputControlType(input) === 'number'"
+        v-else-if="getInputControlType(input) === 'number'"
         size="small"
         :value="getInputNumberValue(input.name)"
         :status="isInputError(input.name, input.verify) ? 'error' : undefined"

@@ -202,6 +202,72 @@ def normalize_task_execution_payload(
     )
 
 
+def find_unmet_checkbox_minimums(
+    interface_model: InterfaceModel,
+    task_list: list[str],
+    task_options: TaskOptionsByTask,
+    global_options: dict[str, TaskOptionValue],
+    controller_name: str,
+    resource_name: str,
+) -> list[str]:
+    """返回本次运行实际生效、但选择数量低于 min_count 的 checkbox 选项名。
+
+    只校验用户可编辑的选项：兼容任务（TaskService.start 会跳过不兼容任务）的任务选项、
+    global_option 与适用的 PI pretask 选项，并只递归进入已选 case 的子选项。
+    资源/控制器选项组没有用户取值，执行时只用默认值，因此不参与校验。
+    """
+    option_map = interface_model.option or {}
+    defaults, _ = _build_option_defaults(option_map)
+    unmet: dict[str, None] = {}
+
+    def visit(
+        names: list[str], values: dict[str, TaskOptionValue], seen: set[str]
+    ) -> None:
+        for name in names:
+            option = option_map.get(name)
+            if option is None or name in seen:
+                continue
+            if option.controller and controller_name not in option.controller:
+                continue
+            if option.resource and resource_name not in option.resource:
+                continue
+            seen.add(name)
+            value = values.get(name, defaults.get(name))
+            selected = value if isinstance(value, list) else [value]
+            if option.type == "checkbox" and len(set(selected)) < (
+                option.min_count or 0
+            ):
+                unmet[name] = None
+            for case in option.cases or []:
+                if case.option and case.name in selected:
+                    visit(case.option, values, seen)
+
+    task_map = {task.name: task for task in interface_model.task or []}
+    for task_name in dict.fromkeys(task_list):
+        task = task_map.get(task_name)
+        if task is None:
+            continue
+        if task.controller and controller_name not in task.controller:
+            continue
+        if task.resource and resource_name not in task.resource:
+            continue
+        visit(task.option or [], task_options.get(task_name, {}), set())
+
+    pretasks = interface_model.pretask or []
+    if not isinstance(pretasks, list):
+        pretasks = [pretasks]
+    global_names = list(interface_model.global_option or [])
+    for pretask in pretasks:
+        if pretask.controller and controller_name not in pretask.controller:
+            continue
+        if pretask.resource and resource_name not in pretask.resource:
+            continue
+        global_names.extend(pretask.option or [])
+    visit(global_names, global_options, set())
+
+    return list(unmet)
+
+
 def build_interface_preset_snapshot(
     interface_model: InterfaceModel, preset: Preset
 ) -> TaskPresetSnapshotModel:
@@ -456,12 +522,22 @@ def _normalize_options_for_task(
             continue
 
         if expected_type == "string_list" and isinstance(option_value, list):
-            normalized_items = [item for item in option_value if isinstance(item, str)]
+            # 去重后计数，重复的 case 只算一次选择
+            normalized_items = list(
+                dict.fromkeys(item for item in option_value if isinstance(item, str))
+            )
             allowed_cases = case_name_sets.get(option_key)
             if allowed_cases is not None:
                 normalized_items = [
                     item for item in normalized_items if item in allowed_cases
                 ]
+            option = option_map[option_key]
+            # 低于 min_count 是允许保存的编辑中状态，由启动前校验拦截
+            if (
+                option.max_count is not None
+                and len(normalized_items) > option.max_count
+            ):
+                continue
             normalized_options[option_key] = normalized_items
             continue
 

@@ -223,6 +223,15 @@ class UnifiedFocusResolver:
             raw_msg=msg,
         )
 
+    @staticmethod
+    def effective_trace(msg: str, details: dict) -> bool:
+        """focus 模板显式声明的 trace 优先；否则仅节点失败默认上报。"""
+        focus = details.get("focus")
+        template = focus.get(msg) if isinstance(focus, dict) else None
+        if isinstance(template, dict) and isinstance(template.get("trace"), bool):
+            return template["trace"]
+        return msg == "Node.PipelineNode.Failed"
+
     # ---- 内部方法 ------------------------------------------------------------
 
     @staticmethod

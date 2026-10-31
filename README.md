@@ -264,6 +264,8 @@ uv run main.py  # 启动 FastAPI 服务
 
 Nuitka 位于 `build` 分组，编译后端前需运行 `uv sync --locked --group build`。
 
+`cryptography` 在 Windows ARM64 和 macOS x86_64 上没有预编译 wheel，`uv sync` 会从源码构建：需要 Rust 工具链和 OpenSSL 3，并把 `OPENSSL_DIR` 指向 OpenSSL 安装目录（CI 中由 `.github/actions/cryptography-deps` 准备）。
+
 #### 🧪 项目构建
 
 ```bash

@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 import json_utils as json
+import secret_store
 from app_paths import resolve_app_root
 from models.settings import SettingsModel
 
 logger = logging.getLogger(__name__)
 
 # 保护 settings.json 的读-改-写序列（设备列表与 /api/settings 都会改写同一文件）。
-# read_settings_raw / atomic_write_settings 自身不加锁，调用方必须在持有本锁时
+# read_settings_raw / atomic_write_json 自身不加锁，调用方必须在持有本锁时
 # 完成「读 → 改 → 写」，避免嵌套加锁。
 SETTINGS_LOCK = threading.Lock()
 
@@ -36,13 +37,14 @@ def read_settings_raw(path: Path) -> dict[str, Any]:
     return raw
 
 
-def atomic_write_settings(path: Path, data: dict[str, Any]) -> None:
-    """Atomically write settings.json (tmp + fsync + os.replace).
+def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write a JSON file (tmp + fsync + os.replace).
 
-    Caller must hold SETTINGS_LOCK.
+    The temp name includes pid and thread id, so concurrent writers never share it;
+    callers still serialize read-modify-write sequences (e.g. SETTINGS_LOCK).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".settings.json.{os.getpid()}.tmp")
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         with tmp_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -61,6 +63,7 @@ def atomic_write_settings(path: Path, data: dict[str, Any]) -> None:
 def load_settings_model(path: Path, **validate_kwargs: Any) -> SettingsModel:
     """Load settings from path; missing/corrupt/invalid → defaults (logged)."""
     raw = read_settings_raw(path)
+    raw["globalOptionValues"] = secret_store.reveal(raw.get("globalOptionValues", {}))
     try:
         return SettingsModel.model_validate(raw, **validate_kwargs)
     except ValueError as exc:
@@ -86,4 +89,7 @@ def write_settings_preserving_custom_devices(
                 panel = {}
                 payload["panel"] = panel
             panel["customDevices"] = disk_panel["customDevices"]
-        atomic_write_settings(path, payload)
+        payload["globalOptionValues"] = secret_store.seal_option_map(
+            payload["globalOptionValues"]
+        )
+        atomic_write_json(path, payload)
