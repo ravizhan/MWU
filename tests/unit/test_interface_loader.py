@@ -477,6 +477,25 @@ class TestLoadInterfaceModel:
             ("extra", "Extra label"),
         ]
 
+    def test_imported_fragment_non_string_group_name_reports_load_error(self, tmp_path):
+        (tmp_path / "groups.json5").write_text(
+            stdlib_json.dumps({"group": [{"name": ["general"]}]})
+        )
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "group": [{"name": "general"}],
+                "import": ["groups.json5"],
+            },
+        )
+
+        with pytest.raises(InterfaceLoadError):
+            load_interface_model(tmp_path)
+
     def test_import_global_options_are_deduped_and_settings_appended(self, tmp_path):
         (tmp_path / "first.json5").write_text(
             stdlib_json.dumps(

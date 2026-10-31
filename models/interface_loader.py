@@ -183,15 +183,19 @@ def _merge_fragment_sections(
     if groups:
         target_groups = target.setdefault("group", [])
         group_names = {
-            group.get("name") for group in target_groups if isinstance(group, dict)
+            group["name"]
+            for group in target_groups
+            if isinstance(group, dict) and isinstance(group.get("name"), str)
         }
         for group in copy.deepcopy(groups):
             group_name = group.get("name") if isinstance(group, dict) else None
-            if group_name is not None and group_name in group_names:
+            if not isinstance(group_name, str):
+                target_groups.append(group)
+                continue
+            if group_name in group_names:
                 continue
             target_groups.append(group)
-            if group_name is not None:
-                group_names.add(group_name)
+            group_names.add(group_name)
 
     global_options = fragment.get("global_option")
     if global_options:
