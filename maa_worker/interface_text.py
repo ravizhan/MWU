@@ -43,7 +43,8 @@ class InterfaceText:
         if isinstance(payload, list):
             return [self.resolve_tree(item) for item in payload]
         if isinstance(payload, str):
-            return self.resolve(payload) or payload
+            resolved = self.resolve(payload)
+            return payload if resolved is None else resolved
         return payload
 
     def app_name(self) -> str:
