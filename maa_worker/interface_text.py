@@ -21,8 +21,8 @@ class InterfaceText:
 
     def language(self) -> str:
         settings = self.worker.state.settings
-        ui_language = settings.ui.language if settings is not None else "zh-CN"
-        return language_key(ui_language, self.worker.interface.languages)
+        ui_language = settings.ui.language if settings is not None else None
+        return language_key(ui_language or "zh-CN", self.worker.interface.languages)
 
     def resolve(self, value: str | None) -> str | None:
         if not value or not value.startswith("$"):
@@ -35,7 +35,7 @@ class InterfaceText:
             found = mapping
             for part in key.split("."):
                 found = found.get(part) if isinstance(found, dict) else None
-        return found if isinstance(found, str) else value
+        return found if isinstance(found, str) else None
 
     def resolve_tree(self, payload: Any) -> Any:
         if isinstance(payload, dict):
@@ -43,7 +43,7 @@ class InterfaceText:
         if isinstance(payload, list):
             return [self.resolve_tree(item) for item in payload]
         if isinstance(payload, str):
-            return self.resolve(payload)
+            return self.resolve(payload) or payload
         return payload
 
     def app_name(self) -> str:

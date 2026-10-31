@@ -3,6 +3,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from typing import TYPE_CHECKING
 
 from models.interface import Option, Pretask
@@ -189,7 +190,8 @@ class PretaskService:
             raise error from exc
 
         state.current_pre_task_process = process
-        output_lines: list[str] = []
+        # 前置程序可能长时间运行，只保留最后若干行，避免输出无限累积
+        output_lines: deque[str] = deque(maxlen=PRE_TASK_OUTPUT_MAX_LINES)
         stdout = process.stdout
 
         def _reader() -> None:
@@ -250,8 +252,8 @@ class PretaskService:
         self.worker.events.send_log(f"前置程序执行成功: {display_name}")
 
     @staticmethod
-    def _truncate_output(output_lines: list[str]) -> str:
-        output = "".join(output_lines[-PRE_TASK_OUTPUT_MAX_LINES:]).strip()
+    def _truncate_output(output_lines: deque[str]) -> str:
+        output = "".join(output_lines).strip()
         if len(output) > PRE_TASK_OUTPUT_MAX_CHARS:
             output = output[-PRE_TASK_OUTPUT_MAX_CHARS:]
         return output

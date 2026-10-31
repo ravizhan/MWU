@@ -1,4 +1,5 @@
 import { defineStore } from "pinia"
+import i18n from "@/app/i18n"
 import { tryCatch } from "@/utils/tryCatch"
 import { getSettings, updateSettings } from "@/services/api"
 import type { TaskOptionValue } from "@/types/schedulerModel"
@@ -49,6 +50,9 @@ const defaultSettings: SettingsModel = {
 }
 
 const DARK_MODE_KEY = "darkMode"
+const LOCALE_KEY = "locale"
+
+type UILocale = NonNullable<SettingsModel["ui"]["language"]>
 
 let saveQueue: Promise<void> = Promise.resolve()
 
@@ -69,10 +73,15 @@ function getCachedDarkMode(): "auto" | boolean {
   return "auto"
 }
 
-function getCachedLocale(): SettingsModel["ui"]["language"] {
+function getCachedLocale(): UILocale {
   if (typeof localStorage === "undefined") return "zh-CN"
-  const parsed = localeSchema.safeParse(localStorage.getItem("locale"))
+  const parsed = localeSchema.safeParse(localStorage.getItem(LOCALE_KEY))
   return parsed.success ? parsed.data : "zh-CN"
+}
+
+function applyLocale(language: UILocale): void {
+  localStorage.setItem(LOCALE_KEY, language)
+  i18n.global.locale.value = language
 }
 
 // TS cannot write through generic indexed access (`settings[category][key] = value`),
@@ -147,6 +156,14 @@ export const useSettingsStore = defineStore("settings", {
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
       this.initialized = true
       this.loading = false
+      const savedLanguage = this.settings.ui.language
+      if (savedLanguage) {
+        applyLocale(savedLanguage)
+        return true
+      }
+      // 后端尚未保存语言：用本机语言补写一次
+      this.settings.ui.language = getCachedLocale()
+      void this.saveSettings()
       return true
     },
 
@@ -183,6 +200,10 @@ export const useSettingsStore = defineStore("settings", {
       if (category === "ui" && key === "darkMode") {
         localStorage.setItem(DARK_MODE_KEY, String(value))
       }
+      if (category === "ui" && key === "language") {
+        const parsed = localeSchema.safeParse(value)
+        if (parsed.success) applyLocale(parsed.data)
+      }
       return this.saveSettings()
     },
 
@@ -212,7 +233,10 @@ export const useSettingsStore = defineStore("settings", {
       const previousSettings = deepClone(this.settings)
       this.settings = deepClone(defaultSettings)
       const success = await this.saveSettings()
-      if (success) return true
+      if (success) {
+        applyLocale(this.settings.ui.language ?? "zh-CN")
+        return true
+      }
 
       this.settings = previousSettings
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))

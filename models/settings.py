@@ -32,7 +32,8 @@ class Notification(BaseModel):
 
 class UI(BaseModel):
     darkMode: bool | str | None = "auto"
-    language: Literal["zh-CN", "en-US"] = "zh-CN"
+    # None 表示尚未保存过语言，前端加载成功后用本地语言补写
+    language: Literal["zh-CN", "en-US"] | None = None
 
 
 class Runtime(BaseModel):

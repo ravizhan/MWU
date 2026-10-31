@@ -62,10 +62,7 @@ function handleLocaleChange(val: string | number | null) {
   if (typeof val !== "string") return
   const parseResult = localeSchema.safeParse(val)
   if (!parseResult.success) return
-  const target = parseResult.data
-  localStorage.setItem("locale", target)
-  locale.value = target
-  void handleSettingChange("ui", "language", target)
+  void handleSettingChange("ui", "language", parseResult.data)
 }
 
 function handleDarkModeChange(val: string | number | null) {

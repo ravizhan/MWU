@@ -417,7 +417,12 @@ class TestLoadInterfaceModel:
     def test_imported_fragment_option_overrides_root(self, tmp_path):
         (tmp_path / "options.json5").write_text(
             stdlib_json.dumps(
-                {"option": {"opt": {"type": "select", "cases": [{"name": "b"}]}}}
+                {
+                    "option": {
+                        "opt": {"type": "select", "cases": [{"name": "b"}]},
+                        "frag": {"type": "select", "cases": [{"name": "f"}]},
+                    }
+                }
             )
         )
         _write_interface(
@@ -427,7 +432,10 @@ class TestLoadInterfaceModel:
                 "name": "Test",
                 "controller": [{"name": "adb", "type": "Adb"}],
                 "resource": [{"name": "main", "path": ["resource"]}],
-                "option": {"opt": {"type": "select", "cases": [{"name": "a"}]}},
+                "option": {
+                    "opt": {"type": "select", "cases": [{"name": "a"}]},
+                    "root": {"type": "select", "cases": [{"name": "r"}]},
+                },
                 "import": ["options.json5"],
             },
         )
@@ -435,12 +443,18 @@ class TestLoadInterfaceModel:
         model = load_interface_model(tmp_path)
 
         assert model.option is not None
+        assert set(model.option) == {"opt", "root", "frag"}
         assert [case.name for case in model.option["opt"].cases or []] == ["b"]
 
     def test_imported_fragment_groups_dedupe_by_name_root_wins(self, tmp_path):
         (tmp_path / "groups.json5").write_text(
             stdlib_json.dumps(
-                {"group": [{"name": "general", "label": "Fragment label"}]}
+                {
+                    "group": [
+                        {"name": "general", "label": "Fragment label"},
+                        {"name": "extra", "label": "Extra label"},
+                    ]
+                }
             )
         )
         _write_interface(
@@ -459,7 +473,8 @@ class TestLoadInterfaceModel:
 
         assert model.group is not None
         assert [(group.name, group.label) for group in model.group] == [
-            ("general", "Root label")
+            ("general", "Root label"),
+            ("extra", "Extra label"),
         ]
 
     def test_import_global_options_are_deduped_and_settings_appended(self, tmp_path):
@@ -768,6 +783,19 @@ class TestLoadInterfaceModel:
                 r"pretask\[0\]\.option 引用了不存在的选项: missing",
                 id="unknown-option",
             ),
+            pytest.param(
+                {
+                    "option": {
+                        "mode": {
+                            "type": "select",
+                            "cases": [{"name": "deep", "option": ["level"]}],
+                        }
+                    },
+                    "pretask": [{"exec": "prepare", "option": ["mode"]}],
+                },
+                r"pretask\[0\]\.option 引用了不存在的选项: level",
+                id="unknown-nested-option",
+            ),
         ],
     )
     def test_pretask_reference_validation(self, tmp_path, extra, expected):
@@ -933,6 +961,28 @@ class TestLoadInterfaceModel:
                 },
                 "选择数量必须满足 min_count / max_count",
                 id="checkbox-count",
+            ),
+            pytest.param(
+                {
+                    "task": [{"name": "A", "entry": "EntryA", "option": ["mods"]}],
+                    "option": {
+                        "mods": {
+                            "type": "checkbox",
+                            "cases": [{"name": "fast"}, {"name": "slow"}],
+                            "min_count": 2,
+                        }
+                    },
+                    "preset": [
+                        {
+                            "name": "P",
+                            "task": [
+                                {"name": "A", "option": {"mods": ["fast", "fast"]}}
+                            ],
+                        }
+                    ],
+                },
+                r"preset\[P\]\.task\[A\]\.option\[mods\] 包含重复的 case",
+                id="checkbox-duplicate-case",
             ),
             pytest.param(
                 {

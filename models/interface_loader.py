@@ -381,7 +381,7 @@ def _collect_reachable_option_names(
     for option_name in option_names:
         option = option_map.get(option_name)
         if option is None:
-            raise InterfaceLoadError(f"任务引用了不存在的选项: {option_name}")
+            raise InterfaceLoadError(f"引用了不存在的选项: {option_name}")
         if option_name in collected:
             continue
         collected.add(option_name)
@@ -409,6 +409,8 @@ def _validate_preset_option_value(
             isinstance(item, str) for item in value
         ):
             raise InterfaceLoadError(f"{location} 必须是字符串数组")
+        if len(set(value)) != len(value):
+            raise InterfaceLoadError(f"{location} 包含重复的 case")
         invalid_cases = [item for item in value if item not in case_names]
         if invalid_cases:
             raise InterfaceLoadError(
@@ -639,11 +641,10 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
                 f"{pretask_ref} 引用了不存在的 controller: {', '.join(invalid_controllers)}"
             )
 
-        for option_name in pretask.option or []:
-            if option_name not in option_map:
-                raise InterfaceLoadError(
-                    f"{pretask_ref}.option 引用了不存在的选项: {option_name}"
-                )
+        try:
+            _collect_reachable_option_names(pretask.option or [], option_map, set())
+        except InterfaceLoadError as exc:
+            raise InterfaceLoadError(f"{pretask_ref}.option {exc}") from exc
 
     interface_model.pretask = pretasks
 
