@@ -113,11 +113,19 @@ class _FakeEvents:
         return [event for event in self.terminal_events if not event[2]]
 
 
+def _task(name: str, option: list[str] | None = None, **fields) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        entry=f"Entry{name}",
+        option=option or [],
+        controller=fields.get("controller"),
+        resource=fields.get("resource"),
+    )
+
+
 class _FakeInterface:
     def __init__(self, names: list[str]):
-        self.task = [
-            SimpleNamespace(name=n, entry=f"Entry{n}", option=[]) for n in names
-        ]
+        self.task = [_task(n) for n in names]
         self.option = {}
         self.global_option = []
         self.pretask = []
@@ -655,9 +663,7 @@ class TestPretaskAdmission:
     ):
         # 省略 default_case 的 min_count 选项可以加载和保存，但不得以不足的选择启动
         worker = _FakeWorker(start_result=True, ready=True)
-        worker.interface.task = [
-            SimpleNamespace(name="Startup", entry="EntryStartup", option=["mods"])
-        ]
+        worker.interface.task = [_task("Startup", ["mods"])]
         worker.interface.option = {
             "mods": Option(
                 type="checkbox",
@@ -676,6 +682,39 @@ class TestPretaskAdmission:
         row = list_executions(state.scheduler_db_path)[0]
         assert row.status == "failed"
         assert "mods" in row.error_message
+
+    async def test_min_count_ignores_skipped_tasks_and_context_options(
+        self, state: AppState
+    ):
+        # 不兼容任务会被 TaskService 跳过；控制器选项组没有用户取值。两者都不得阻止启动
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        unmet = Option(
+            type="checkbox",
+            cases=[OptionCase(name="a"), OptionCase(name="b")],
+            min_count=1,
+        )
+        worker.interface.task = [
+            _task("Startup"),
+            _task("Win32Only", ["mods"], controller=["Win32Controller"]),
+        ]
+        worker.interface.option = {"mods": unmet, "ctl_mods": unmet}
+        worker.interface.controller = [
+            SimpleNamespace(name="AdbController", option=["ctl_mods"])
+        ]
+        state.worker = worker
+
+        payload = make_payload().model_copy(
+            update={"task_list": ["Startup", "Win32Only"]}
+        )
+        admission = await submit_manual(state, payload)
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.tasks.called is True
+        assert list_executions(state.scheduler_db_path)[0].status == "success"
 
     async def test_previous_stop_does_not_block_next_run(self, state: AppState):
         # 上一次运行被停止后 stop_flag 遗留为 True；新运行占槽时必须复位，
@@ -725,8 +764,8 @@ class TestPretaskAdmission:
             result=True, task_state=worker.task_state
         )
         worker.interface.task = [
-            SimpleNamespace(name="Startup", entry="EntryStartup", option=[]),
-            SimpleNamespace(name="Second", entry="EntrySecond", option=[]),
+            _task("Startup"),
+            _task("Second"),
         ]
         worker.interface.option = {
             "global_setting": Option(

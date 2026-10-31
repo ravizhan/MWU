@@ -212,8 +212,9 @@ def find_unmet_checkbox_minimums(
 ) -> list[str]:
     """返回本次运行实际生效、但选择数量低于 min_count 的 checkbox 选项名。
 
-    覆盖范围与执行时一致：资源/控制器/任务选项组、global_option、适用的 PI pretask 选项，
-    并只递归进入已选 case 的子选项。
+    只校验用户可编辑的选项：兼容任务（TaskService.start 会跳过不兼容任务）的任务选项、
+    global_option 与适用的 PI pretask 选项，并只递归进入已选 case 的子选项。
+    资源/控制器选项组没有用户取值，执行时只用默认值，因此不参与校验。
     """
     option_map = interface_model.option or {}
     defaults, _ = _build_option_defaults(option_map)
@@ -241,28 +242,16 @@ def find_unmet_checkbox_minimums(
                 if case.option and case.name in selected:
                     visit(case.option, values, seen)
 
-    controller = next(
-        (item for item in interface_model.controller if item.name == controller_name),
-        None,
-    )
-    resource = next(
-        (item for item in interface_model.resource if item.name == resource_name),
-        None,
-    )
-    context_option_names = [
-        *(resource.option or [] if resource else []),
-        *(controller.option or [] if controller else []),
-    ]
     task_map = {task.name: task for task in interface_model.task or []}
     for task_name in dict.fromkeys(task_list):
         task = task_map.get(task_name)
         if task is None:
             continue
-        visit(
-            [*context_option_names, *(task.option or [])],
-            task_options.get(task_name, {}),
-            set(),
-        )
+        if task.controller and controller_name not in task.controller:
+            continue
+        if task.resource and resource_name not in task.resource:
+            continue
+        visit(task.option or [], task_options.get(task_name, {}), set())
 
     pretasks = interface_model.pretask or []
     if not isinstance(pretasks, list):
