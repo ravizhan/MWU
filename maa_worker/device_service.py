@@ -848,6 +848,8 @@ class DeviceService:
                 state.last_resource_error = "资源清理失败，请稍后重试"
                 self.worker.events.send_log(state.last_resource_error)
                 return False
+            # 资源已清空：加载失败时不能继续报告旧资源名
+            state.current_resource_name = None
 
             controller = self.get_controller_definition(state.controller_name)
             try:

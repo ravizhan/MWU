@@ -355,15 +355,15 @@ class TestNormalizeOptionsForTask:
         opt = Option(
             type="checkbox",
             cases=[OptionCase(name="a"), OptionCase(name="b")],
-            default_case=["a", "b"],
-            min_count=2,
+            default_case=["b"],
+            max_count=1,
         )
         defaults, types = _build_option_defaults({"opt": opt})
         case_sets = {"opt": {"a", "b"}}
         result = _normalize_options_for_task(
             {"opt": ["a", "a"]}, {"opt": opt}, defaults, types, case_sets
         )
-        assert result["opt"] == ["a", "b"]
+        assert result["opt"] == ["a"]
 
     def test_input_partial_update(self):
         opt = _make_option(

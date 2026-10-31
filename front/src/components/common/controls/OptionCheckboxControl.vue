@@ -9,7 +9,12 @@
     >
       {{ resolveCaseLabel(checkbox.label, checkbox.name) }}
     </NCheckbox>
-    <div v-if="minCount > 0 || maxCount !== undefined" class="w-full text-xs opacity-60">
+    <NText
+      v-if="minCount > 0 || maxCount !== undefined"
+      :type="selectedCount < minCount ? 'error' : undefined"
+      :depth="selectedCount < minCount ? undefined : 3"
+      class="w-full text-xs"
+    >
       {{
         t("option.checkboxCount", {
           count: selectedCount,
@@ -17,7 +22,7 @@
           max: maxCount ?? option.cases.length,
         })
       }}
-    </div>
+    </NText>
   </div>
 </template>
 
@@ -47,23 +52,14 @@ const selectedCount = computed(() => normalizedValue.value.length)
 const minCount = computed(() => option.min_count ?? 0)
 // /api/interface 把未设置的上限序列化为 null，统一视为无上限
 const maxCount = computed(() => option.max_count ?? undefined)
-// 上下限相等时选满后无法增删，改为「勾选未选项 = 替换一个已选项」
-const replacesOnCheck = computed(
-  () =>
-    minCount.value > 0 &&
-    maxCount.value === minCount.value &&
-    selectedCount.value >= minCount.value,
-)
 
 function resolveCaseLabel(label: string | undefined, fallback: string): string {
   return resolveInterfaceText(label, fallback)
 }
 
+// 只拦截超出上限；低于下限允许暂存（如上下限相等时先取消再勾选），启动前由后端校验
 function isLocked(checkboxName: string): boolean {
   if (normalizedValue.value.includes(checkboxName)) {
-    return selectedCount.value <= minCount.value
-  }
-  if (replacesOnCheck.value) {
     return false
   }
   return maxCount.value !== undefined && selectedCount.value >= maxCount.value
@@ -75,9 +71,6 @@ function handleCheckboxChange(checkboxName: string, checked: boolean): void {
   }
 
   const selected = new Set(normalizedValue.value)
-  if (checked && replacesOnCheck.value) {
-    selected.delete(normalizedValue.value[0])
-  }
   if (checked) {
     selected.add(checkboxName)
   }

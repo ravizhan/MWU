@@ -121,6 +121,8 @@ class _FakeInterface:
         self.option = {}
         self.global_option = []
         self.pretask = []
+        self.controller = []
+        self.resource = []
 
 
 class _FakeTaskService:
@@ -647,6 +649,33 @@ class TestPretaskAdmission:
         assert row.id == admission.run_id
         assert row.status == "failed"
         assert row.error_message == "任务列表为空"
+
+    async def test_checkbox_below_min_count_fails_before_pretasks(
+        self, state: AppState
+    ):
+        # 省略 default_case 的 min_count 选项可以加载和保存，但不得以不足的选择启动
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.interface.task = [
+            SimpleNamespace(name="Startup", entry="EntryStartup", option=["mods"])
+        ]
+        worker.interface.option = {
+            "mods": Option(
+                type="checkbox",
+                cases=[OptionCase(name="a"), OptionCase(name="b")],
+                min_count=1,
+            )
+        }
+        state.worker = worker
+
+        admission = await submit_manual(state, make_payload())
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.pretasks.calls == []
+        assert worker.tasks.called is False
+        row = list_executions(state.scheduler_db_path)[0]
+        assert row.status == "failed"
+        assert "mods" in row.error_message
 
     async def test_previous_stop_does_not_block_next_run(self, state: AppState):
         # 上一次运行被停止后 stop_flag 遗留为 True；新运行占槽时必须复位，

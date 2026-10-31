@@ -420,12 +420,9 @@ def _validate_preset_option_value(
             raise InterfaceLoadError(
                 f"{location} 引用了不存在的 case: {', '.join(invalid_cases)}"
             )
-        if len(value) < (option.min_count or 0) or (
-            option.max_count is not None and len(value) > option.max_count
-        ):
-            raise InterfaceLoadError(
-                f"{location} 选择数量必须满足 min_count / max_count"
-            )
+        # 低于 min_count 与 default_case 同样允许作为初始状态，由启动前校验拦截
+        if option.max_count is not None and len(value) > option.max_count:
+            raise InterfaceLoadError(f"{location} 选择数量不能大于 max_count")
         return
 
     if option.type == "input":

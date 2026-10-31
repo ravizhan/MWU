@@ -445,14 +445,11 @@ class Option(BaseModel):
             self.max_count is not None and self.max_count > case_count
         ):
             raise ValueError("checkbox 的 min_count / max_count 不能大于 cases 数量")
-        # 省略 default_case 时默认值为空列表，同样必须满足 min_count
-        default_count = len(set(self.default_case or []))
-        if default_count < min_count or (
-            self.max_count is not None and default_count > self.max_count
+        # 低于 min_count 的默认值允许加载，由启动前校验拦截（PI 规范）
+        if self.max_count is not None and len(set(self.default_case or [])) > (
+            self.max_count
         ):
-            raise ValueError(
-                "checkbox 的 default_case 数量必须满足 min_count / max_count"
-            )
+            raise ValueError("checkbox 的 default_case 数量不能大于 max_count")
 
 
 class PresetTask(BaseModel):
