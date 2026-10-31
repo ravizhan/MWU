@@ -5,6 +5,7 @@
     :title="t('welcome.title')"
     :closable="false"
     :mask-closable="false"
+    :close-on-esc="false"
     style="max-width: min(560px, calc(100vw - 32px))"
   >
     <div class="max-h-[60vh] overflow-y-auto">

@@ -456,7 +456,10 @@ def _normalize_options_for_task(
             continue
 
         if expected_type == "string_list" and isinstance(option_value, list):
-            normalized_items = [item for item in option_value if isinstance(item, str)]
+            # 去重后计数，重复的 case 只算一次选择
+            normalized_items = list(
+                dict.fromkeys(item for item in option_value if isinstance(item, str))
+            )
             allowed_cases = case_name_sets.get(option_key)
             if allowed_cases is not None:
                 normalized_items = [

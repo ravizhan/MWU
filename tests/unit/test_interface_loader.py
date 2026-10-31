@@ -968,6 +968,7 @@ class TestLoadInterfaceModel:
                         "mods": {
                             "type": "checkbox",
                             "cases": [{"name": "fast"}, {"name": "slow"}],
+                            "default_case": ["fast", "slow"],
                             "min_count": 2,
                         }
                     },
@@ -988,6 +989,7 @@ class TestLoadInterfaceModel:
                         "mods": {
                             "type": "checkbox",
                             "cases": [{"name": "fast"}, {"name": "slow"}],
+                            "default_case": ["fast", "slow"],
                             "min_count": 2,
                         }
                     },

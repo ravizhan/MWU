@@ -60,7 +60,7 @@ jobs:
     env:
       UV_INDEX: https://pypi.org/simple
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +95,8 @@ jobs:
     steps:
       - name: Check-out repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: 'Workaround for missing zstd in windows-11-arm'
         if: matrix.os == 'windows-11-arm'

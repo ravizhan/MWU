@@ -5,6 +5,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PositiveInt,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -197,9 +198,9 @@ class Controller(BaseModel):
     description: str | None = None
     icon: str | None = None
     type: Literal["Adb", "Win32", "MacOS", "PlayCover", "Linux", "Gamepad"]
-    display_short_side: int | None = 720
-    display_long_side: int | None = None
-    display_expand: tuple[int, int] | None = None
+    display_short_side: PositiveInt | None = 720
+    display_long_side: PositiveInt | None = None
+    display_expand: tuple[PositiveInt, PositiveInt] | None = None
     display_raw: bool | None = False
     permission_required: bool | None = False
     attach_resource_path: list[str] | None = None
@@ -444,9 +445,8 @@ class Option(BaseModel):
             self.max_count is not None and self.max_count > case_count
         ):
             raise ValueError("checkbox 的 min_count / max_count 不能大于 cases 数量")
-        if self.default_case is None:
-            return
-        default_count = len(self.default_case)
+        # 省略 default_case 时默认值为空列表，同样必须满足 min_count
+        default_count = len(set(self.default_case or []))
         if default_count < min_count or (
             self.max_count is not None and default_count > self.max_count
         ):

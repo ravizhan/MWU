@@ -854,19 +854,19 @@ class DeviceService:
                 loaded_paths = [
                     self._load_resource_bundle(path) for path in resource_config.path
                 ]
+                # hash 只对应 resource.path，必须在加载控制器附加资源之前校验
+                if (
+                    resource_config.hash
+                    and resource_config.hash != self.worker.resource.hash
+                ):
+                    self.worker.events.send_log(
+                        f"资源包校验值不匹配，建议重新下载资源包: {resource_config.name}"
+                    )
                 attached_paths = self._append_controller_resource_paths(controller)
             except RuntimeError as e:
                 state.last_resource_error = str(e)
                 self.worker.events.send_log(state.last_resource_error)
                 return False
-
-            if (
-                resource_config.hash
-                and resource_config.hash != self.worker.resource.hash
-            ):
-                self.worker.events.send_log(
-                    f"资源包校验值不匹配，建议重新下载资源包: {resource_config.name}"
-                )
 
             state.current_resource_name = resource_config.name
             if loaded_paths:
