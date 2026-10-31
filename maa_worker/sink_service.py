@@ -6,6 +6,8 @@ FocusDisplayEvent，再由 FocusEventProcessor 按 display 通道
 分发到 SSE / 系统通知。
 """
 
+from collections.abc import Callable
+
 from maa.event_sink import EventSink
 
 from maa_worker.focus_processor import FocusEventProcessor
@@ -51,9 +53,14 @@ class MWUContextSink(_SinkBase):
 class SinkHandler:
     """将 MAA 底层回调通过 UnifiedFocusResolver → FocusEventProcessor 统一处理。"""
 
-    def __init__(self, focus: FocusEventProcessor):
+    def __init__(
+        self,
+        focus: FocusEventProcessor,
+        translate: Callable[[str], str | None] = lambda s: s,
+    ):
         self._resolver = UnifiedFocusResolver()
         self._processor = focus
+        self._translate = translate
 
     def on_event(self, msg: str, details: dict) -> None:
         """统一的 sink 事件入口。
@@ -62,7 +69,7 @@ class SinkHandler:
         1. UnifiedFocusResolver 解析 (msg, details) → FocusDisplayEvent
         2. FocusEventProcessor 按 display_channels 分发到 SSE / 系统通知
         """
-        event = self._resolver.resolve(msg, details)
+        event = self._resolver.resolve(msg, details, self._translate)
         if event is None:
             return
         self._processor.dispatch(event)

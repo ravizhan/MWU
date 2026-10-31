@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   buildResourceUrl,
   isExternalUrl,
   resolveInterfaceAssetUrl,
   resolveInterfaceDocumentContent,
   resolveInterfaceText,
+  setInterfaceTranslations,
 } from "@/utils/interface/content"
 
 describe("isExternalUrl", () => {
@@ -51,6 +52,10 @@ describe("buildResourceUrl", () => {
 })
 
 describe("resolveInterfaceText", () => {
+  beforeEach(() => {
+    setInterfaceTranslations(undefined, "zh-CN")
+  })
+
   it("returns the value when provided", () => {
     expect(resolveInterfaceText("hello")).toBe("hello")
   })
@@ -59,7 +64,22 @@ describe("resolveInterfaceText", () => {
     expect(resolveInterfaceText(null, "fallback")).toBe("fallback")
   })
 
-  it("returns fallback for $ prefixed translation tokens", () => {
+  it("resolves a flat translation key", () => {
+    setInterfaceTranslations({ "zh-CN": { dynamic: "动态" } }, "zh-CN")
+    expect(resolveInterfaceText("$dynamic", "fallback")).toBe("动态")
+  })
+
+  it("resolves a dotted translation key", () => {
+    setInterfaceTranslations({ "zh-CN": { nested: { label: "标签" } } }, "zh-CN")
+    expect(resolveInterfaceText("$nested.label", "fallback")).toBe("标签")
+  })
+
+  it("returns fallback for a missing translation key", () => {
+    setInterfaceTranslations({ "zh-CN": { dynamic: "动态" } }, "zh-CN")
+    expect(resolveInterfaceText("$missing", "fallback")).toBe("fallback")
+  })
+
+  it("returns fallback when no translations are set", () => {
     expect(resolveInterfaceText("$dynamic", "fallback")).toBe("fallback")
   })
 })

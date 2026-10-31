@@ -518,9 +518,8 @@ async def _complete_run(
                 worker.pretasks.run_all,
                 effective_controller,
                 payload.resource_name,
-                normalized_task_options,
                 normalized_pre_tasks,
-                global_options=normalized_global_options,
+                normalized_global_options,
             )
         )
         try:

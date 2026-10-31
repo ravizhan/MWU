@@ -158,11 +158,9 @@ const selectOptions = computed(() => {
   }))
 })
 
-const fallbackSelectValue = computed(() => {
-  const currentOption = option.value
-  if (currentOption?.type !== "select" && currentOption?.type !== "scan_select") return ""
-  return currentOption.default_case ?? currentOption.cases[0]?.name ?? ""
-})
+const fallbackSelectValue = computed(() =>
+  typeof defaultValue.value === "string" ? defaultValue.value : "",
+)
 
 const isSelectValueInvalid = computed(() => {
   const currentOption = option.value

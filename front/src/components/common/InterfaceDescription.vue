@@ -6,7 +6,7 @@
 import { computed, ref, watch } from "vue"
 import DOMPurify from "dompurify"
 import { marked } from "marked"
-import { resolveInterfaceDocumentContent } from "@/utils/interface/content"
+import { resolveInterfaceDocumentContent, resolveInterfaceText } from "@/utils/interface/content"
 
 const { text } = defineProps<{
   text?: string
@@ -15,13 +15,13 @@ const { text } = defineProps<{
 const documentContent = ref("")
 
 watch(
-  () => text,
-  async (value, _previous, onCleanup) => {
+  [() => text, () => resolveInterfaceText(text)],
+  async (_value, _previous, onCleanup) => {
     let stale = false
     onCleanup(() => {
       stale = true
     })
-    const content = await resolveInterfaceDocumentContent(value)
+    const content = await resolveInterfaceDocumentContent(text)
     if (!stale) {
       documentContent.value = content
     }

@@ -5,6 +5,7 @@ Focus 协议实现 — 严格遵循 PI V2 官方规范。
 按 `display` 字段指定的渠道（log / toast / notification / dialog / modal）分发。
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from models.api import RealtimeEventLevel
@@ -193,14 +194,22 @@ class UnifiedFocusResolver:
     """
 
     @staticmethod
-    def resolve(msg: str, details: dict) -> FocusDisplayEvent | None:
+    def resolve(
+        msg: str,
+        details: dict,
+        translate: Callable[[str], str | None] = lambda s: s,
+    ) -> FocusDisplayEvent | None:
         template = UnifiedFocusResolver._find_template(msg, details)
         if template is None:
             template = FocusTemplate(
                 content=AutoFocusGenerator.generate(msg, details),
                 display=[DISPLAY_LOG],
             )
-        content = template.content
+            content = template.content
+        else:
+            content = template.content and (
+                translate(template.content) or template.content
+            )
         if content is None:
             return None
         content = UnifiedFocusResolver._substitute(content, details)

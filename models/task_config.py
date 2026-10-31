@@ -152,12 +152,15 @@ def normalize_global_option_values(
     raw_global_options: dict[str, Any] | None,
     interface_model: InterfaceModel,
 ) -> dict[str, TaskOptionValue]:
-    all_options = interface_model.option or {}
-    option_map = {
-        option_name: all_options[option_name]
-        for option_name in (interface_model.global_option or [])
-        if option_name in all_options
-    }
+    """global_option 与 pretask.option（含嵌套子选项）共用 globalOptionValues。"""
+    pretasks = interface_model.pretask or []
+    if not isinstance(pretasks, list):
+        pretasks = [pretasks]
+    names = (interface_model.global_option or []) + [
+        name for pretask in pretasks for name in (pretask.option or [])
+    ]
+    option_map: dict[str, Option] = {}
+    _collect_task_options(names, interface_model.option or {}, option_map)
     defaults, value_types = _build_option_defaults(option_map)
     case_name_sets = _build_option_case_name_sets(option_map)
     return _normalize_options_for_task(
@@ -376,12 +379,11 @@ def _build_option_defaults(
 
     for option_name, option in option_map.items():
         if option.type in {"select", "scan_select", "switch"}:
-            default_value = option.default_case or (
-                option.cases[0].name if option.cases else ""
-            )
-            defaults[option_name] = (
-                default_value if isinstance(default_value, str) else ""
-            )
+            case_names = [case.name for case in option.cases or []]
+            default_value = option.default_case
+            if not isinstance(default_value, str) or default_value not in case_names:
+                default_value = case_names[0] if case_names else ""
+            defaults[option_name] = default_value
             value_types[option_name] = "string"
             continue
 

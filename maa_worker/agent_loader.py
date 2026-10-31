@@ -591,7 +591,11 @@ def load_agents(
                 env = os.environ.copy()
                 if pi_env:
                     env.update(pi_env)
-                agent_process = subprocess.Popen(command, env=env)
+                agent_process = subprocess.Popen(
+                    command,
+                    env=env,
+                    cwd=str(maa_worker.context.interface_base_dir),
+                )
                 if not agent_client.connect():
                     raise RuntimeError("Agent连接失败")
                 agent_processes.append(agent_process)

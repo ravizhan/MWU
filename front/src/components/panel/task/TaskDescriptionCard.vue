@@ -11,7 +11,7 @@ import DOMPurify from "dompurify"
 import { marked } from "marked"
 import { useIndexStore, useInterfaceStore } from "@/stores"
 import type { Task } from "@/types/interfaceModel"
-import { resolveInterfaceDocumentContent } from "@/utils/interface/content"
+import { resolveInterfaceDocumentContent, resolveInterfaceText } from "@/utils/interface/content"
 
 const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
@@ -42,7 +42,14 @@ function getTaskDocumentSource(task: Task | null): string {
 }
 
 watch(
-  [selectedTaskId, () => interfaceStore.interface],
+  [
+    selectedTaskId,
+    () => interfaceStore.interface,
+    () =>
+      resolveInterfaceText(
+        getTaskDocumentSource(interfaceStore.getTaskByName(selectedTaskId.value)),
+      ),
+  ],
   async (_value, _previous, onCleanup) => {
     let stale = false
     onCleanup(() => {

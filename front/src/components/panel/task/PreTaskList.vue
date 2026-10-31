@@ -6,16 +6,15 @@
           <PreTaskHeader />
         </template>
         <div class="px-3 pb-3 space-y-2">
-          <div v-if="piPretasks.length > 0" class="space-y-1.5">
-            <div class="text-xs font-medium opacity-60">
-              {{ $t("panel.piPretask.title") }}
-            </div>
-            <NTooltip
-              v-for="(item, index) in piPretasks"
-              :key="`${item.pretask.exec}-${index}`"
-              :disabled="!item.pretask.description && item.compatible"
-              :max-width="320"
-            >
+          <div v-if="piPretasks.length > 0" class="text-xs font-medium opacity-60">
+            {{ $t("panel.piPretask.title") }}
+          </div>
+          <div
+            v-for="(item, index) in piPretasks"
+            :key="`${item.pretask.exec}-${index}`"
+            class="space-y-1"
+          >
+            <NTooltip :disabled="!item.pretask.description && item.compatible" :max-width="320">
               <template #trigger>
                 <NEl
                   tag="div"
@@ -30,12 +29,22 @@
                 </NEl>
               </template>
               <div class="space-y-1">
-                <div v-if="item.pretask.description">{{ item.pretask.description }}</div>
+                <div v-if="item.pretask.description">
+                  {{ resolveInterfaceText(item.pretask.description, item.pretask.description) }}
+                </div>
                 <div v-if="!item.compatible">
                   {{ $t("panel.piPretask.incompatible") }}
                 </div>
               </div>
             </NTooltip>
+            <NEl
+              v-if="item.pretask.option?.length"
+              tag="div"
+              class="overflow-hidden rounded-lg border border-solid"
+              style="border-color: var(--divider-color)"
+            >
+              <TaskSettingOptionRow v-for="n in item.pretask.option" :key="n" :name="n" />
+            </NEl>
           </div>
 
           <div v-if="piPretasks.length > 0" class="flex items-center gap-2 py-1">
@@ -91,6 +100,7 @@ import PreTaskHeader from "@/components/panel/task/PreTaskHeader.vue"
 import PreTaskRow from "@/components/panel/task/PreTaskRow.vue"
 import PreTaskToolbar from "@/components/panel/task/PreTaskToolbar.vue"
 import PreTaskWarnDialog from "@/components/panel/task/PreTaskWarnDialog.vue"
+import { resolveInterfaceText } from "@/utils/interface/content"
 import { hasPretaskAck, setPretaskAck } from "@/utils/pretaskWarning"
 
 defineOptions({ inheritAttrs: false })
@@ -129,7 +139,7 @@ const preTasks = computed<PreTaskCommand[]>({
 const piPretasks = computed<PretaskListItem[]>(() =>
   interfaceStore.getPretasks.map((pretask) => ({
     pretask,
-    displayName: pretask.label || pretask.name || pretask.exec,
+    displayName: resolveInterfaceText(pretask.label, pretask.name || pretask.exec),
     compatible: interfaceStore.isPretaskCompatible(pretask, controllerName, resourceName),
   })),
 )

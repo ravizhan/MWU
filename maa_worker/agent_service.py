@@ -2,14 +2,14 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 import json_utils as json
+from app_paths import resolve_app_root
 from maa_worker.agent_loader import load_agents
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
 
 
-PI_INTERFACE_VERSION = "v2.6.0"
-PI_CLIENT_LANGUAGE = "zh_cn"
+PI_INTERFACE_VERSION = "v2.10.2"
 
 
 class AgentService:
@@ -23,76 +23,38 @@ class AgentService:
             return self.worker.interface.agent
         return [self.worker.interface.agent]
 
-    def _lookup_i18n_text(self, key: str) -> str | None:
-        # main.load_interface_translations() 已按路径约束加载全部语言文件
-        translations = self.worker.context.interface_translations or {}
-        mapping = translations.get(PI_CLIENT_LANGUAGE)
-        if not isinstance(mapping, dict):
-            return None
-
-        normalized_key = key.removeprefix("$")
-        if not normalized_key:
-            return None
-
-        current: Any = mapping
-        for part in normalized_key.split("."):
-            if not isinstance(current, dict) or part not in current:
-                current = None
-                break
-            current = current[part]
-        if isinstance(current, str):
-            return current
-
-        flat_value = mapping.get(normalized_key)
-        if isinstance(flat_value, str):
-            return flat_value
-        return None
-
-    def _resolve_i18n_payload(self, payload: Any):
-        if isinstance(payload, dict):
-            return {
-                key: self._resolve_i18n_payload(value) for key, value in payload.items()
-            }
-        if isinstance(payload, list):
-            return [self._resolve_i18n_payload(item) for item in payload]
-        if isinstance(payload, str) and payload.startswith("$"):
-            translated = self._lookup_i18n_text(payload)
-            if translated is not None:
-                return translated
-        return payload
-
     def _get_selected_controller_payload(self) -> dict[str, Any]:
         controller = self.worker.device.get_controller_definition(
             self.worker.device_state.controller_name
         )
         if controller is None:
             return {}
-        payload = controller.model_dump(exclude_none=True, mode="json")
-        resolved_payload = self._resolve_i18n_payload(payload)
-        if isinstance(resolved_payload, dict):
-            return resolved_payload
-        return {}
+        return self.worker.text.resolve_tree(
+            controller.model_dump(exclude_none=True, mode="json")
+        )
 
     def _get_selected_resource_payload(self) -> dict[str, Any]:
         resource_definition = self.worker.device.get_current_resource_definition()
         if resource_definition is None:
             return {}
-        payload = resource_definition.model_dump(exclude_none=True, mode="json")
-        resolved_payload = self._resolve_i18n_payload(payload)
-        if isinstance(resolved_payload, dict):
-            return resolved_payload
-        return {}
+        return self.worker.text.resolve_tree(
+            resource_definition.model_dump(exclude_none=True, mode="json")
+        )
 
     def build_pi_env(self) -> dict[str, str]:
         controller_payload = self._get_selected_controller_payload()
         resource_payload = self._get_selected_resource_payload()
-        with open("version", encoding="utf-8") as f:
-            client_version = f.read().strip()
+        version_file = resolve_app_root() / "version"
+        client_version = (
+            version_file.read_text(encoding="utf-8").strip()
+            if version_file.is_file()
+            else ""
+        )
         return {
             "PI_INTERFACE_VERSION": PI_INTERFACE_VERSION,
             "PI_CLIENT_NAME": "MWU",
             "PI_CLIENT_VERSION": client_version,
-            "PI_CLIENT_LANGUAGE": PI_CLIENT_LANGUAGE,
+            "PI_CLIENT_LANGUAGE": self.worker.text.language(),
             "PI_CLIENT_MAAFW_VERSION": "v" + metadata.version("maafw"),
             "PI_VERSION": self.worker.interface.version or "",
             "PI_CONTROLLER": json.dumps(

@@ -8,6 +8,7 @@ vi.mock("@/services/api", () => ({
 }))
 
 import * as api from "@/services/api"
+import i18n from "@/app/i18n"
 import { useSettingsStore } from "@/stores/settings/settings"
 
 function deferred<T>() {
@@ -95,10 +96,79 @@ describe("settings persistence", () => {
     await expect(store.fetchSettings()).resolves.toBe(false)
     expect(store.initialized).toBe(false)
     expect(store.loadFailed).toBe(true)
+    expect(api.updateSettings).not.toHaveBeenCalled()
 
     await expect(store.fetchSettings()).resolves.toBe(true)
     expect(store.initialized).toBe(true)
     expect(store.loadFailed).toBe(false)
     expect(store.settings.telemetry.helpImproveSoftware).toBe(false)
+  })
+
+  it("applies the saved language over the browser cache and backfills only when unset", async () => {
+    localStorage.setItem("locale", "zh-CN")
+    i18n.global.locale.value = "zh-CN"
+    const store = useSettingsStore()
+    const saved = structuredClone(toRaw(store.settings))
+    saved.ui.language = "en-US"
+    vi.mocked(api.getSettings).mockResolvedValueOnce(saved)
+
+    await store.fetchSettings()
+    expect(i18n.global.locale.value).toBe("en-US")
+    expect(localStorage.getItem("locale")).toBe("en-US")
+    expect(api.updateSettings).not.toHaveBeenCalled()
+
+    vi.mocked(api.updateSettings).mockResolvedValue(true)
+    vi.mocked(api.getSettings).mockResolvedValueOnce({
+      ...saved,
+      ui: { ...saved.ui, language: null },
+    })
+    await store.fetchSettings()
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.updateSettings).mock.calls[0][0].ui.language).toBe("en-US")
+  })
+
+  it("reverts the language only when the last queued save fails", async () => {
+    const store = useSettingsStore()
+    const saved = structuredClone(toRaw(store.settings))
+    saved.ui.language = "zh-CN"
+    vi.mocked(api.getSettings).mockResolvedValueOnce(saved)
+    await store.fetchSettings()
+
+    const first = deferred<boolean>()
+    const second = deferred<boolean>()
+    vi.mocked(api.updateSettings)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValueOnce(false)
+
+    const toEnglish = store.updateSetting("ui", "language", "en-US")
+    const laterSave = store.updateSetting("runtime", "timeout", 120)
+    first.resolve(false)
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
+    expect(i18n.global.locale.value).toBe("en-US")
+    second.resolve(true)
+    await expect(Promise.all([toEnglish, laterSave])).resolves.toEqual([false, true])
+    expect(i18n.global.locale.value).toBe("en-US")
+
+    await expect(store.updateSetting("ui", "language", "zh-CN")).resolves.toBe(false)
+    expect(store.settings.ui.language).toBe("en-US")
+    expect(i18n.global.locale.value).toBe("en-US")
+    expect(localStorage.getItem("locale")).toBe("en-US")
+  })
+
+  it("keeps the persisted language when a reset fails behind a failed language save", async () => {
+    const store = useSettingsStore()
+    const saved = structuredClone(toRaw(store.settings))
+    saved.ui.language = "en-US"
+    vi.mocked(api.getSettings).mockResolvedValueOnce(saved)
+    await store.fetchSettings()
+
+    vi.mocked(api.updateSettings).mockResolvedValue(false)
+    const toChinese = store.updateSetting("ui", "language", "zh-CN")
+    const reset = store.resetSettings()
+    await expect(Promise.all([toChinese, reset])).resolves.toEqual([false, false])
+
+    expect(store.settings.ui.language).toBe("en-US")
+    expect(i18n.global.locale.value).toBe("en-US")
   })
 })

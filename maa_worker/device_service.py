@@ -661,7 +661,7 @@ class DeviceService:
         conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
             self.worker.events.show_system_notification(
-                self.worker.interface.title or self.worker.interface.label or "MWU",
+                self.worker.text.app_name(),
                 conn_fail_msg,
             )
             state.last_device_error = conn_fail_msg
@@ -683,7 +683,7 @@ class DeviceService:
             return True
 
         self.worker.events.show_system_notification(
-            self.worker.interface.title or self.worker.interface.label or "MWU",
+            self.worker.text.app_name(),
             conn_fail_msg,
         )
         state.last_device_error = conn_fail_msg
@@ -726,7 +726,7 @@ class DeviceService:
             self.worker.device_state.last_device_error = reason
             self.worker.events.send_log(reason)
             self.worker.events.show_system_notification(
-                self.worker.interface.title or self.worker.interface.label or "MWU",
+                self.worker.text.app_name(),
                 reason,
             )
 

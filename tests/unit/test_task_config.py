@@ -206,6 +206,11 @@ class TestBuildOptionDefaults:
         defaults, _ = _build_option_defaults({"diff": opt})
         assert defaults["diff"] == "hard"
 
+    def test_select_unknown_default_case_falls_back_to_first_case(self):
+        opt = _make_option("select", cases=["easy", "hard"], default_case="missing")
+        defaults, _ = _build_option_defaults({"diff": opt})
+        assert defaults["diff"] == "easy"
+
     def test_switch_exact_default(self):
         """Switch defaults to the first case when no default_case given."""
         opt = _make_option("switch", cases=["on", "off"])

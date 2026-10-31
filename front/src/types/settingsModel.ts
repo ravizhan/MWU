@@ -27,6 +27,8 @@ export interface NotificationSettings {
 // 界面设置
 export interface UISettings {
   darkMode: boolean | "auto"
+  // null：后端尚未保存过语言
+  language: "zh-CN" | "en-US" | null
 }
 
 // 运行设置

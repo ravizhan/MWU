@@ -11,7 +11,7 @@ const savedLocale = localStorage.getItem("locale")
 const locale: Locale =
   savedLocale === "zh-CN" || savedLocale === "en-US" ? savedLocale : DEFAULT_LOCALE
 
-const i18n = createI18n<[MessageSchema], Locale>({
+const i18n = createI18n<[MessageSchema], Locale, false>({
   legacy: false,
   globalInjection: true,
   locale,

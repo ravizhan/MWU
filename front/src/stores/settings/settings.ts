@@ -1,8 +1,10 @@
 import { defineStore } from "pinia"
+import i18n from "@/app/i18n"
 import { tryCatch } from "@/utils/tryCatch"
 import { getSettings, updateSettings } from "@/services/api"
 import type { TaskOptionValue } from "@/types/schedulerModel"
 import type { PanelLastConnectedDevice, SettingsModel } from "@/types/settingsModel"
+import { localeSchema } from "@/validation/settings"
 
 const defaultSettings: SettingsModel = {
   update: {
@@ -27,6 +29,7 @@ const defaultSettings: SettingsModel = {
   },
   ui: {
     darkMode: "auto",
+    language: "zh-CN",
   },
   runtime: {
     timeout: 300,
@@ -47,6 +50,9 @@ const defaultSettings: SettingsModel = {
 }
 
 const DARK_MODE_KEY = "darkMode"
+const LOCALE_KEY = "locale"
+
+type UILocale = NonNullable<SettingsModel["ui"]["language"]>
 
 let saveQueue: Promise<void> = Promise.resolve()
 
@@ -67,6 +73,17 @@ function getCachedDarkMode(): "auto" | boolean {
   return "auto"
 }
 
+function getCachedLocale(): UILocale {
+  if (typeof localStorage === "undefined") return "zh-CN"
+  const parsed = localeSchema.safeParse(localStorage.getItem(LOCALE_KEY))
+  return parsed.success ? parsed.data : "zh-CN"
+}
+
+function applyLocale(language: UILocale): void {
+  localStorage.setItem(LOCALE_KEY, language)
+  i18n.global.locale.value = language
+}
+
 // TS cannot write through generic indexed access (`settings[category][key] = value`),
 // so the assignment lives in one typed helper instead of a cast at each call site.
 function assignSetting<K extends keyof SettingsModel, P extends keyof SettingsModel[K]>(
@@ -83,17 +100,29 @@ function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
 }
 
+interface SettingsState {
+  settings: SettingsModel
+  loading: boolean
+  loadFailed: boolean
+  pendingSaveCount: number
+  /** 后端最后一次确认保存的语言；保存失败后据此回滚界面语言 */
+  persistedLanguage: UILocale | null
+  initialized: boolean
+  systemPrefersDark: boolean
+}
+
 export const useSettingsStore = defineStore("settings", {
-  state: () => {
+  state: (): SettingsState => {
     const settings: SettingsModel = {
       ...deepClone(defaultSettings),
-      ui: { darkMode: getCachedDarkMode() },
+      ui: { darkMode: getCachedDarkMode(), language: getCachedLocale() },
     }
     return {
       settings,
       loading: false,
       loadFailed: false,
       pendingSaveCount: 0,
+      persistedLanguage: null,
       initialized: false,
       systemPrefersDark:
         typeof window !== "undefined" && window.matchMedia
@@ -139,6 +168,15 @@ export const useSettingsStore = defineStore("settings", {
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
       this.initialized = true
       this.loading = false
+      const savedLanguage = this.settings.ui.language
+      this.persistedLanguage = savedLanguage
+      if (savedLanguage) {
+        applyLocale(savedLanguage)
+        return true
+      }
+      // 后端尚未保存语言：用本机语言补写一次
+      this.settings.ui.language = getCachedLocale()
+      void this.saveSettings()
       return true
     },
 
@@ -155,15 +193,26 @@ export const useSettingsStore = defineStore("settings", {
       )
       this.pendingSaveCount -= 1
       this.loading = this.pendingSaveCount > 0
-      if (err) {
-        console.error("Failed to save settings:", err)
-        return false
-      }
-      if (success) {
+      if (err) console.error("Failed to save settings:", err)
+      const saved = !err && success
+      if (saved) {
         // 保存成功后更新本地缓存
         localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
+        if (payload.ui.language) this.persistedLanguage = payload.ui.language
       }
-      return success
+      this.reconcileLanguage()
+      return saved
+    },
+
+    /**
+     * 队列清空后，若界面语言不是后端已保存的语言（最后一次保存失败），回滚到已保存语言。
+     * 仍有排队的保存时不处理：它们携带更新的选择，由最后一次保存决定结果。
+     */
+    reconcileLanguage() {
+      if (this.pendingSaveCount > 0 || !this.persistedLanguage) return
+      if (this.settings.ui.language === this.persistedLanguage) return
+      this.settings.ui.language = this.persistedLanguage
+      applyLocale(this.persistedLanguage)
     },
 
     async updateSetting<K extends keyof SettingsModel, P extends keyof SettingsModel[K]>(
@@ -174,6 +223,10 @@ export const useSettingsStore = defineStore("settings", {
       assignSetting(this.settings, category, key, value)
       if (category === "ui" && key === "darkMode") {
         localStorage.setItem(DARK_MODE_KEY, String(value))
+      }
+      if (category === "ui" && key === "language") {
+        const parsed = localeSchema.safeParse(value)
+        if (parsed.success) applyLocale(parsed.data)
       }
       return this.saveSettings()
     },
@@ -204,10 +257,14 @@ export const useSettingsStore = defineStore("settings", {
       const previousSettings = deepClone(this.settings)
       this.settings = deepClone(defaultSettings)
       const success = await this.saveSettings()
-      if (success) return true
+      if (success) {
+        applyLocale(this.settings.ui.language ?? "zh-CN")
+        return true
+      }
 
       this.settings = previousSettings
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
+      this.reconcileLanguage()
       return false
     },
   },

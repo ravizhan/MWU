@@ -43,6 +43,9 @@ class _FakeWorker:
                 _controller("PlayCoverController", "PlayCover"),
             ]
         )
+        self.text = SimpleNamespace(
+            app_name=lambda: "MWU", resolve=lambda v: v, language=lambda: "zh_cn"
+        )
 
 
 @pytest.fixture

@@ -69,20 +69,17 @@ describe("buildDefaultsFromOptionMap", () => {
     expect(result).toEqual({ mode: "auto" })
   })
 
-  it("falls back to empty string when default_case is not a string for select", () => {
-    // When default_case exists but is not a string (e.g. a number),
-    // the typeof guard produces ""
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  it("uses first case when default_case is not one of the cases", () => {
     const optionMap: Record<string, Option> = {
       bad: {
         type: "select",
         cases: [{ name: "a" }, { name: "b" }],
-        default_case: 42,
+        default_case: "missing",
       },
-    } as unknown as Record<string, Option>
+    }
 
     const result = buildDefaultsFromOptionMap(optionMap)
-    expect(result).toEqual({ bad: "" })
+    expect(result).toEqual({ bad: "a" })
   })
 
   it("produces empty string when cases array is empty for select", () => {
