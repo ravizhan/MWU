@@ -323,12 +323,12 @@ app.mount("/assets", StaticFiles(directory=str(APP_ROOT_DIR / "page/assets")))
 app.mount("/resource", StaticFiles(directory=str(APP_ROOT_DIR / "resource")))
 
 
-def _dump_task_config(config: TaskConfigModel) -> dict:
-    """序列化任务配置，写盘前加密各预设中的密码字段。"""
+def _write_task_config(config: TaskConfigModel) -> None:
+    """加密各预设中的密码字段后原子写盘；加密失败时原文件保持不变。"""
     data = config.model_dump()
     for preset in data["presets"].values():
         preset["taskOptions"] = secret_store.seal_task_options(preset["taskOptions"])
-    return data
+    settings_io.atomic_write_json(TASK_CONFIG_FILE, data)
 
 
 def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
@@ -346,13 +346,7 @@ def _load_normalized_task_config() -> tuple[TaskConfigModel, bool]:
 
     should_write_back = (not config_exists) or config_data != normalized_data
     if should_write_back:
-        with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
-            json.dump(
-                _dump_task_config(normalized_config),
-                f,
-                indent=4,
-                ensure_ascii=False,
-            )
+        _write_task_config(normalized_config)
 
     return normalized_config, should_write_back
 
@@ -563,13 +557,7 @@ def get_task_config():
 def save_task_config(config: TaskConfigModel):
     try:
         normalized_config = normalize_task_config(config, interface)
-        with TASK_CONFIG_FILE.open("w", encoding="utf-8") as f:
-            json.dump(
-                _dump_task_config(normalized_config),
-                f,
-                indent=4,
-                ensure_ascii=False,
-            )
+        _write_task_config(normalized_config)
         return {"status": "success"}
     except Exception as e:
         app_state.send_log(f"保存任务配置失败: {e}")

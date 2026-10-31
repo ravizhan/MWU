@@ -45,7 +45,8 @@ const normalizedValue = computed(() => {
 
 const selectedCount = computed(() => normalizedValue.value.length)
 const minCount = computed(() => option.min_count ?? 0)
-const maxCount = computed(() => option.max_count)
+// /api/interface 把未设置的上限序列化为 null，统一视为无上限
+const maxCount = computed(() => option.max_count ?? undefined)
 
 function resolveCaseLabel(label: string | undefined, fallback: string): string {
   return resolveInterfaceText(label, fallback)

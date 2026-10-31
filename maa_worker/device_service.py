@@ -20,7 +20,7 @@ from models.device_address import (
     try_canonicalize_runtime_device_address,
 )
 from models.interface import INPUT_METHOD_INTS, controller_method_ints
-from settings_io import SETTINGS_LOCK, atomic_write_settings, read_settings_raw
+from settings_io import SETTINGS_LOCK, atomic_write_json, read_settings_raw
 
 if TYPE_CHECKING:
     from maa_utils import MaaWorker
@@ -177,7 +177,7 @@ class DeviceService:
             panel = {}
         panel["customDevices"] = records
         raw["panel"] = panel
-        atomic_write_settings(path, raw)
+        atomic_write_json(path, raw)
 
     def add_custom_device(self, payload: CustomDeviceCreate) -> dict[str, Any]:
         controller = self.get_controller_definition(payload.controller_name)

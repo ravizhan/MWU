@@ -220,8 +220,8 @@ export interface CheckboxOption extends OptionBase {
   type: "checkbox"
   cases: OptionCase[]
   default_case?: string[]
-  min_count?: number
-  max_count?: number
+  min_count?: number | null
+  max_count?: number | null
 }
 
 export interface SwitchOption extends OptionBase {
