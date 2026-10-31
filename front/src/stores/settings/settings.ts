@@ -100,8 +100,19 @@ function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
 }
 
+interface SettingsState {
+  settings: SettingsModel
+  loading: boolean
+  loadFailed: boolean
+  pendingSaveCount: number
+  /** 后端最后一次确认保存的语言；保存失败后据此回滚界面语言 */
+  persistedLanguage: UILocale | null
+  initialized: boolean
+  systemPrefersDark: boolean
+}
+
 export const useSettingsStore = defineStore("settings", {
-  state: () => {
+  state: (): SettingsState => {
     const settings: SettingsModel = {
       ...deepClone(defaultSettings),
       ui: { darkMode: getCachedDarkMode(), language: getCachedLocale() },
@@ -111,6 +122,7 @@ export const useSettingsStore = defineStore("settings", {
       loading: false,
       loadFailed: false,
       pendingSaveCount: 0,
+      persistedLanguage: null,
       initialized: false,
       systemPrefersDark:
         typeof window !== "undefined" && window.matchMedia
@@ -157,6 +169,7 @@ export const useSettingsStore = defineStore("settings", {
       this.initialized = true
       this.loading = false
       const savedLanguage = this.settings.ui.language
+      this.persistedLanguage = savedLanguage
       if (savedLanguage) {
         applyLocale(savedLanguage)
         return true
@@ -180,15 +193,26 @@ export const useSettingsStore = defineStore("settings", {
       )
       this.pendingSaveCount -= 1
       this.loading = this.pendingSaveCount > 0
-      if (err) {
-        console.error("Failed to save settings:", err)
-        return false
-      }
-      if (success) {
+      if (err) console.error("Failed to save settings:", err)
+      const saved = !err && success
+      if (saved) {
         // 保存成功后更新本地缓存
         localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
+        if (payload.ui.language) this.persistedLanguage = payload.ui.language
       }
-      return success
+      this.reconcileLanguage()
+      return saved
+    },
+
+    /**
+     * 队列清空后，若界面语言不是后端已保存的语言（最后一次保存失败），回滚到已保存语言。
+     * 仍有排队的保存时不处理：它们携带更新的选择，由最后一次保存决定结果。
+     */
+    reconcileLanguage() {
+      if (this.pendingSaveCount > 0 || !this.persistedLanguage) return
+      if (this.settings.ui.language === this.persistedLanguage) return
+      this.settings.ui.language = this.persistedLanguage
+      applyLocale(this.persistedLanguage)
     },
 
     async updateSetting<K extends keyof SettingsModel, P extends keyof SettingsModel[K]>(

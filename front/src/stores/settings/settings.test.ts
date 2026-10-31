@@ -126,4 +126,33 @@ describe("settings persistence", () => {
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
     expect(vi.mocked(api.updateSettings).mock.calls[0][0].ui.language).toBe("en-US")
   })
+
+  it("reverts the language only when the last queued save fails", async () => {
+    const store = useSettingsStore()
+    const saved = structuredClone(toRaw(store.settings))
+    saved.ui.language = "zh-CN"
+    vi.mocked(api.getSettings).mockResolvedValueOnce(saved)
+    await store.fetchSettings()
+
+    const first = deferred<boolean>()
+    const second = deferred<boolean>()
+    vi.mocked(api.updateSettings)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValueOnce(false)
+
+    const toEnglish = store.updateSetting("ui", "language", "en-US")
+    const laterSave = store.updateSetting("runtime", "timeout", 120)
+    first.resolve(false)
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
+    expect(i18n.global.locale.value).toBe("en-US")
+    second.resolve(true)
+    await expect(Promise.all([toEnglish, laterSave])).resolves.toEqual([false, true])
+    expect(i18n.global.locale.value).toBe("en-US")
+
+    await expect(store.updateSetting("ui", "language", "zh-CN")).resolves.toBe(false)
+    expect(store.settings.ui.language).toBe("en-US")
+    expect(i18n.global.locale.value).toBe("en-US")
+    expect(localStorage.getItem("locale")).toBe("en-US")
+  })
 })
