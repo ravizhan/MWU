@@ -508,7 +508,8 @@ async def _complete_run(
             global_values,
             worker.interface,
         )
-        effective_controller = payload.controller_name or payload.device.controller_name
+        # 与设备连接一致，以实际连接的控制器为准（顶层 controller_name 可能与之不一致）
+        effective_controller = payload.device.controller_name
         unmet_options = find_unmet_checkbox_minimums(
             worker.interface,
             normalized_task_list,

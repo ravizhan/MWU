@@ -716,6 +716,32 @@ class TestPretaskAdmission:
         assert worker.tasks.called is True
         assert list_executions(state.scheduler_db_path)[0].status == "success"
 
+    async def test_min_count_uses_connected_device_controller(self, state: AppState):
+        # 顶层 controller_name 与 device.controller_name 不一致时，以实际连接的控制器校验
+        worker = _FakeWorker(start_result=True, ready=True)
+        worker.tasks = _FakeSuccessfulTaskService(
+            result=True, task_state=worker.task_state
+        )
+        worker.interface.task = [
+            _task("Startup", ["mods"], controller=["AdbController"])
+        ]
+        worker.interface.option = {
+            "mods": Option(
+                type="checkbox",
+                cases=[OptionCase(name="a"), OptionCase(name="b")],
+                min_count=1,
+            )
+        }
+        state.worker = worker
+
+        payload = make_payload().model_copy(update={"controller_name": "Other"})
+        admission = await submit_manual(state, payload)
+        assert admission.accepted is True
+        await _await_active_task(state)
+
+        assert worker.tasks.called is False
+        assert "mods" in list_executions(state.scheduler_db_path)[0].error_message
+
     async def test_previous_stop_does_not_block_next_run(self, state: AppState):
         # 上一次运行被停止后 stop_flag 遗留为 True；新运行占槽时必须复位，
         # 否则前置任务和 TaskService.start() 会把它当作本次的停止请求。
