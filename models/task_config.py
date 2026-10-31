@@ -379,12 +379,11 @@ def _build_option_defaults(
 
     for option_name, option in option_map.items():
         if option.type in {"select", "scan_select", "switch"}:
-            default_value = option.default_case or (
-                option.cases[0].name if option.cases else ""
-            )
-            defaults[option_name] = (
-                default_value if isinstance(default_value, str) else ""
-            )
+            case_names = [case.name for case in option.cases or []]
+            default_value = option.default_case
+            if not isinstance(default_value, str) or default_value not in case_names:
+                default_value = case_names[0] if case_names else ""
+            defaults[option_name] = default_value
             value_types[option_name] = "string"
             continue
 

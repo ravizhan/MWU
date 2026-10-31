@@ -264,6 +264,7 @@ export const useSettingsStore = defineStore("settings", {
 
       this.settings = previousSettings
       localStorage.setItem(DARK_MODE_KEY, String(this.settings.ui.darkMode))
+      this.reconcileLanguage()
       return false
     },
   },

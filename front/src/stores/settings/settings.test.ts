@@ -155,4 +155,20 @@ describe("settings persistence", () => {
     expect(i18n.global.locale.value).toBe("en-US")
     expect(localStorage.getItem("locale")).toBe("en-US")
   })
+
+  it("keeps the persisted language when a reset fails behind a failed language save", async () => {
+    const store = useSettingsStore()
+    const saved = structuredClone(toRaw(store.settings))
+    saved.ui.language = "en-US"
+    vi.mocked(api.getSettings).mockResolvedValueOnce(saved)
+    await store.fetchSettings()
+
+    vi.mocked(api.updateSettings).mockResolvedValue(false)
+    const toChinese = store.updateSetting("ui", "language", "zh-CN")
+    const reset = store.resetSettings()
+    await expect(Promise.all([toChinese, reset])).resolves.toEqual([false, false])
+
+    expect(store.settings.ui.language).toBe("en-US")
+    expect(i18n.global.locale.value).toBe("en-US")
+  })
 })
