@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Install uv
+        id: setup-uv
         uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
@@ -40,6 +41,7 @@ jobs:
           python-version-file: ".python-version"
 
       - name: Setup cryptography build deps
+        if: steps.setup-uv.outputs.cache-hit != 'true'
         uses: ./.github/actions/cryptography-deps
 
       - name: Install Dependencies
