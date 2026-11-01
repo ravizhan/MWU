@@ -661,6 +661,14 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         }
       }
 
+      // 执行时后端读取已保存的 pretaskEnabled / globalOptionValues，必须等界面上的修改落盘。
+      // 等待期间用户仍可切换预设，所以任务队列要在落盘之后读取，且从这里到发出请求之间不能再 await，
+      // 否则载荷里的任务会和已保存设置分属不同预设。
+      if (!(await useSettingsStore().flushSaves())) {
+        showGlobalMessage("error", t("panel.settingsNotSaved"))
+        return { kind: "failed" }
+      }
+
       const isTaskCompatibleInCurrentContext = (taskId: string) =>
         interfaceStore.isTaskCompatibleByName(taskId, this.selectedControllerName, this.resource)
 
@@ -704,12 +712,6 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
           device_address: deviceAddress,
         },
         resource_name: this.resource || "",
-      }
-
-      // 执行时后端读取已保存的 pretaskEnabled / globalOptionValues，必须等界面上的修改落盘
-      if (!(await useSettingsStore().flushSaves())) {
-        showGlobalMessage("error", t("panel.settingsNotSaved"))
-        return { kind: "failed" }
       }
 
       const result = await startTask(payload)
@@ -812,12 +814,11 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     },
 
     // --- Config reset ---
-    resetConfig() {
+    async resetConfig() {
       const t = i18n.global.t
       const configStore = useTaskConfigStore()
 
-      if (confirm(t("panel.resetConfigConfirm"))) {
-        void configStore.resetConfig()
+      if (confirm(t("panel.resetConfigConfirm")) && (await configStore.resetConfig())) {
         showGlobalMessage("success", t("panel.configReset"))
       }
     },

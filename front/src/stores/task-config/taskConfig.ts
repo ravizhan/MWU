@@ -343,12 +343,25 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       if (targetPresetName === this.selectedPresetName) {
         return true
       }
+      if (!this.canApplyPresetPretasks(targetPresetName)) {
+        return false
+      }
 
       this.syncCurrentPresetSnapshot()
       this.selectedPresetName = targetPresetName
       this.hydrateSnapshot(targetSnapshot)
       this.applyPresetPretasks(targetPresetName)
       return true
+    },
+
+    /** 预设声明了 pretask 时要整份写回设置；设置未成功加载时写回会用默认值覆盖后端，必须拒绝 */
+    canApplyPresetPretasks(presetName: string): boolean {
+      const preset = useInterfaceStore().getPresetList.find((item) => item.name === presetName)
+      if (!preset?.pretask || useSettingsStore().initialized) {
+        return true
+      }
+      showGlobalMessage("error", i18n.global.t("panel.presetSettingsNotLoaded"))
+      return false
     },
 
     /** PI v2.10.3: 声明了 pretask 的预设覆盖勾选状态（未列出视为不勾选）并写入选项值 */
@@ -424,14 +437,21 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       await saveTaskConfig(this.buildPersistedConfig())
     },
 
-    async resetConfig() {
-      await resetTaskConfig()
+    async resetConfig(): Promise<boolean> {
+      const targetPresetName = useInterfaceStore().getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
+      if (!this.canApplyPresetPretasks(targetPresetName)) {
+        return false
+      }
+      if (!(await resetTaskConfig())) {
+        showGlobalMessage("error", i18n.global.t("panel.configResetFailed"))
+        return false
+      }
       this.presetSnapshots = this.seedPresetSnapshots()
-      const interfaceStore = useInterfaceStore()
-      this.selectedPresetName = interfaceStore.getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
+      this.selectedPresetName = targetPresetName
       this.preTasks = []
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
       this.applyPresetPretasks(this.selectedPresetName)
+      return true
     },
   },
 })

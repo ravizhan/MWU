@@ -168,7 +168,7 @@ const recipeCards = computed(() => {
 })
 
 function applyPreset(name: string) {
-  configStore.selectPreset(name)
+  if (!configStore.selectPreset(name)) return
   router.push({ name: "tasks" })
 }
 

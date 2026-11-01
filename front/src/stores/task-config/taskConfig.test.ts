@@ -102,6 +102,7 @@ function setupInterface() {
 }
 
 function initTaskConfigStore() {
+  useSettingsStore().initialized = true
   const store = useTaskConfigStore()
   store.presetSnapshots = store.seedPresetSnapshots()
   store.hydrateSnapshot(store.presetSnapshots[CUSTOM_PRESET_NAME])
@@ -187,6 +188,17 @@ describe("useTaskConfigStore", () => {
       expect(result).toBe(false)
       expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
       expect(store.serializeCurrentSnapshot()).toEqual(previousState)
+    })
+
+    it("refuses presets that declare pretask while settings are not loaded", () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+      settingsStore.initialized = false
+
+      expect(store.selectPreset("preset1")).toBe(false)
+      expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
+      expect(api.updateSettings).not.toHaveBeenCalled()
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.presetSettingsNotLoaded")
     })
 
     it("returns true without changes when selecting the already-active preset", () => {
@@ -439,6 +451,22 @@ describe("useTaskConfigStore", () => {
         params: { host: "preset-host", port: "" },
       })
       expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+    })
+
+    it("keeps local config and settings when the backend reset fails", async () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+      store.selectPreset("preset2")
+      settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
+      vi.mocked(api.updateSettings).mockClear()
+      vi.mocked(api.resetTaskConfig).mockResolvedValue(false)
+
+      await expect(store.resetConfig()).resolves.toBe(false)
+
+      expect(store.selectedPresetName).toBe("preset2")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: false, Cleanup: true })
+      expect(api.updateSettings).not.toHaveBeenCalled()
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetFailed")
     })
   })
 
