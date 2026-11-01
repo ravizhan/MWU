@@ -148,6 +148,7 @@ const presetOptions = computed(() => [
   ...interfaceStore.getPresetList.map((preset) => ({
     label: resolveInterfaceText(preset.label, preset.name),
     value: preset.name,
+    disabled: !interfaceStore.isPresetCompatible(preset, deviceStore.selectedControllerName),
   })),
 ])
 

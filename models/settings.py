@@ -96,3 +96,5 @@ class SettingsModel(BaseModel):
     panel: Panel = Panel()
     telemetry: TelemetrySettings = TelemetrySettings()
     globalOptionValues: dict[str, TaskOptionValue] = Field(default_factory=dict)
+    # PI 前置任务勾选状态（key 为 pretask.name，缺省时为 [exec, *args] 的紧凑 JSON 数组）；未记录的项视为启用
+    pretaskEnabled: dict[str, bool] = Field(default_factory=dict)

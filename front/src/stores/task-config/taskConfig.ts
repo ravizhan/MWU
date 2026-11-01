@@ -2,7 +2,8 @@ import { defineStore } from "pinia"
 import i18n from "@/app/i18n"
 import { getTaskConfig, resetTaskConfig, saveTaskConfig } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
-import { useInterfaceStore } from "@/stores"
+import { useInterfaceStore, useSettingsStore } from "@/stores"
+import { pretaskKey } from "@/stores/interface/interface"
 import { tryCatch } from "@/utils/tryCatch"
 import type { Option, Preset, PresetTaskOptionValue } from "@/types/interfaceModel"
 import type {
@@ -84,7 +85,7 @@ function isRecordStringString(value: unknown): value is Record<string, string> {
 
 function applyPresetInputValue(
   optionName: string,
-  inputs: Array<{ name: string }>,
+  inputs: ReadonlyArray<{ name: string }>,
   value: Record<string, string>,
   targetOptions: Record<string, TaskOptionValue>,
 ) {
@@ -112,11 +113,12 @@ function applyPresetOptionValue(
     return
   }
 
-  if (option.type === "input") {
+  if (option.type === "input" || option.type === "hotkey") {
     if (!isRecordStringString(value)) {
       return
     }
-    applyPresetInputValue(optionName, option.inputs, value, targetOptions)
+    const fields = option.type === "input" ? option.inputs : option.hotkeys
+    applyPresetInputValue(optionName, fields, value, targetOptions)
     return
   }
 
@@ -129,6 +131,24 @@ function applyPresetOptionValue(
 
   if (typeof value === "string") {
     targetOptions[optionName] = value
+  }
+}
+
+/** 在现有值（缺省回退默认值）之上应用预设选项，结果写入 out */
+function applyPresetOptionValues(
+  presetOptions: Record<string, PresetTaskOptionValue>,
+  optionMap: Record<string, Option>,
+  currentValues: Record<string, TaskOptionValue>,
+  out: Record<string, TaskOptionValue>,
+) {
+  for (const [optionName, optionValue] of Object.entries(presetOptions)) {
+    const option = optionMap[optionName]
+    if (!option) continue
+    if (currentValues[optionName] === undefined) {
+      Object.assign(currentValues, buildDefaultsFromOptionMap({ [optionName]: option }))
+    }
+    applyPresetOptionValue(optionName, optionValue, optionMap, currentValues)
+    out[optionName] = currentValues[optionName]
   }
 }
 
@@ -323,11 +343,53 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       if (targetPresetName === this.selectedPresetName) {
         return true
       }
+      if (!this.canApplyPresetPretasks(targetPresetName)) {
+        return false
+      }
 
       this.syncCurrentPresetSnapshot()
       this.selectedPresetName = targetPresetName
       this.hydrateSnapshot(targetSnapshot)
+      void this.applyPresetPretasks(targetPresetName)
       return true
+    },
+
+    /** 预设声明了 pretask 时要整份写回设置；设置未成功加载时写回会用默认值覆盖后端，必须拒绝 */
+    canApplyPresetPretasks(presetName: string): boolean {
+      const preset = useInterfaceStore().getPresetList.find((item) => item.name === presetName)
+      if (!preset?.pretask || useSettingsStore().initialized) {
+        return true
+      }
+      showGlobalMessage("error", i18n.global.t("panel.presetSettingsNotLoaded"))
+      return false
+    },
+
+    /**
+     * PI v2.10.3: 声明了 pretask 的预设覆盖勾选状态（未列出视为不勾选）并写入选项值。
+     * 返回设置是否已保存；预设未声明 pretask 时无需保存，返回 true。
+     */
+    async applyPresetPretasks(presetName: string): Promise<boolean> {
+      const interfaceStore = useInterfaceStore()
+      const preset = interfaceStore.getPresetList.find((item) => item.name === presetName)
+      if (!preset?.pretask) {
+        return true
+      }
+
+      const settingsStore = useSettingsStore()
+      const optionMap = interfaceStore.interface?.option || {}
+      const entries = new Map(preset.pretask.map((entry) => [entry.name, entry]))
+      const enabled: Record<string, boolean> = {}
+      const currentValues = cloneTaskOptionMap(settingsStore.settings.globalOptionValues)
+      const optionValues: Record<string, TaskOptionValue> = {}
+
+      for (const pretask of interfaceStore.getPretasks) {
+        const key = pretaskKey(pretask)
+        const entry = pretask.name ? entries.get(pretask.name) : undefined
+        enabled[key] = entry !== undefined && entry.enabled !== false
+        applyPresetOptionValues(entry?.option || {}, optionMap, currentValues, optionValues)
+      }
+
+      return settingsStore.applyPresetPretasks(enabled, optionValues)
     },
 
     buildPersistedConfig(): PersistedTaskConfig {
@@ -352,6 +414,17 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.selectedPresetName = taskConfig.selectedPreset
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
       this.configLoaded = true
+
+      // 空映射表示尚未写过勾选状态，此时按已选预设初始化；已有的用户选择保留。
+      // 须在 settings 成功加载后判断，否则空映射只是默认值。
+      const settingsStore = useSettingsStore()
+      if (
+        settingsStore.initialized &&
+        Object.keys(settingsStore.settings.pretaskEnabled).length === 0 &&
+        useInterfaceStore().getPretasks.length > 0
+      ) {
+        void this.applyPresetPretasks(this.selectedPresetName)
+      }
     },
 
     debouncedSave() {
@@ -367,13 +440,24 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       await saveTaskConfig(this.buildPersistedConfig())
     },
 
-    async resetConfig() {
-      await resetTaskConfig()
+    async resetConfig(): Promise<boolean> {
+      const targetPresetName = useInterfaceStore().getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
+      if (!this.canApplyPresetPretasks(targetPresetName)) {
+        return false
+      }
+      if (!(await resetTaskConfig())) {
+        showGlobalMessage("error", i18n.global.t("panel.configResetFailed"))
+        return false
+      }
       this.presetSnapshots = this.seedPresetSnapshots()
-      const interfaceStore = useInterfaceStore()
-      this.selectedPresetName = interfaceStore.getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
+      this.selectedPresetName = targetPresetName
       this.preTasks = []
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
+      if (!(await this.applyPresetPretasks(this.selectedPresetName))) {
+        showGlobalMessage("error", i18n.global.t("panel.configResetPretaskNotSaved"))
+        return false
+      }
+      return true
     },
   },
 })

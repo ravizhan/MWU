@@ -82,4 +82,6 @@ export interface SettingsModel {
   panel: PanelSettings
   telemetry: TelemetrySettings
   globalOptionValues: Record<string, TaskOptionValue>
+  /** PI 前置任务勾选状态，key 见 pretaskKey；缺省视为启用 */
+  pretaskEnabled: Record<string, boolean>
 }

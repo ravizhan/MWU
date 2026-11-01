@@ -5,6 +5,8 @@ vi.mock("@/services/api", () => ({
   getTaskConfig: vi.fn<() => void>(),
   saveTaskConfig: vi.fn<() => void>(),
   resetTaskConfig: vi.fn<() => void>(),
+  getSettings: vi.fn<() => void>(),
+  updateSettings: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
 }))
 
 vi.mock("@/services/feedback/message", () => ({
@@ -17,6 +19,7 @@ vi.mock("@/app/i18n", () => ({
 
 import { useTaskConfigStore } from "@/stores/task-config/taskConfig"
 import { useInterfaceStore } from "@/stores/interface/interface"
+import { useSettingsStore } from "@/stores/settings/settings"
 import * as api from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { CUSTOM_PRESET_NAME } from "@/types/taskConfigModel"
@@ -64,9 +67,14 @@ function buildTestInterface(): InterfaceModel {
         default_case: ["auto"],
       },
     },
+    pretask: [
+      { name: "Launch", exec: "launch", option: ["difficulty"] },
+      { name: "Cleanup", exec: "cleanup" },
+    ],
     preset: [
       {
         name: "preset1",
+        pretask: [{ name: "Launch", option: { difficulty: "easy" } }],
         task: [
           {
             name: "Task A",
@@ -94,6 +102,7 @@ function setupInterface() {
 }
 
 function initTaskConfigStore() {
+  useSettingsStore().initialized = true
   const store = useTaskConfigStore()
   store.presetSnapshots = store.seedPresetSnapshots()
   store.hydrateSnapshot(store.presetSnapshots[CUSTOM_PRESET_NAME])
@@ -158,6 +167,19 @@ describe("useTaskConfigStore", () => {
       expect(store.options["Task B"]).toEqual({ mode: ["manual"] })
     })
 
+    it("applies declared preset pretasks and keeps them for presets without pretask", () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+
+      store.selectPreset("preset1")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+      expect(settingsStore.settings.globalOptionValues.difficulty).toBe("easy")
+
+      settingsStore.settings.pretaskEnabled.Cleanup = true
+      store.selectPreset("preset2")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: true })
+    })
+
     it("returns false and leaves state unchanged for unknown presets", () => {
       const store = initTaskConfigStore()
       const previousState = store.serializeCurrentSnapshot()
@@ -166,6 +188,17 @@ describe("useTaskConfigStore", () => {
       expect(result).toBe(false)
       expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
       expect(store.serializeCurrentSnapshot()).toEqual(previousState)
+    })
+
+    it("refuses presets that declare pretask while settings are not loaded", () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+      settingsStore.initialized = false
+
+      expect(store.selectPreset("preset1")).toBe(false)
+      expect(store.selectedPresetName).toBe(CUSTOM_PRESET_NAME)
+      expect(api.updateSettings).not.toHaveBeenCalled()
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.presetSettingsNotLoaded")
     })
 
     it("returns true without changes when selecting the already-active preset", () => {
@@ -371,6 +404,20 @@ describe("useTaskConfigStore", () => {
       expect(store.options["Task B"]).toEqual({ mode: ["manual"] })
     })
 
+    it("initializes pretask state from the selected preset only when none is saved", async () => {
+      const settingsStore = useSettingsStore()
+      settingsStore.initialized = true
+      const store = useTaskConfigStore()
+      vi.mocked(api.getTaskConfig).mockResolvedValue({ selectedPreset: "preset1", presets: {} })
+
+      await store.loadConfig()
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+
+      settingsStore.settings.pretaskEnabled = { Cleanup: true }
+      await store.loadConfig()
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Cleanup: true })
+    })
+
     it("keeps autosave disabled and reports the failure when loading fails", async () => {
       const store = useTaskConfigStore()
       vi.mocked(api.getTaskConfig).mockRejectedValue(new Error("boom"))
@@ -385,10 +432,12 @@ describe("useTaskConfigStore", () => {
   })
 
   describe("resetConfig", () => {
-    it("resets to the first interface preset with empty preTasks", async () => {
+    it("resets to the first interface preset with empty preTasks and its pretask state", async () => {
       const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
       store.selectPreset("preset2")
       store.preTasks = [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }]
+      settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
       vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
 
       await store.resetConfig()
@@ -401,6 +450,33 @@ describe("useTaskConfigStore", () => {
         difficulty: "hard",
         params: { host: "preset-host", port: "" },
       })
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+    })
+
+    it("keeps local config and settings when the backend reset fails", async () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+      store.selectPreset("preset2")
+      settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
+      vi.mocked(api.updateSettings).mockClear()
+      vi.mocked(api.resetTaskConfig).mockResolvedValue(false)
+
+      await expect(store.resetConfig()).resolves.toBe(false)
+
+      expect(store.selectedPresetName).toBe("preset2")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: false, Cleanup: true })
+      expect(api.updateSettings).not.toHaveBeenCalled()
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetFailed")
+    })
+
+    it("reports a partial reset when the pretask settings save fails", async () => {
+      const store = initTaskConfigStore()
+      vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
+      vi.mocked(api.updateSettings).mockResolvedValueOnce(false)
+
+      await expect(store.resetConfig()).resolves.toBe(false)
+
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetPretaskNotSaved")
     })
   })
 

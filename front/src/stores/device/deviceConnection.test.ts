@@ -356,6 +356,42 @@ describe("useDeviceConnectionStore", () => {
       expect(showGlobalMessage).not.toHaveBeenCalled()
     })
 
+    it("builds the start payload from the queue after pending settings saves land", async () => {
+      const store = useDeviceConnectionStore()
+      const configStore = useTaskConfigStore()
+      const interfaceStore = useInterfaceStore()
+      const settingsStore = useSettingsStore()
+      store.controllerCapabilities = [adbCapability]
+      store.selectedController = "ADB"
+      store.resource = "res1"
+      configStore.configLoaded = true
+      configStore.taskList = [{ uid: "a", id: "Task A", name: "Task A" }]
+      interfaceStore.interface = {
+        task: [
+          { name: "Task A", entry: "a" },
+          { name: "Task B", entry: "b" },
+        ],
+      }
+      vi.mocked(api.getDeviceState).mockResolvedValue(lockedAdbState)
+      vi.mocked(api.startTask).mockResolvedValue({ accepted: true, runId: "run-1" })
+      let finishSave: (saved: boolean) => void = () => undefined
+      vi.mocked(api.updateSettings).mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          finishSave = resolve
+        }),
+      )
+      void settingsStore.setPretaskEnabled("Launch", false)
+
+      const started = store.StartTask()
+      await vi.waitFor(() => expect(api.getDeviceState).toHaveBeenCalled())
+      // 用户在设置落盘前切到另一个预设：任务队列与随后保存的设置同属新预设
+      configStore.taskList = [{ uid: "b", id: "Task B", name: "Task B" }]
+      finishSave(true)
+
+      await expect(started).resolves.toBe(true)
+      expect(vi.mocked(api.startTask).mock.calls[0]?.[0].task_list).toEqual(["Task B"])
+    })
+
     describe("stopActiveAndRestart", () => {
       function primeRunningStore() {
         const store = useDeviceConnectionStore()

@@ -504,6 +504,9 @@ async def _complete_run(
         global_values = (
             state.settings.globalOptionValues if state.settings is not None else {}
         ) or {}
+        pretask_enabled = (
+            state.settings.pretaskEnabled if state.settings is not None else {}
+        )
         normalized_global_options = normalize_global_option_values(
             global_values,
             worker.interface,
@@ -517,6 +520,7 @@ async def _complete_run(
             normalized_global_options,
             effective_controller,
             payload.resource_name,
+            pretask_enabled,
         )
         if unmet_options:
             failure_stage = "prepare"
@@ -535,6 +539,7 @@ async def _complete_run(
                 payload.resource_name,
                 normalized_pre_tasks,
                 normalized_global_options,
+                pretask_enabled,
             )
         )
         try:

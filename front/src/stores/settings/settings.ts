@@ -47,6 +47,7 @@ const defaultSettings: SettingsModel = {
     helpImproveSoftware: true,
   },
   globalOptionValues: {},
+  pretaskEnabled: {},
 }
 
 const DARK_MODE_KEY = "darkMode"
@@ -54,15 +55,27 @@ const LOCALE_KEY = "locale"
 
 type UILocale = NonNullable<SettingsModel["ui"]["language"]>
 
-let saveQueue: Promise<void> = Promise.resolve()
+/** 队尾解析为最近一次入队保存的结果；保存携带完整快照，所以它代表后端是否与界面一致 */
+let saveQueue: Promise<boolean> = Promise.resolve(true)
 
 function enqueueSettingsSave(save: () => Promise<boolean>): Promise<boolean> {
-  const result = saveQueue.then(save)
+  const result = saveQueue.then(() => save())
   saveQueue = result.then(
-    () => undefined,
-    () => undefined,
+    (saved) => saved,
+    () => false,
   )
   return result
+}
+
+/** 等到队列不再增长，返回最后一次保存的结果 */
+async function settleSaveQueue(): Promise<boolean> {
+  let tail = saveQueue
+  let saved = await tail
+  while (tail !== saveQueue) {
+    tail = saveQueue
+    saved = await tail
+  }
+  return saved
 }
 
 function getCachedDarkMode(): "auto" | boolean {
@@ -205,6 +218,17 @@ export const useSettingsStore = defineStore("settings", {
     },
 
     /**
+     * 等待所有排队的保存（含等待期间新入队的）完成，返回后端是否已保存当前设置。
+     * 最后一次保存失败时用当前设置重新保存一次，否则一次失败会让之后的启动一直被拒；
+     * 重试期间新入队的保存排在重试之后，所以重试成功后还要再等一次队尾。
+     */
+    async flushSaves(): Promise<boolean> {
+      if (await settleSaveQueue()) return true
+      if (!(await this.saveSettings())) return false
+      return settleSaveQueue()
+    },
+
+    /**
      * 队列清空后，若界面语言不是后端已保存的语言（最后一次保存失败），回滚到已保存语言。
      * 仍有排队的保存时不处理：它们携带更新的选择，由最后一次保存决定结果。
      */
@@ -233,6 +257,21 @@ export const useSettingsStore = defineStore("settings", {
 
     async updateGlobalOptionValue(optionKey: string, value: TaskOptionValue) {
       this.settings.globalOptionValues[optionKey] = value
+      return this.saveSettings()
+    },
+
+    async setPretaskEnabled(key: string, enabled: boolean) {
+      this.settings.pretaskEnabled[key] = enabled
+      return this.saveSettings()
+    },
+
+    /** 应用预设声明的 pretask：整体替换勾选状态并合并选项值，只保存一次 */
+    async applyPresetPretasks(
+      enabled: Record<string, boolean>,
+      optionValues: Record<string, TaskOptionValue>,
+    ) {
+      this.settings.pretaskEnabled = enabled
+      Object.assign(this.settings.globalOptionValues, optionValues)
       return this.saveSettings()
     },
 

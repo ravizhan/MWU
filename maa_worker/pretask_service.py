@@ -35,8 +35,9 @@ class PretaskService:
         resource_name: str,
         user_pre_tasks: list[PreTaskCommand],
         option_values: dict[str, TaskOptionValue],
+        pretask_enabled: dict[str, bool],
     ) -> None:
-        """Run matching PI pretasks first, then enabled user shell commands."""
+        """Run matching, checked PI pretasks first, then enabled user shell commands."""
         raw_pretasks = self.worker.interface.pretask
         if raw_pretasks is None:
             pi_pretasks: list[Pretask] = []
@@ -49,6 +50,8 @@ class PretaskService:
             if pretask.controller and controller_name not in pretask.controller:
                 continue
             if pretask.resource and resource_name not in pretask.resource:
+                continue
+            if not pretask_enabled.get(pretask.key, True):
                 continue
 
             display_name = (

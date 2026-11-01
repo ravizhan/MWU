@@ -461,11 +461,8 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
     option_map = interface_model.option or {}
     task_name_map = {task.name: task for task in tasks}
     controller_names = {controller.name for controller in interface_model.controller}
-    pretask_map = {
-        pretask.name: pretask
-        for pretask in _as_list(interface_model.pretask)
-        if pretask.name
-    }
+    pretasks = _as_list(interface_model.pretask)
+    pretask_map = {pretask.name: pretask for pretask in pretasks if pretask.name}
     reachable_options_by_task: dict[str, set[str]] = {}
 
     for task in tasks:
@@ -612,11 +609,18 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
     option_map = interface_model.option or {}
+    # key 决定 settings.json.pretaskEnabled 的勾选状态归属，重复会让一个开关控制多个预任务
+    seen_keys: dict[str, int] = {}
 
     for index, pretask in enumerate(pretasks):
         pretask_ref = f"pretask[{index}]"
         if not pretask.exec.strip():
             raise InterfaceLoadError(f"{pretask_ref}.exec 必须是非空字符串")
+        if pretask.key in seen_keys:
+            raise InterfaceLoadError(
+                f"{pretask_ref} 的标识 {pretask.key} 与 pretask[{seen_keys[pretask.key]}] 重复"
+            )
+        seen_keys[pretask.key] = index
 
         invalid_resources = sorted(
             {

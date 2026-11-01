@@ -198,6 +198,7 @@ class _FakePretaskService:
         resource_name,
         user_pre_tasks,
         option_values,
+        pretask_enabled,
     ):
         self.calls.append(
             (controller_name, resource_name, user_pre_tasks, option_values)

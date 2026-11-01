@@ -11,14 +11,14 @@
           </div>
           <div
             v-for="(item, index) in piPretasks"
-            :key="`${item.pretask.exec}-${index}`"
-            class="space-y-1"
+            :key="`${item.key}-${index}`"
+            class="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1"
           >
             <NTooltip :disabled="!item.pretask.description && item.compatible" :max-width="320">
               <template #trigger>
                 <NEl
                   tag="div"
-                  class="px-3 py-2 rounded-lg border border-solid text-sm font-medium"
+                  class="min-w-0 truncate px-3 py-2 rounded-lg border border-solid text-sm font-medium"
                   :class="{ 'opacity-50': !item.compatible }"
                   :style="{
                     borderColor: 'var(--divider-color)',
@@ -37,10 +37,15 @@
                 </div>
               </div>
             </NTooltip>
+            <NSwitch
+              size="small"
+              :value="item.enabled"
+              @update:value="settingsStore.setPretaskEnabled(item.key, $event)"
+            />
             <NEl
-              v-if="item.pretask.option?.length"
+              v-if="item.enabled && item.pretask.option?.length"
               tag="div"
-              class="overflow-hidden rounded-lg border border-solid"
+              class="col-span-2 overflow-hidden rounded-lg border border-solid"
               style="border-color: var(--divider-color)"
             >
               <TaskSettingOptionRow v-for="n in item.pretask.option" :key="n" :name="n" />
@@ -93,7 +98,8 @@
 import { computed, ref } from "vue"
 import { VueDraggable } from "vue-draggable-plus"
 import { FileTrayOutline } from "@vicons/ionicons5"
-import { useInterfaceStore } from "@/stores"
+import { useInterfaceStore, useSettingsStore } from "@/stores"
+import { pretaskKey } from "@/stores/interface/interface"
 import type { Pretask } from "@/types/interfaceModel"
 import type { PreTaskCommand } from "@/types/taskConfigModel"
 import PreTaskHeader from "@/components/panel/task/PreTaskHeader.vue"
@@ -113,14 +119,17 @@ interface Props {
 
 interface PretaskListItem {
   pretask: Pretask
+  key: string
   displayName: string
   compatible: boolean
+  enabled: boolean
 }
 
 const { embedded = false, controllerName = null, resourceName = null } = defineProps<Props>()
 
 const modelValue = defineModel<PreTaskCommand[]>()
 const interfaceStore = useInterfaceStore()
+const settingsStore = useSettingsStore()
 const showWarn = ref(false)
 
 const expanded = ref(embedded)
@@ -137,11 +146,16 @@ const preTasks = computed<PreTaskCommand[]>({
 })
 
 const piPretasks = computed<PretaskListItem[]>(() =>
-  interfaceStore.getPretasks.map((pretask) => ({
-    pretask,
-    displayName: resolveInterfaceText(pretask.label, pretask.name || pretask.exec),
-    compatible: interfaceStore.isPretaskCompatible(pretask, controllerName, resourceName),
-  })),
+  interfaceStore.getPretasks.map((pretask) => {
+    const key = pretaskKey(pretask)
+    return {
+      pretask,
+      key,
+      displayName: resolveInterfaceText(pretask.label, pretask.name || pretask.exec),
+      compatible: interfaceStore.isPretaskCompatible(pretask, controllerName, resourceName),
+      enabled: settingsStore.settings.pretaskEnabled[key] !== false,
+    }
+  }),
 )
 
 function addPreTask() {

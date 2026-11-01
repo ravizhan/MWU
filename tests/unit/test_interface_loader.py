@@ -815,6 +815,16 @@ class TestLoadInterfaceModel:
                 r"pretask\[0\]\.option 引用了不存在的选项: level",
                 id="unknown-nested-option",
             ),
+            pytest.param(
+                {
+                    "pretask": [
+                        {"name": "Prep", "exec": "a"},
+                        {"name": "Prep", "exec": "b"},
+                    ]
+                },
+                r"pretask\[1\] 的标识 Prep 与 pretask\[0\] 重复",
+                id="duplicate-name",
+            ),
         ],
     )
     def test_pretask_reference_validation(self, tmp_path, extra, expected):
@@ -832,6 +842,33 @@ class TestLoadInterfaceModel:
         with pytest.raises(InterfaceLoadError) as exc_info:
             load_interface_model(tmp_path)
         assert re.search(expected, str(exc_info.value))
+
+    def test_unnamed_pretasks_are_keyed_by_unambiguous_argv(self, tmp_path):
+        """未命名预任务按完整 argv 区分：共用 exec 或参数含空格都不能混同。"""
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "pretask": [
+                    {"exec": "python", "args": ["./check_env.py"]},
+                    {"exec": "python", "args": ["./prepare.py"]},
+                    {"exec": "run", "args": ["a b"]},
+                    {"exec": "run", "args": ["a", "b"]},
+                ],
+            },
+        )
+
+        model = load_interface_model(tmp_path)
+
+        assert [pretask.key for pretask in model.pretask] == [
+            '["python","./check_env.py"]',
+            '["python","./prepare.py"]',
+            '["run","a b"]',
+            '["run","a","b"]',
+        ]
 
     # ------------------------------------------------------------------
     # Preset validation through load_interface_model

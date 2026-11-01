@@ -209,11 +209,12 @@ def find_unmet_checkbox_minimums(
     global_options: dict[str, TaskOptionValue],
     controller_name: str,
     resource_name: str,
+    pretask_enabled: dict[str, bool],
 ) -> list[str]:
     """返回本次运行实际生效、但选择数量低于 min_count 的 checkbox 选项名。
 
     只校验用户可编辑的选项：兼容任务（TaskService.start 会跳过不兼容任务）的任务选项、
-    global_option 与适用的 PI pretask 选项，并只递归进入已选 case 的子选项。
+    global_option 与适用且已勾选的 PI pretask 选项，并只递归进入已选 case 的子选项。
     资源/控制器选项组没有用户取值，执行时只用默认值，因此不参与校验。
     """
     option_map = interface_model.option or {}
@@ -261,6 +262,8 @@ def find_unmet_checkbox_minimums(
         if pretask.controller and controller_name not in pretask.controller:
             continue
         if pretask.resource and resource_name not in pretask.resource:
+            continue
+        if not pretask_enabled.get(pretask.key, True):
             continue
         global_names.extend(pretask.option or [])
     visit(global_names, global_options, set())

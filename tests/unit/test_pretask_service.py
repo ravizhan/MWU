@@ -114,7 +114,7 @@ def test_run_all_skips_controller_and_resource_mismatches(monkeypatch):
     recorder = _PopenRecorder([_FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    PretaskService(worker).run_all("adb", "main", [], {})
+    PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert [call[0] for call in recorder.calls] == [["allowed"]]
     assert recorder.calls[0][1]["shell"] is False
@@ -132,7 +132,7 @@ def test_run_all_executes_pi_pretasks_before_enabled_user_commands(monkeypatch):
         PreTaskCommand(command="   "),
     ]
 
-    PretaskService(worker).run_all("adb", "main", user_pre_tasks, {})
+    PretaskService(worker).run_all("adb", "main", user_pre_tasks, {}, {})
 
     assert [call[0] for call in recorder.calls] == [
         ["pi-first"],
@@ -144,6 +144,18 @@ def test_run_all_executes_pi_pretasks_before_enabled_user_commands(monkeypatch):
         False,
         True,
     ]
+
+
+def test_run_all_skips_unchecked_pretasks(monkeypatch):
+    worker = _make_worker(
+        pretasks=[Pretask(exec="a", name="A"), Pretask(exec="b", name="B")]
+    )
+    recorder = _PopenRecorder([_FakeProcess()])
+    _patch_popen(monkeypatch, recorder)
+
+    PretaskService(worker).run_all("adb", "main", [], {}, {"B": False})
+
+    assert [call[0] for call in recorder.calls] == [["a"]]
 
 
 def test_pi_argv_preserves_args_and_appends_compact_option_json(monkeypatch):
@@ -176,6 +188,7 @@ def test_pi_argv_preserves_args_and_appends_compact_option_json(monkeypatch):
         "main",
         [],
         {"mode": "safe", "tags": ["red"]},
+        {},
     )
 
     assert recorder.calls[0][0] == [
@@ -209,7 +222,7 @@ def test_option_json_includes_selected_sub_options_and_skips_inapplicable(
     _patch_popen(monkeypatch, recorder)
 
     PretaskService(worker).run_all(
-        "adb", "main", [], {"mode": "deep", "level": {"n": "3"}}
+        "adb", "main", [], {"mode": "deep", "level": {"n": "3"}}, {}
     )
 
     assert recorder.calls[0][0][-1] == '{"mode":"deep","level":{"n":"3"}}'
@@ -221,7 +234,7 @@ def test_pretask_runs_from_interface_base_dir(monkeypatch):
     recorder = _PopenRecorder([_FakeProcess()])
     _patch_popen(monkeypatch, recorder)
 
-    PretaskService(worker).run_all("adb", "main", [], {})
+    PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert recorder.calls[0][1]["cwd"] == str(Path("C:/app-root"))
 
@@ -232,7 +245,7 @@ def test_nonzero_exit_raises_pretask_error_with_output(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError) as exc_info:
-        PretaskService(worker).run_all("adb", "main", [], {})
+        PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     message = str(exc_info.value)
     assert "退出码 7" in message
@@ -246,7 +259,7 @@ def test_missing_pi_program_raises_pretask_error(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError, match="前置任务程序未找到: missing-program"):
-        PretaskService(worker).run_all("adb", "main", [], {})
+        PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert len(recorder.calls) == 1
     assert worker.events.notifications[-1][0] == "前置程序执行失败"
@@ -268,7 +281,7 @@ def test_running_user_pre_task_times_out_and_is_terminated(monkeypatch):
 
     with pytest.raises(PretaskError, match="前置任务执行超时（1s）: slow"):
         PretaskService(worker).run_all(
-            "adb", "main", [PreTaskCommand(command="slow", timeout=1)], {}
+            "adb", "main", [PreTaskCommand(command="slow", timeout=1)], {}, {}
         )
 
     assert process.terminate_calls == 1
@@ -288,7 +301,7 @@ def test_stop_flag_during_pretask_terminates_process_and_raises(monkeypatch):
     monkeypatch.setattr(pretask_module.time, "sleep", stop_after_poll)
 
     with pytest.raises(PretaskError, match="前置任务已停止: interruptible"):
-        PretaskService(worker).run_all("adb", "main", [], {})
+        PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert process.terminate_calls == 1
     assert worker.task_state.current_pre_task_process is None
@@ -300,6 +313,6 @@ def test_stop_flag_before_start_raises_without_spawning_process(monkeypatch):
     _patch_popen(monkeypatch, recorder)
 
     with pytest.raises(PretaskError, match="前置任务已停止: not-started"):
-        PretaskService(worker).run_all("adb", "main", [], {})
+        PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert recorder.calls == []
