@@ -350,7 +350,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.syncCurrentPresetSnapshot()
       this.selectedPresetName = targetPresetName
       this.hydrateSnapshot(targetSnapshot)
-      this.applyPresetPretasks(targetPresetName)
+      void this.applyPresetPretasks(targetPresetName)
       return true
     },
 
@@ -364,12 +364,15 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       return false
     },
 
-    /** PI v2.10.3: 声明了 pretask 的预设覆盖勾选状态（未列出视为不勾选）并写入选项值 */
-    applyPresetPretasks(presetName: string) {
+    /**
+     * PI v2.10.3: 声明了 pretask 的预设覆盖勾选状态（未列出视为不勾选）并写入选项值。
+     * 返回设置是否已保存；预设未声明 pretask 时无需保存，返回 true。
+     */
+    async applyPresetPretasks(presetName: string): Promise<boolean> {
       const interfaceStore = useInterfaceStore()
       const preset = interfaceStore.getPresetList.find((item) => item.name === presetName)
       if (!preset?.pretask) {
-        return
+        return true
       }
 
       const settingsStore = useSettingsStore()
@@ -386,7 +389,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
         applyPresetOptionValues(entry?.option || {}, optionMap, currentValues, optionValues)
       }
 
-      void settingsStore.applyPresetPretasks(enabled, optionValues)
+      return settingsStore.applyPresetPretasks(enabled, optionValues)
     },
 
     buildPersistedConfig(): PersistedTaskConfig {
@@ -420,7 +423,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
         Object.keys(settingsStore.settings.pretaskEnabled).length === 0 &&
         useInterfaceStore().getPretasks.length > 0
       ) {
-        this.applyPresetPretasks(this.selectedPresetName)
+        void this.applyPresetPretasks(this.selectedPresetName)
       }
     },
 
@@ -450,7 +453,10 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.selectedPresetName = targetPresetName
       this.preTasks = []
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
-      this.applyPresetPretasks(this.selectedPresetName)
+      if (!(await this.applyPresetPretasks(this.selectedPresetName))) {
+        showGlobalMessage("error", i18n.global.t("panel.configResetPretaskNotSaved"))
+        return false
+      }
       return true
     },
   },

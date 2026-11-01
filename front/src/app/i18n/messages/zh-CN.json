@@ -268,6 +268,7 @@
     "resetConfigConfirm": "确定要重置所有任务配置吗？此操作不可撤销。",
     "configReset": "配置已重置",
     "configResetFailed": "任务配置重置失败",
+    "configResetPretaskNotSaved": "任务配置已重置，但前置任务设置保存失败",
     "presetSettingsNotLoaded": "设置加载失败，无法切换到会修改前置任务的预设",
     "settingsNotSaved": "设置保存失败，已取消启动",
     "taskSettings": "任务设置",

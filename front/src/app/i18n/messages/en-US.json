@@ -268,6 +268,7 @@
     "resetConfigConfirm": "Are you sure you want to reset all task configurations? This cannot be undone.",
     "configReset": "Configuration reset",
     "configResetFailed": "Failed to reset task configuration",
+    "configResetPretaskNotSaved": "Task configuration was reset, but pre-task settings could not be saved",
     "presetSettingsNotLoaded": "Settings failed to load; cannot switch to a preset that changes pre-tasks",
     "settingsNotSaved": "Settings could not be saved; start cancelled",
     "taskSettings": "Task Settings",

@@ -468,6 +468,16 @@ describe("useTaskConfigStore", () => {
       expect(api.updateSettings).not.toHaveBeenCalled()
       expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetFailed")
     })
+
+    it("reports a partial reset when the pretask settings save fails", async () => {
+      const store = initTaskConfigStore()
+      vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
+      vi.mocked(api.updateSettings).mockResolvedValueOnce(false)
+
+      await expect(store.resetConfig()).resolves.toBe(false)
+
+      expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetPretaskNotSaved")
+    })
   })
 
   describe("syncCurrentPresetSnapshot", () => {
