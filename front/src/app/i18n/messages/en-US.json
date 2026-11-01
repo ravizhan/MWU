@@ -267,6 +267,7 @@
     "noCompatibleTask": "No executable tasks for current resource/controller",
     "resetConfigConfirm": "Are you sure you want to reset all task configurations? This cannot be undone.",
     "configReset": "Configuration reset",
+    "settingsNotSaved": "Settings could not be saved; start cancelled",
     "taskSettings": "Task Settings",
     "empty": "Empty",
     "preview": "Live Preview",

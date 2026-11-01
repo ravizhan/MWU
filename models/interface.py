@@ -323,8 +323,8 @@ class Pretask(BaseModel):
 
     @property
     def key(self) -> str:
-        """规范允许省略 name，此时以 exec 作为标识。"""
-        return self.name or self.exec
+        """规范允许省略 name；此时以完整命令行作为标识，避免多个同 exec 的预任务共用勾选状态。"""
+        return self.name or " ".join([self.exec, *(self.args or [])])
 
 
 class Group(BaseModel):

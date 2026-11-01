@@ -1,6 +1,5 @@
 import copy
 import re
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -464,7 +463,6 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
     controller_names = {controller.name for controller in interface_model.controller}
     pretasks = _as_list(interface_model.pretask)
     pretask_map = {pretask.name: pretask for pretask in pretasks if pretask.name}
-    pretask_name_counts = Counter(pretask.name for pretask in pretasks)
     reachable_options_by_task: dict[str, set[str]] = {}
 
     for task in tasks:
@@ -520,8 +518,6 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
             pretask = pretask_map.get(preset_pretask.name)
             if pretask is None:
                 raise InterfaceLoadError(f"{location} 引用了不存在的预任务")
-            if pretask_name_counts[preset_pretask.name] > 1:
-                raise InterfaceLoadError(f"{location} 引用的预任务名称不唯一")
 
             reachable_options: set[str] = set()
             _collect_reachable_option_names(
@@ -613,11 +609,18 @@ def _validate_pretasks(interface_model: InterfaceModel) -> None:
     resource_names = {resource.name for resource in interface_model.resource}
     controller_names = {controller.name for controller in interface_model.controller}
     option_map = interface_model.option or {}
+    # key 决定 settings.json.pretaskEnabled 的勾选状态归属，重复会让一个开关控制多个预任务
+    seen_keys: dict[str, int] = {}
 
     for index, pretask in enumerate(pretasks):
         pretask_ref = f"pretask[{index}]"
         if not pretask.exec.strip():
             raise InterfaceLoadError(f"{pretask_ref}.exec 必须是非空字符串")
+        if pretask.key in seen_keys:
+            raise InterfaceLoadError(
+                f"{pretask_ref} 的标识 {pretask.key} 与 pretask[{seen_keys[pretask.key]}] 重复"
+            )
+        seen_keys[pretask.key] = index
 
         invalid_resources = sorted(
             {

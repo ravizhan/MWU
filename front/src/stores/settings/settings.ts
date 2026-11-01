@@ -55,13 +55,14 @@ const LOCALE_KEY = "locale"
 
 type UILocale = NonNullable<SettingsModel["ui"]["language"]>
 
-let saveQueue: Promise<void> = Promise.resolve()
+/** 队尾解析为最近一次入队保存的结果；保存携带完整快照，所以它代表后端是否与界面一致 */
+let saveQueue: Promise<boolean> = Promise.resolve(true)
 
 function enqueueSettingsSave(save: () => Promise<boolean>): Promise<boolean> {
-  const result = saveQueue.then(save)
+  const result = saveQueue.then(() => save())
   saveQueue = result.then(
-    () => undefined,
-    () => undefined,
+    (saved) => saved,
+    () => false,
   )
   return result
 }
@@ -203,6 +204,20 @@ export const useSettingsStore = defineStore("settings", {
       }
       this.reconcileLanguage()
       return saved
+    },
+
+    /**
+     * 等待所有排队的保存（含等待期间新入队的）完成，返回后端是否已保存当前设置。
+     * 最后一次保存失败时用当前设置重新保存一次，否则一次失败会让之后的启动一直被拒。
+     */
+    async flushSaves(): Promise<boolean> {
+      let tail = saveQueue
+      let saved = await tail
+      while (tail !== saveQueue) {
+        tail = saveQueue
+        saved = await tail
+      }
+      return saved || this.saveSettings()
     },
 
     /**

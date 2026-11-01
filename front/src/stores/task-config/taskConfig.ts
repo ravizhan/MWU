@@ -420,6 +420,7 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.selectedPresetName = interfaceStore.getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
       this.preTasks = []
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
+      this.applyPresetPretasks(this.selectedPresetName)
     },
   },
 })

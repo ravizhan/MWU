@@ -14,9 +14,9 @@ import type {
 } from "@/types/interfaceModel"
 import type { TaskListItem } from "@/types/taskConfigModel"
 
-/** 规范允许省略 pretask.name，此时以 exec 作为标识 */
+/** 规范允许省略 pretask.name，此时以完整命令行作为标识；须与后端 Pretask.key 一致 */
 export function pretaskKey(pretask: Pretask): string {
-  return pretask.name || pretask.exec
+  return pretask.name || [pretask.exec, ...(pretask.args ?? [])].join(" ")
 }
 
 export const useInterfaceStore = defineStore("interface", {

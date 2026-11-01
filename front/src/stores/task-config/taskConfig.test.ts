@@ -406,10 +406,12 @@ describe("useTaskConfigStore", () => {
   })
 
   describe("resetConfig", () => {
-    it("resets to the first interface preset with empty preTasks", async () => {
+    it("resets to the first interface preset with empty preTasks and its pretask state", async () => {
       const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
       store.selectPreset("preset2")
       store.preTasks = [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }]
+      settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
       vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
 
       await store.resetConfig()
@@ -422,6 +424,7 @@ describe("useTaskConfigStore", () => {
         difficulty: "hard",
         params: { host: "preset-host", port: "" },
       })
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
     })
   })
 

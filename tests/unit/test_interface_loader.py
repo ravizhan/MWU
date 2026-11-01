@@ -815,6 +815,26 @@ class TestLoadInterfaceModel:
                 r"pretask\[0\]\.option 引用了不存在的选项: level",
                 id="unknown-nested-option",
             ),
+            pytest.param(
+                {
+                    "pretask": [
+                        {"name": "Prep", "exec": "a"},
+                        {"name": "Prep", "exec": "b"},
+                    ]
+                },
+                r"pretask\[1\] 的标识 Prep 与 pretask\[0\] 重复",
+                id="duplicate-name",
+            ),
+            pytest.param(
+                {
+                    "pretask": [
+                        {"name": "prep --fast", "exec": "a"},
+                        {"exec": "prep", "args": ["--fast"]},
+                    ]
+                },
+                r"pretask\[1\] 的标识 prep --fast 与 pretask\[0\] 重复",
+                id="name-collides-with-unnamed-command",
+            ),
         ],
     )
     def test_pretask_reference_validation(self, tmp_path, extra, expected):
@@ -832,6 +852,29 @@ class TestLoadInterfaceModel:
         with pytest.raises(InterfaceLoadError) as exc_info:
             load_interface_model(tmp_path)
         assert re.search(expected, str(exc_info.value))
+
+    def test_unnamed_pretasks_sharing_exec_are_distinct(self, tmp_path):
+        """PI 规范示例中多个未命名预任务共用 exec（如 python），按完整命令行区分。"""
+        _write_interface(
+            tmp_path,
+            {
+                "interface_version": 2,
+                "name": "Test",
+                "controller": [{"name": "adb", "type": "Adb"}],
+                "resource": [{"name": "main", "path": ["resource"]}],
+                "pretask": [
+                    {"exec": "python", "args": ["./check_env.py"]},
+                    {"exec": "python", "args": ["./prepare.py"]},
+                ],
+            },
+        )
+
+        model = load_interface_model(tmp_path)
+
+        assert [pretask.key for pretask in model.pretask] == [
+            "python ./check_env.py",
+            "python ./prepare.py",
+        ]
 
     # ------------------------------------------------------------------
     # Preset validation through load_interface_model
@@ -1057,17 +1100,6 @@ class TestLoadInterfaceModel:
                 },
                 r"preset\[P\]\.pretask\[Missing\] 引用了不存在的预任务",
                 id="unknown-pretask",
-            ),
-            pytest.param(
-                {
-                    "pretask": [
-                        {"name": "Prep", "exec": "a"},
-                        {"name": "Prep", "exec": "b"},
-                    ],
-                    "preset": [{"name": "P", "pretask": [{"name": "Prep"}]}],
-                },
-                r"preset\[P\]\.pretask\[Prep\] 引用的预任务名称不唯一",
-                id="ambiguous-pretask",
             ),
         ],
     )

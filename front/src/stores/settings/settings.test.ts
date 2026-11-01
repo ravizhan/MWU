@@ -171,4 +171,26 @@ describe("settings persistence", () => {
     expect(store.settings.ui.language).toBe("en-US")
     expect(i18n.global.locale.value).toBe("en-US")
   })
+
+  it("flushSaves waits for queued saves and resaves current settings after a failure", async () => {
+    const pending = deferred<boolean>()
+    vi.mocked(api.updateSettings).mockReturnValueOnce(pending.promise).mockResolvedValueOnce(true)
+    const store = useSettingsStore()
+
+    void store.setPretaskEnabled("Launch", false)
+    let settled = false
+    const flush = store.flushSaves().then((saved) => {
+      settled = true
+      return saved
+    })
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
+    expect(settled).toBe(false)
+
+    pending.resolve(false)
+    await expect(flush).resolves.toBe(true)
+    expect(api.updateSettings).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.updateSettings).mock.calls[1][0].pretaskEnabled).toEqual({
+      Launch: false,
+    })
+  })
 })

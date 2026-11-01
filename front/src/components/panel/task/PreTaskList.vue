@@ -151,7 +151,7 @@ const piPretasks = computed<PretaskListItem[]>(() =>
     return {
       pretask,
       key,
-      displayName: resolveInterfaceText(pretask.label, key),
+      displayName: resolveInterfaceText(pretask.label, pretask.name || pretask.exec),
       compatible: interfaceStore.isPretaskCompatible(pretask, controllerName, resourceName),
       enabled: settingsStore.settings.pretaskEnabled[key] !== false,
     }

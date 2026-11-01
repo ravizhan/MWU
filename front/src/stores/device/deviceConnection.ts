@@ -706,6 +706,12 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         resource_name: this.resource || "",
       }
 
+      // 执行时后端读取已保存的 pretaskEnabled / globalOptionValues，必须等界面上的修改落盘
+      if (!(await useSettingsStore().flushSaves())) {
+        showGlobalMessage("error", t("panel.settingsNotSaved"))
+        return { kind: "failed" }
+      }
+
       const result = await startTask(payload)
       if (result.accepted) {
         indexStore.setTaskRunning(true)
