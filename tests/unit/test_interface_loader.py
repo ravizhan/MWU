@@ -825,16 +825,6 @@ class TestLoadInterfaceModel:
                 r"pretask\[1\] 的标识 Prep 与 pretask\[0\] 重复",
                 id="duplicate-name",
             ),
-            pytest.param(
-                {
-                    "pretask": [
-                        {"name": "prep --fast", "exec": "a"},
-                        {"exec": "prep", "args": ["--fast"]},
-                    ]
-                },
-                r"pretask\[1\] 的标识 prep --fast 与 pretask\[0\] 重复",
-                id="name-collides-with-unnamed-command",
-            ),
         ],
     )
     def test_pretask_reference_validation(self, tmp_path, extra, expected):
@@ -853,8 +843,8 @@ class TestLoadInterfaceModel:
             load_interface_model(tmp_path)
         assert re.search(expected, str(exc_info.value))
 
-    def test_unnamed_pretasks_sharing_exec_are_distinct(self, tmp_path):
-        """PI 规范示例中多个未命名预任务共用 exec（如 python），按完整命令行区分。"""
+    def test_unnamed_pretasks_are_keyed_by_unambiguous_argv(self, tmp_path):
+        """未命名预任务按完整 argv 区分：共用 exec 或参数含空格都不能混同。"""
         _write_interface(
             tmp_path,
             {
@@ -865,6 +855,8 @@ class TestLoadInterfaceModel:
                 "pretask": [
                     {"exec": "python", "args": ["./check_env.py"]},
                     {"exec": "python", "args": ["./prepare.py"]},
+                    {"exec": "run", "args": ["a b"]},
+                    {"exec": "run", "args": ["a", "b"]},
                 ],
             },
         )
@@ -872,8 +864,10 @@ class TestLoadInterfaceModel:
         model = load_interface_model(tmp_path)
 
         assert [pretask.key for pretask in model.pretask] == [
-            "python ./check_env.py",
-            "python ./prepare.py",
+            '["python","./check_env.py"]',
+            '["python","./prepare.py"]',
+            '["run","a b"]',
+            '["run","a","b"]',
         ]
 
     # ------------------------------------------------------------------

@@ -193,4 +193,24 @@ describe("settings persistence", () => {
       Launch: false,
     })
   })
+
+  it("flushSaves waits for saves queued during its retry", async () => {
+    const retry = deferred<boolean>()
+    const later = deferred<boolean>()
+    vi.mocked(api.updateSettings)
+      .mockResolvedValueOnce(false)
+      .mockReturnValueOnce(retry.promise)
+      .mockReturnValueOnce(later.promise)
+    const store = useSettingsStore()
+
+    void store.setPretaskEnabled("Launch", false)
+    const flush = store.flushSaves()
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
+    void store.setPretaskEnabled("Cleanup", false)
+
+    retry.resolve(true)
+    await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(3))
+    later.resolve(false)
+    await expect(flush).resolves.toBe(false)
+  })
 })

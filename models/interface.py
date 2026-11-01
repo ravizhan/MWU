@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Any, Literal
 
@@ -323,8 +324,11 @@ class Pretask(BaseModel):
 
     @property
     def key(self) -> str:
-        """规范允许省略 name；此时以完整命令行作为标识，避免多个同 exec 的预任务共用勾选状态。"""
-        return self.name or " ".join([self.exec, *(self.args or [])])
+        """规范允许省略 name；此时以 JSON 数组形式的完整命令行作为标识，空格拼接会让
+        args ["a b"] 与 ["a", "b"] 混同。须与前端 pretaskKey 输出逐字一致。"""
+        return self.name or json.dumps(
+            [self.exec, *(self.args or [])], ensure_ascii=False, separators=(",", ":")
+        )
 
 
 class Group(BaseModel):

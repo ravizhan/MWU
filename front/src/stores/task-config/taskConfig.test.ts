@@ -392,6 +392,20 @@ describe("useTaskConfigStore", () => {
       expect(store.options["Task B"]).toEqual({ mode: ["manual"] })
     })
 
+    it("initializes pretask state from the selected preset only when none is saved", async () => {
+      const settingsStore = useSettingsStore()
+      settingsStore.initialized = true
+      const store = useTaskConfigStore()
+      vi.mocked(api.getTaskConfig).mockResolvedValue({ selectedPreset: "preset1", presets: {} })
+
+      await store.loadConfig()
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+
+      settingsStore.settings.pretaskEnabled = { Cleanup: true }
+      await store.loadConfig()
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Cleanup: true })
+    })
+
     it("keeps autosave disabled and reports the failure when loading fails", async () => {
       const store = useTaskConfigStore()
       vi.mocked(api.getTaskConfig).mockRejectedValue(new Error("boom"))

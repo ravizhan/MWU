@@ -195,10 +195,11 @@ const confirmWelcome = () => {
 onMounted(async () => {
   settingsStore.initSystemThemeListener()
   await interfaceStore.setInterface()
-  await configStore.loadConfig()
   if (!settingsStore.initialized) {
     await settingsStore.fetchSettings()
   }
+  // loadConfig 依据已加载的 settings 初始化预设的预任务勾选状态
+  await configStore.loadConfig()
 
   const welcome = interfaceStore.interface.welcome
   const welcomeEntries = typeof welcome === "string" ? [welcome] : (welcome ?? [])

@@ -67,6 +67,17 @@ function enqueueSettingsSave(save: () => Promise<boolean>): Promise<boolean> {
   return result
 }
 
+/** 等到队列不再增长，返回最后一次保存的结果 */
+async function settleSaveQueue(): Promise<boolean> {
+  let tail = saveQueue
+  let saved = await tail
+  while (tail !== saveQueue) {
+    tail = saveQueue
+    saved = await tail
+  }
+  return saved
+}
+
 function getCachedDarkMode(): "auto" | boolean {
   if (typeof window === "undefined" || typeof localStorage === "undefined") return "auto"
   const cached = localStorage.getItem(DARK_MODE_KEY)
@@ -208,16 +219,13 @@ export const useSettingsStore = defineStore("settings", {
 
     /**
      * 等待所有排队的保存（含等待期间新入队的）完成，返回后端是否已保存当前设置。
-     * 最后一次保存失败时用当前设置重新保存一次，否则一次失败会让之后的启动一直被拒。
+     * 最后一次保存失败时用当前设置重新保存一次，否则一次失败会让之后的启动一直被拒；
+     * 重试期间新入队的保存排在重试之后，所以重试成功后还要再等一次队尾。
      */
     async flushSaves(): Promise<boolean> {
-      let tail = saveQueue
-      let saved = await tail
-      while (tail !== saveQueue) {
-        tail = saveQueue
-        saved = await tail
-      }
-      return saved || this.saveSettings()
+      if (await settleSaveQueue()) return true
+      if (!(await this.saveSettings())) return false
+      return settleSaveQueue()
     },
 
     /**

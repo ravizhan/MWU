@@ -398,6 +398,17 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.selectedPresetName = taskConfig.selectedPreset
       this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
       this.configLoaded = true
+
+      // 空映射表示尚未写过勾选状态，此时按已选预设初始化；已有的用户选择保留。
+      // 须在 settings 成功加载后判断，否则空映射只是默认值。
+      const settingsStore = useSettingsStore()
+      if (
+        settingsStore.initialized &&
+        Object.keys(settingsStore.settings.pretaskEnabled).length === 0 &&
+        useInterfaceStore().getPretasks.length > 0
+      ) {
+        this.applyPresetPretasks(this.selectedPresetName)
+      }
     },
 
     debouncedSave() {
