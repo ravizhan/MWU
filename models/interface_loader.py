@@ -1,5 +1,6 @@
 import copy
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -461,11 +462,9 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
     option_map = interface_model.option or {}
     task_name_map = {task.name: task for task in tasks}
     controller_names = {controller.name for controller in interface_model.controller}
-    pretask_map = {
-        pretask.name: pretask
-        for pretask in _as_list(interface_model.pretask)
-        if pretask.name
-    }
+    pretasks = _as_list(interface_model.pretask)
+    pretask_map = {pretask.name: pretask for pretask in pretasks if pretask.name}
+    pretask_name_counts = Counter(pretask.name for pretask in pretasks)
     reachable_options_by_task: dict[str, set[str]] = {}
 
     for task in tasks:
@@ -521,6 +520,8 @@ def _validate_presets(interface_model: InterfaceModel) -> None:
             pretask = pretask_map.get(preset_pretask.name)
             if pretask is None:
                 raise InterfaceLoadError(f"{location} 引用了不存在的预任务")
+            if pretask_name_counts[preset_pretask.name] > 1:
+                raise InterfaceLoadError(f"{location} 引用的预任务名称不唯一")
 
             reachable_options: set[str] = set()
             _collect_reachable_option_names(

@@ -5,6 +5,8 @@ vi.mock("@/services/api", () => ({
   getTaskConfig: vi.fn<() => void>(),
   saveTaskConfig: vi.fn<() => void>(),
   resetTaskConfig: vi.fn<() => void>(),
+  getSettings: vi.fn<() => void>(),
+  updateSettings: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
 }))
 
 vi.mock("@/services/feedback/message", () => ({
@@ -17,6 +19,7 @@ vi.mock("@/app/i18n", () => ({
 
 import { useTaskConfigStore } from "@/stores/task-config/taskConfig"
 import { useInterfaceStore } from "@/stores/interface/interface"
+import { useSettingsStore } from "@/stores/settings/settings"
 import * as api from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { CUSTOM_PRESET_NAME } from "@/types/taskConfigModel"
@@ -64,9 +67,14 @@ function buildTestInterface(): InterfaceModel {
         default_case: ["auto"],
       },
     },
+    pretask: [
+      { name: "Launch", exec: "launch", option: ["difficulty"] },
+      { name: "Cleanup", exec: "cleanup" },
+    ],
     preset: [
       {
         name: "preset1",
+        pretask: [{ name: "Launch", option: { difficulty: "easy" } }],
         task: [
           {
             name: "Task A",
@@ -156,6 +164,19 @@ describe("useTaskConfigStore", () => {
       expect(store.taskList.map((task) => task.id)).toEqual(["Task B", "Task B"])
       expect(new Set(store.taskList.map((task) => task.uid)).size).toBe(2)
       expect(store.options["Task B"]).toEqual({ mode: ["manual"] })
+    })
+
+    it("applies declared preset pretasks and keeps them for presets without pretask", () => {
+      const store = initTaskConfigStore()
+      const settingsStore = useSettingsStore()
+
+      store.selectPreset("preset1")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+      expect(settingsStore.settings.globalOptionValues.difficulty).toBe("easy")
+
+      settingsStore.settings.pretaskEnabled.Cleanup = true
+      store.selectPreset("preset2")
+      expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: true })
     })
 
     it("returns false and leaves state unchanged for unknown presets", () => {

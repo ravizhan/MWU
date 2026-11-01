@@ -1058,6 +1058,17 @@ class TestLoadInterfaceModel:
                 r"preset\[P\]\.pretask\[Missing\] 引用了不存在的预任务",
                 id="unknown-pretask",
             ),
+            pytest.param(
+                {
+                    "pretask": [
+                        {"name": "Prep", "exec": "a"},
+                        {"name": "Prep", "exec": "b"},
+                    ],
+                    "preset": [{"name": "P", "pretask": [{"name": "Prep"}]}],
+                },
+                r"preset\[P\]\.pretask\[Prep\] 引用的预任务名称不唯一",
+                id="ambiguous-pretask",
+            ),
         ],
     )
     def test_preset_reference_validation(self, tmp_path, extra, expected):

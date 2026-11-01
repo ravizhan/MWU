@@ -321,6 +321,11 @@ class Pretask(BaseModel):
     icon: str | None = None
     option: list[str] | None = None
 
+    @property
+    def key(self) -> str:
+        """规范允许省略 name，此时以 exec 作为标识。"""
+        return self.name or self.exec
+
 
 class Group(BaseModel):
     name: str

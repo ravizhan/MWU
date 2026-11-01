@@ -2,7 +2,8 @@ import { defineStore } from "pinia"
 import i18n from "@/app/i18n"
 import { getTaskConfig, resetTaskConfig, saveTaskConfig } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
-import { useInterfaceStore } from "@/stores"
+import { useInterfaceStore, useSettingsStore } from "@/stores"
+import { pretaskKey } from "@/stores/interface/interface"
 import { tryCatch } from "@/utils/tryCatch"
 import type { Option, Preset, PresetTaskOptionValue } from "@/types/interfaceModel"
 import type {
@@ -84,7 +85,7 @@ function isRecordStringString(value: unknown): value is Record<string, string> {
 
 function applyPresetInputValue(
   optionName: string,
-  inputs: Array<{ name: string }>,
+  inputs: ReadonlyArray<{ name: string }>,
   value: Record<string, string>,
   targetOptions: Record<string, TaskOptionValue>,
 ) {
@@ -112,11 +113,12 @@ function applyPresetOptionValue(
     return
   }
 
-  if (option.type === "input") {
+  if (option.type === "input" || option.type === "hotkey") {
     if (!isRecordStringString(value)) {
       return
     }
-    applyPresetInputValue(optionName, option.inputs, value, targetOptions)
+    const fields = option.type === "input" ? option.inputs : option.hotkeys
+    applyPresetInputValue(optionName, fields, value, targetOptions)
     return
   }
 
@@ -129,6 +131,24 @@ function applyPresetOptionValue(
 
   if (typeof value === "string") {
     targetOptions[optionName] = value
+  }
+}
+
+/** 在现有值（缺省回退默认值）之上应用预设选项，结果写入 out */
+function applyPresetOptionValues(
+  presetOptions: Record<string, PresetTaskOptionValue>,
+  optionMap: Record<string, Option>,
+  currentValues: Record<string, TaskOptionValue>,
+  out: Record<string, TaskOptionValue>,
+) {
+  for (const [optionName, optionValue] of Object.entries(presetOptions)) {
+    const option = optionMap[optionName]
+    if (!option) continue
+    if (currentValues[optionName] === undefined) {
+      Object.assign(currentValues, buildDefaultsFromOptionMap({ [optionName]: option }))
+    }
+    applyPresetOptionValue(optionName, optionValue, optionMap, currentValues)
+    out[optionName] = currentValues[optionName]
   }
 }
 
@@ -327,7 +347,33 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       this.syncCurrentPresetSnapshot()
       this.selectedPresetName = targetPresetName
       this.hydrateSnapshot(targetSnapshot)
+      this.applyPresetPretasks(targetPresetName)
       return true
+    },
+
+    /** PI v2.10.3: 声明了 pretask 的预设覆盖勾选状态（未列出视为不勾选）并写入选项值 */
+    applyPresetPretasks(presetName: string) {
+      const interfaceStore = useInterfaceStore()
+      const preset = interfaceStore.getPresetList.find((item) => item.name === presetName)
+      if (!preset?.pretask) {
+        return
+      }
+
+      const settingsStore = useSettingsStore()
+      const optionMap = interfaceStore.interface?.option || {}
+      const entries = new Map(preset.pretask.map((entry) => [entry.name, entry]))
+      const enabled: Record<string, boolean> = {}
+      const currentValues = cloneTaskOptionMap(settingsStore.settings.globalOptionValues)
+      const optionValues: Record<string, TaskOptionValue> = {}
+
+      for (const pretask of interfaceStore.getPretasks) {
+        const key = pretaskKey(pretask)
+        const entry = pretask.name ? entries.get(pretask.name) : undefined
+        enabled[key] = entry !== undefined && entry.enabled !== false
+        applyPresetOptionValues(entry?.option || {}, optionMap, currentValues, optionValues)
+      }
+
+      void settingsStore.applyPresetPretasks(enabled, optionValues)
     },
 
     buildPersistedConfig(): PersistedTaskConfig {

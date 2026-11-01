@@ -47,6 +47,7 @@ const defaultSettings: SettingsModel = {
     helpImproveSoftware: true,
   },
   globalOptionValues: {},
+  pretaskEnabled: {},
 }
 
 const DARK_MODE_KEY = "darkMode"
@@ -233,6 +234,21 @@ export const useSettingsStore = defineStore("settings", {
 
     async updateGlobalOptionValue(optionKey: string, value: TaskOptionValue) {
       this.settings.globalOptionValues[optionKey] = value
+      return this.saveSettings()
+    },
+
+    async setPretaskEnabled(key: string, enabled: boolean) {
+      this.settings.pretaskEnabled[key] = enabled
+      return this.saveSettings()
+    },
+
+    /** 应用预设声明的 pretask：整体替换勾选状态并合并选项值，只保存一次 */
+    async applyPresetPretasks(
+      enabled: Record<string, boolean>,
+      optionValues: Record<string, TaskOptionValue>,
+    ) {
+      this.settings.pretaskEnabled = enabled
+      Object.assign(this.settings.globalOptionValues, optionValues)
       return this.saveSettings()
     },
 

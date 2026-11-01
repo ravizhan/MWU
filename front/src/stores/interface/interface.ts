@@ -14,6 +14,11 @@ import type {
 } from "@/types/interfaceModel"
 import type { TaskListItem } from "@/types/taskConfigModel"
 
+/** 规范允许省略 pretask.name，此时以 exec 作为标识 */
+export function pretaskKey(pretask: Pretask): string {
+  return pretask.name || pretask.exec
+}
+
 export const useInterfaceStore = defineStore("interface", {
   state: (): { interface: Partial<InterfaceModel> } => ({
     interface: {},
@@ -86,6 +91,14 @@ export const useInterfaceStore = defineStore("interface", {
       }
 
       return !(resourceName && pretask.resource?.length && !pretask.resource.includes(resourceName))
+    },
+
+    isPresetCompatible(preset: Preset, controllerName?: string | null): boolean {
+      return !(
+        controllerName &&
+        preset.controller?.length &&
+        !preset.controller.includes(controllerName)
+      )
     },
 
     getTaskByName(name: string): Task | null {

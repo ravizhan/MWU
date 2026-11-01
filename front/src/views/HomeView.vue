@@ -153,7 +153,10 @@ const deviceStore = useDeviceConnectionStore()
 const selectedTaskCount = computed(() => configStore.taskList.length)
 
 const recipeCards = computed(() => {
-  return interfaceStore.getPresetList.map((preset) => {
+  const presets = interfaceStore.getPresetList.filter((preset) =>
+    interfaceStore.isPresetCompatible(preset, deviceStore.selectedControllerName),
+  )
+  return presets.map((preset) => {
     const taskCount = preset.task?.filter((t) => t.enabled !== false).length || 0
     return {
       name: preset.name,
