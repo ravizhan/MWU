@@ -6,6 +6,12 @@ repos:
       - id: uv-lock
   - repo: local
     hooks:
+      # 先修 lint（含 import 排序），再统一格式化
+      - id: uv-lint
+        name: uv-lint
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
       - id: uv-format
         name: uv-format
         entry: uv run ruff format

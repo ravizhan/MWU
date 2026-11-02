@@ -64,12 +64,12 @@ class SystemScheduler:
     def register(self, task: ScheduledTask) -> None:
         """注册（或覆盖更新）单个任务的系统级唤醒。"""
         self._backend.register(self._build_spec(task))
-        logger.info(f"已注册系统级唤醒: {task.name} ({task.id})")
+        logger.info("已注册系统级唤醒: %s (%s)", task.name, task.id)
 
     def unregister(self, task_id: str) -> None:
         """注销单个任务的系统级唤醒。"""
         self._backend.unregister(task_id)
-        logger.info(f"已注销系统级唤醒: {task_id}")
+        logger.info("已注销系统级唤醒: %s", task_id)
 
     def converge(self, desired: list[ScheduledTask]) -> ConvergeReport:
         """收敛到期望集合：注册所有启用了唤醒的任务，清理孤儿。
@@ -84,8 +84,8 @@ class SystemScheduler:
 
         try:
             registered_ids = self._backend.list_registered_task_ids()
-        except Exception as e:  # noqa: BLE001 - 状态未知，收敛退出交由调用方记录
-            logger.warning(f"查询已注册系统级唤醒失败: {e}")
+        except Exception as e:
+            logger.warning("查询已注册系统级唤醒失败: %s", e)
             report.list_error = str(e)
             return report
 
@@ -93,16 +93,16 @@ class SystemScheduler:
             try:
                 self._backend.register(self._build_spec(task))
                 report.registered.append(task.id)
-            except Exception as e:  # noqa: BLE001 - 单任务失败不中断其余任务
+            except Exception as e:
                 report.failed[task.id] = str(e)
-                logger.warning(f"注册系统级唤醒失败: {task.name} ({task.id}): {e}")
+                logger.warning("注册系统级唤醒失败: %s (%s): %s", task.name, task.id, e)
 
         for orphan_id in sorted(registered_ids - desired_ids):
             try:
                 self._backend.unregister(orphan_id)
                 report.unregistered.append(orphan_id)
-            except Exception as e:  # noqa: BLE001 - 单任务失败不中断其余任务
+            except Exception as e:
                 report.failed[orphan_id] = str(e)
-                logger.warning(f"注销系统级唤醒失败: {orphan_id}: {e}")
+                logger.warning("注销系统级唤醒失败: %s: %s", orphan_id, e)
 
         return report

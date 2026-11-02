@@ -7,6 +7,7 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import requirements
 
@@ -28,7 +29,7 @@ def main():
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
     try:
-        with open("requirements.txt") as f:
+        with Path("requirements.txt").open() as f:
             packages = [req.name for req in requirements.parse(f) if req.name]
     except FileNotFoundError:
         sys.exit("错误: 找不到 requirements.txt 文件")

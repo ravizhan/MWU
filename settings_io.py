@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import threading
@@ -30,7 +31,7 @@ def read_settings_raw(path: Path) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
     except (OSError, ValueError) as exc:
-        logger.warning(f"读取设置文件失败，按空设置处理: {path}: {exc}")
+        logger.warning("读取设置文件失败，按空设置处理: %s: %s", path, exc)
         return {}
     if not isinstance(raw, dict):
         return {}
@@ -38,7 +39,7 @@ def read_settings_raw(path: Path) -> dict[str, Any]:
 
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Atomically write a JSON file (tmp + fsync + os.replace).
+    """Atomically write a JSON file (tmp + fsync + replace).
 
     The temp name includes pid and thread id, so concurrent writers never share it;
     callers still serialize read-modify-write sequences (e.g. SETTINGS_LOCK).
@@ -50,13 +51,11 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
             json.dump(data, f, indent=4, ensure_ascii=False)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        tmp_path.replace(path)
     except Exception:
         if tmp_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink()
-            except OSError:
-                pass
         raise
 
 
@@ -67,7 +66,7 @@ def load_settings_model(path: Path, **validate_kwargs: Any) -> SettingsModel:
     try:
         return SettingsModel.model_validate(raw, **validate_kwargs)
     except ValueError as exc:
-        logger.warning(f"校验设置失败，使用默认值: {path}: {exc}")
+        logger.warning("校验设置失败，使用默认值: %s: %s", path, exc)
         return SettingsModel()
 
 

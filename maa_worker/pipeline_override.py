@@ -45,12 +45,13 @@ class PipelineOverrideService:
         if option.controller and not controller_names.intersection(option.controller):
             return False
         current_resource_name = self.worker.device_state.current_resource_name
-        if option.resource and (
-            current_resource_name is None
-            or current_resource_name not in option.resource
-        ):
-            return False
-        return True
+        return not (
+            option.resource
+            and (
+                current_resource_name is None
+                or current_resource_name not in option.resource
+            )
+        )
 
     def _normalize_choice_value(
         self, option_name: str, option, options: dict[str, TaskOptionValue]

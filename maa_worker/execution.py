@@ -99,8 +99,8 @@ async def _record_prestart_cancel(db_path: Path, run_id: str) -> None:
         await asyncio.to_thread(
             finish_execution, db_path, run_id, "stopped", "运行被取消"
         )
-    except Exception as e:
-        logger.error(f"补记取消记录失败: {e}")
+    except Exception:
+        logger.exception("补记取消记录失败")
 
 
 def add_execution(path: Path, execution: TaskExecution) -> None:
@@ -174,23 +174,21 @@ def list_executions(path: Path, limit: int = 50) -> list[TaskExecution]:
             (limit,),
         ).fetchall()
 
-    executions: list[TaskExecution] = []
-    for row in rows:
-        executions.append(
-            TaskExecution(
-                id=row[0],
-                task_id=row[1],
-                task_name=row[2],
-                origin=row[3] or "in_app",
-                occurrence_id=row[4],
-                status=row[5],
-                blocker_task_name=row[6],
-                error_message=row[7],
-                started_at=datetime.fromisoformat(row[8]),
-                finished_at=datetime.fromisoformat(row[9]) if row[9] else None,
-            )
+    return [
+        TaskExecution(
+            id=row[0],
+            task_id=row[1],
+            task_name=row[2],
+            origin=row[3] or "in_app",
+            occurrence_id=row[4],
+            status=row[5],
+            blocker_task_name=row[6],
+            error_message=row[7],
+            started_at=datetime.fromisoformat(row[8]),
+            finished_at=datetime.fromisoformat(row[9]) if row[9] else None,
         )
-    return executions
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +238,8 @@ async def _record_skip(
     # fire-and-forget 落库（脱离事件循环，避免阻塞）
     try:
         await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
-    except Exception as e:
-        logger.error(f"写入跳过记录失败: {e}")
+    except Exception:
+        logger.exception("写入跳过记录失败")
     return Admission(accepted=False, run_id=run_id, skip_status=status)
 
 
@@ -621,7 +619,8 @@ async def _complete_run(
             state.active_run.started = True
 
         # 6. 轮询等待结束（stop_flag 由 worker 内部轮询处理中途停止）
-        while worker.task_state.running:
+        # running 由 MAA 工作线程置位，跨线程轮询比 asyncio.Event 简单
+        while worker.task_state.running:  # noqa: ASYNC110
             await asyncio.sleep(1)
 
         last_status = worker.task_state.last_status
@@ -646,7 +645,7 @@ async def _complete_run(
         error = str(e)
         if failure_stage is None:
             failure_stage = "prepare"
-        logger.error(f"执行运行 {run_id} 失败: {e}")
+        logger.exception("执行运行 %s 失败", run_id)
         if worker is not None:
             worker.events.send_log(f"任务执行失败: {e}")
     finally:
@@ -663,8 +662,8 @@ async def _complete_run(
             )
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            logger.error(f"收尾执行记录失败: {e}")
+        except Exception:
+            logger.exception("收尾执行记录失败")
         if trace is not None:
             try:
                 await asyncio.shield(
@@ -672,8 +671,8 @@ async def _complete_run(
                 )
             except asyncio.CancelledError:
                 pass
-            except Exception as e:
-                logger.error(f"遥测上报失败: {e}")
+            except Exception:
+                logger.exception("遥测上报失败")
         # 读取失败也必须发终端事件，否则前端 TaskRunning 卡住；此时仅按默认设置决定是否通知。
         notify_settings = SettingsModel()
         if worker is not None:
@@ -681,8 +680,8 @@ async def _complete_run(
                 notify_settings = await asyncio.shield(asyncio.to_thread(load_settings))
             except asyncio.CancelledError:
                 pass
-            except Exception as e:
-                logger.error(f"读取通知设置失败: {e}")
+            except Exception:
+                logger.exception("读取通知设置失败")
         # 清槽与终端事件入队必须在同一同步段内（中间不得 await）：
         # 前端收到 task.completed/task.failed 后立即发起的新启动不能再被判 busy_manual，
         # 同时新运行的 task.started 也不能排在旧运行的终端事件之前。
@@ -699,8 +698,8 @@ async def _complete_run(
                 terminal_event = worker.events.publish_task_terminal(
                     event_task_list, run_label, status == "success", notify_settings
                 )
-            except Exception as emit_err:
-                logger.error(f"发送任务终端事件失败: {emit_err}")
+            except Exception:
+                logger.exception("发送任务终端事件失败")
         if terminal_event is not None:
             try:
                 await asyncio.shield(
@@ -710,8 +709,8 @@ async def _complete_run(
                 )
             except asyncio.CancelledError:
                 pass
-            except Exception as emit_err:
-                logger.error(f"发送任务终端通知失败: {emit_err}")
+            except Exception:
+                logger.exception("发送任务终端通知失败")
         # 若任务是被取消的，继续传播 CancelledError
         if cancelled:
             raise asyncio.CancelledError

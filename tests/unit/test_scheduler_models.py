@@ -24,8 +24,7 @@ _CORPUS_PATH = Path(__file__).parent.parent / "fixtures" / "validation_contract.
 
 
 def _load_corpus():
-    with open(_CORPUS_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    return json.loads(_CORPUS_PATH.read_text(encoding="utf-8"))
 
 
 _CORPUS = _load_corpus()

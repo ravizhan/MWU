@@ -43,9 +43,9 @@ def _fernet() -> Fernet:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         tmp_path.write_bytes(Fernet.generate_key())
-        os.replace(tmp_path, path)
+        tmp_path.replace(path)
         if sys.platform != "win32":
-            os.chmod(path, 0o600)
+            path.chmod(0o600)
     return Fernet(path.read_bytes())
 
 

@@ -35,3 +35,31 @@ build = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff.lint]
+# 在 ruff 默认规则集之上追加能发现真实问题的规则组
+extend-select = [
+    "ASYNC",  # 异步函数中的阻塞调用、忙等
+    "B",      # bugbear
+    "C4",     # 推导式
+    "DTZ",    # 无时区 datetime
+    "FAST",   # FastAPI
+    "FURB",   # refurb
+    "G",      # logging 参数惰性格式化
+    "LOG",    # logging 用法
+    "PERF",   # 性能反模式
+    "PIE",
+    "PTH",    # pathlib
+    "RET",    # return 简化
+    "RUF",
+    "SIM",    # simplify
+    "TRY400", # except 中用 logger.exception 保留堆栈
+    "UP",     # pyupgrade
+]
+ignore = [
+    "BLE001",  # 线程/回调边界的 except Exception 兜底是本项目的常规写法
+    "RUF001",  # 中文全角标点
+    "RUF002",
+    "RUF003",
+    "TRY004",  # 配置/输入校验统一抛 ValueError（pydantic 校验器也只认 ValueError）
+]

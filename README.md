@@ -260,6 +260,8 @@ pnpm format  # 使用 oxfmt 格式化代码
 ```bash
 uv sync --locked
 uv run main.py  # 启动 FastAPI 服务
+uv run ruff check --fix .  # 代码检查（规则见 pyproject.toml）
+uv run ruff format .       # 格式化
 ```
 
 Nuitka 位于 `build` 分组，编译后端前需运行 `uv sync --locked --group build`。

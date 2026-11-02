@@ -201,7 +201,7 @@ class TaskService:
                 return
             state.last_status = "success"
             state.last_error = None
-        except Exception as exc:  # noqa: BLE001 - 任务线程边界：任何异常都记为本次运行失败
+        except Exception as exc:
             if trace is not None:
                 trace.fail_open_task()
             traceback.print_exc()

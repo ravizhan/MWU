@@ -1,3 +1,4 @@
+import contextlib
 import json
 import subprocess
 import sys
@@ -275,10 +276,8 @@ class PretaskService:
             self._terminate_process(process)
 
     def _terminate_process(self, process: subprocess.Popen) -> None:
-        try:
+        with contextlib.suppress(OSError):
             process.terminate()
-        except OSError:
-            pass
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
@@ -286,15 +285,11 @@ class PretaskService:
                 f"前置任务进程未在 2 秒内退出，强制结束: {process.pid}"
             )
             if sys.platform == "win32":
-                try:
+                with contextlib.suppress(OSError):
                     subprocess.run(
                         ["taskkill", "/T", "/F", "/PID", str(process.pid)],
                         check=False,
                     )
-                except OSError:
-                    pass
             else:
-                try:
+                with contextlib.suppress(OSError):
                     process.kill()
-                except OSError:
-                    pass

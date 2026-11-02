@@ -47,6 +47,12 @@ jobs:
       - name: Install Dependencies
         run: uv sync --dev
 
+      - name: Run ruff
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          uv run ruff check --output-format=github .
+          uv run ruff format --check .
+
       - name: Run pytest
         run: uv run pytest tests/ -q
 

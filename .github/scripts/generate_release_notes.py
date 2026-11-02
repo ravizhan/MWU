@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import httpx
 
@@ -17,12 +18,11 @@ def get_latest_version(repo):
 def read_streamed_content(response):
     content_parts = []
 
-    for line in response.iter_lines():
-        if not line:
+    for raw_line in response.iter_lines():
+        if not raw_line:
             continue
 
-        if isinstance(line, bytes):
-            line = line.decode("utf-8")
+        line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
 
         if not line.startswith("data:"):
             continue
@@ -124,7 +124,7 @@ def main():
     release_notes = f"## 更新日志（{date}）\n\n{result}"
 
     delimiter = f"EOF_{uuid.uuid4().hex}"
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as f:
         f.write(f"notes<<{delimiter}\n")
         f.write(release_notes)
         f.write(f"\n{delimiter}\n")

@@ -189,7 +189,7 @@ def _install_id() -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(new_id, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.replace(path)
     return new_id
 
 
@@ -391,7 +391,7 @@ class RunTrace:
                 try:
                     self._attach_failure_files(scope)
                 except OSError as exc:
-                    logger.warning(f"遥测附件读取失败: {exc}")
+                    logger.warning("遥测附件读取失败: %s", exc)
             if failure_stage in _OPAQUE_FAILURE_STAGES:
                 message = f"Run failed at {failure_stage}"
             else:

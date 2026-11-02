@@ -116,7 +116,7 @@ class AutoFocusGenerator:
             parts.append(status_cn)
 
         elif msg.startswith("Node."):
-            parts.append(name if name else category)
+            parts.append(name or category)
             parts.append(status_cn)
 
         elif msg.startswith("Resource."):
@@ -251,8 +251,7 @@ class UnifiedFocusResolver:
         content = content.replace("{name}", str(details.get("name", "")))
         content = content.replace("{task_id}", str(details.get("task_id", "")))
         content = content.replace("{entry}", str(details.get("entry", "")))
-        content = content.replace("{list}", str(details.get("list", "")))
-        return content
+        return content.replace("{list}", str(details.get("list", "")))
 
     @staticmethod
     def _derive_level(msg: str) -> RealtimeEventLevel:

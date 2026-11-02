@@ -151,33 +151,24 @@ def _disable_deps_first_finder() -> None:
     _deps_first_finder = None
 
 
+def _location_is_within(location: str, base_path: Path) -> bool:
+    try:
+        return Path(location).resolve().is_relative_to(base_path)
+    except (OSError, ValueError):
+        return False
+
+
 def _module_comes_from_path(module: types.ModuleType, base_path: Path) -> bool:
+    locations: list[str] = []
     spec = getattr(module, "__spec__", None)
     origin = getattr(spec, "origin", None)
     if origin and origin not in {"built-in", "frozen", "namespace"}:
-        try:
-            if Path(origin).resolve().is_relative_to(base_path):
-                return True
-        except Exception:
-            pass
-
+        locations.append(origin)
     module_file = getattr(module, "__file__", None)
     if module_file:
-        try:
-            if Path(module_file).resolve().is_relative_to(base_path):
-                return True
-        except Exception:
-            pass
-
-    module_paths = getattr(module, "__path__", None) or []
-    for location in module_paths:
-        try:
-            if Path(location).resolve().is_relative_to(base_path):
-                return True
-        except Exception:
-            continue
-
-    return False
+        locations.append(module_file)
+    locations.extend(getattr(module, "__path__", None) or [])
+    return any(_location_is_within(location, base_path) for location in locations)
 
 
 def _evict_conflicting_deps_modules(
@@ -392,7 +383,7 @@ def run_black_magic(agent_config: Any, maa_worker: "MaaWorker"):
                     fullname,
                     record["path"],
                     loader=self,
-                    submodule_search_locations=[os.path.dirname(record["path"])],
+                    submodule_search_locations=[str(Path(record["path"]).parent)],
                 )
             return importlib.util.spec_from_file_location(
                 fullname, record["path"], loader=self
@@ -404,18 +395,18 @@ def run_black_magic(agent_config: Any, maa_worker: "MaaWorker"):
         def exec_module(self, module):
             record = self.mapping[module.__name__]
             file_path = record["path"]
-            with open(file_path, encoding="utf-8") as f:
-                source = f.read()
+            source = Path(file_path).read_text(encoding="utf-8")
 
             module.__file__ = file_path
             module.__loader__ = self
             if record["is_pkg"]:
                 module.__package__ = module.__name__
-                module.__path__ = [os.path.dirname(file_path)]
+                module.__path__ = [str(Path(file_path).parent)]
             else:
                 module.__package__ = module.__name__.rpartition(".")[0]
 
-            exec(compile(source, file_path, "exec"), module.__dict__)
+            # 自定义 Loader 的模块执行本身就是 exec
+            exec(compile(source, file_path, "exec"), module.__dict__)  # noqa: S102
 
     loader = AgentLoader(module_map)
     sys.meta_path.insert(0, loader)
@@ -430,8 +421,7 @@ def run_black_magic(agent_config: Any, maa_worker: "MaaWorker"):
     for module_name, info in module_map.items():
         file_path = info.get("path")
         try:
-            with open(file_path, encoding="utf-8") as f:
-                source = f.read()
+            source = Path(file_path).read_text(encoding="utf-8")
             lines = source.splitlines(True)
 
             for i, line in enumerate(lines):

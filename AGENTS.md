@@ -67,7 +67,7 @@ Write the simplest correct implementation and preserve the backend/frontend API 
 
 ## Commands
 
-- `uv sync` (Python from `.python-version`, >=3.13); `uv run main.py` starts the server and opens the UI (no `--reload`); `uv run pytest tests/ -q`.
+- `uv sync` (Python from `.python-version`, >=3.13); `uv run main.py` starts the server and opens the UI (no `--reload`); `uv run pytest tests/ -q`; `uv run ruff check .` and `uv run ruff format .` (rules in `pyproject.toml`).
 - `cd front && pnpm install --frozen-lockfile` (pnpm 11, Node >=24.13.0); `pnpm dev` (Vite, `/api` proxied to `localhost:5566`), `pnpm build` (to `../page`), `pnpm lint` (oxlint + eslint), `pnpm format` (oxfmt), `pnpm type-check` (`vue-tsc --noEmit`), `pnpm test:run` (Vitest, jsdom + MSW).
 - `cd updater && go build`.
 - `uv sync --locked --group build` installs Nuitka deps; build commands are in `.github/workflows/build.yml` and `README.md`.
@@ -84,7 +84,7 @@ Write the simplest correct implementation and preserve the backend/frontend API 
 
 ## Testing
 
-Backend tests live in `tests/unit/` (fixtures in `tests/conftest.py`); frontend Vitest tests are colocated in `front/src/` with shared MSW/EventSource setup in `front/src/tests/`. CI runs pytest, Vitest, and type-check; lint/format are local.
+Backend tests live in `tests/unit/` (fixtures in `tests/conftest.py`); frontend Vitest tests are colocated in `front/src/` with shared MSW/EventSource setup in `front/src/tests/`. CI runs ruff check/format, pytest, Vitest, and type-check; frontend lint/format are local.
 
 Keep tests minimal and behavioral: extend existing tests, add a case only for a plausible user-visible bug or a meaningful contract/boundary/state transition, and remove tests for removed behavior. Never assert source text, exact UI/log wording, call wiring, or mock forwarding, and don't chase coverage or enumerate unrealistic combinations.
 

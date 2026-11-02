@@ -49,8 +49,8 @@ def validate_regex(v: Any, info: ValidationInfo) -> Any:
         return v
     try:
         return re.compile(v)
-    except (re.error, TypeError):
-        raise ValueError(f"{info.field_name} 无法编译为正则表达式")
+    except (re.error, TypeError) as exc:
+        raise ValueError(f"{info.field_name} 无法编译为正则表达式") from exc
 
 
 def _pipeline_override_contains_attach_option(value: Any, option_name: str) -> bool:

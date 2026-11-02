@@ -98,16 +98,15 @@ async def scheduled_job_fired(**kwargs) -> None:
     - 其余任务移交 ``maa_worker.execution.submit_scheduled``（origin="in_app"）。
     """
     state = _CALLBACK_STATE
+    task_id = kwargs.get("task_id")
     if state is None:
-        logger.error(f"调度器运行期状态未绑定，跳过定时任务 {kwargs.get('task_id')}")
+        logger.error("调度器运行期状态未绑定，跳过定时任务 %s", task_id)
         return
     # 唤醒任务仅在系统级后端可用时才跳过应用内派发；不可用则回退，防止任务失能
     if kwargs.get("wakeup_enabled") and getattr(
         state.system_scheduler, "supports_native", False
     ):
-        logger.info(
-            f"定时任务 {kwargs.get('task_id')} 已启用系统级唤醒，跳过应用内派发"
-        )
+        logger.info("定时任务 %s 已启用系统级唤醒，跳过应用内派发", task_id)
         return
     try:
         trigger_config = _decode_trigger_config(kwargs.get("trigger_config"))
@@ -115,7 +114,7 @@ async def scheduled_job_fired(**kwargs) -> None:
             kwargs.get("task_id", ""), kwargs, trigger_config
         )
     except Exception as e:
-        logger.warning(f"定时任务 {kwargs.get('task_id')} 载荷解码失败，跳过执行: {e}")
+        logger.warning("定时任务 %s 载荷解码失败，跳过执行: %s", task_id, e)
         return
     from maa_worker import execution  # 延迟导入避免循环依赖
 
@@ -180,7 +179,7 @@ class SchedulerManager:
             timezone=get_localzone(),
         )
         self.scheduler.start(paused=paused)
-        logger.info(f"调度器已启动（paused={paused}）")
+        logger.info("调度器已启动（paused=%s）", paused)
 
     async def shutdown(self):
         """关闭调度器"""
@@ -317,8 +316,8 @@ class SchedulerManager:
             await self._check_wakeup_minute_conflict(task)
             try:
                 self._system_scheduler.register(task)
-            except Exception as e:
-                logger.error(f"注册系统级唤醒失败，取消创建任务 {task_id}: {e}")
+            except Exception:
+                logger.exception("注册系统级唤醒失败，取消创建任务 %s", task_id)
                 raise
             registered_native = True
 
@@ -358,11 +357,11 @@ class SchedulerManager:
                     self._system_scheduler.unregister(task_id)
                 except Exception as ce:
                     logger.warning(
-                        f"创建任务失败后补偿注销系统级唤醒失败（{task_id}）: {ce}"
+                        "创建任务失败后补偿注销系统级唤醒失败（%s）: %s", task_id, ce
                     )
             raise
 
-        logger.info(f"创建定时任务: {task.name} ({task_id})")
+        logger.info("创建定时任务: %s (%s)", task.name, task_id)
         return task
 
     def _decode_job(self, job) -> ScheduledTask | None:
@@ -381,7 +380,7 @@ class SchedulerManager:
             )
             return task
         except Exception as e:
-            logger.warning(f"任务 {job.id} 载荷解码失败，跳过: {e}")
+            logger.warning("任务 %s 载荷解码失败，跳过: %s", job.id, e)
             return None
 
     def _send_error_notification(self, title: str, message: str) -> None:
@@ -555,8 +554,8 @@ class SchedulerManager:
             if self._desired_wakeup(merged_task.wakeup_enabled, merged_task.enabled):
                 try:
                     self._system_scheduler.register(merged_task)
-                except Exception as e:
-                    logger.error(f"同步系统级唤醒失败，任务 {task_id} 已更新: {e}")
+                except Exception:
+                    logger.exception("同步系统级唤醒失败，任务 %s 已更新", task_id)
                     raise
             elif self._desired_wakeup(
                 bool(current_kwargs.get("wakeup_enabled", False)),
@@ -564,8 +563,8 @@ class SchedulerManager:
             ):
                 try:
                     self._system_scheduler.unregister(task_id)
-                except Exception as e:
-                    logger.error(f"注销系统级唤醒失败，任务 {task_id} 已更新: {e}")
+                except Exception:
+                    logger.exception("注销系统级唤醒失败，任务 %s 已更新", task_id)
                     raise
 
         return await self.get_task(task_id)
@@ -586,11 +585,11 @@ class SchedulerManager:
         if wakeup_enabled and self._system_scheduler is not None:
             try:
                 self._system_scheduler.unregister(task_id)
-            except Exception as e:
-                logger.error(f"注销系统级唤醒失败，中止删除任务 {task_id}: {e}")
+            except Exception:
+                logger.exception("注销系统级唤醒失败，中止删除任务 %s", task_id)
                 raise
         self.scheduler.remove_job(task_id)
-        logger.info(f"删除定时任务: {task_id}")
+        logger.info("删除定时任务: %s", task_id)
         return True
 
     async def degrade_wakeup(self, task_id: str) -> bool:
@@ -604,17 +603,17 @@ class SchedulerManager:
         try:
             job = self.scheduler.get_job(task_id)
             if job is None:
-                logger.warning(f"降级失败：任务 {task_id} 不存在")
+                logger.warning("降级失败：任务 %s 不存在", task_id)
                 return False
             current_kwargs = dict(job.kwargs or {})
             if not current_kwargs.get("wakeup_enabled", False):
                 return True  # 已是关闭状态，无需操作
             current_kwargs["wakeup_enabled"] = False
             self.scheduler.modify_job(task_id, kwargs=current_kwargs)
-            logger.info(f"已降级任务 {task_id} 的系统级唤醒")
+            logger.info("已降级任务 %s 的系统级唤醒", task_id)
             return True
-        except Exception as e:
-            logger.error(f"降级任务 {task_id} 失败: {e}")
+        except Exception:
+            logger.exception("降级任务 %s 失败", task_id)
             return False
 
     async def pause_task(self, task_id: str) -> bool:
@@ -634,11 +633,11 @@ class SchedulerManager:
         ):
             try:
                 self._system_scheduler.unregister(task_id)
-            except Exception as e:
-                logger.error(f"注销系统级唤醒失败，中止暂停任务 {task_id}: {e}")
+            except Exception:
+                logger.exception("注销系统级唤醒失败，中止暂停任务 %s", task_id)
                 raise
         self.scheduler.pause_job(task_id)
-        logger.info(f"暂停定时任务: {task_id}")
+        logger.info("暂停定时任务: %s", task_id)
         return True
 
     async def resume_task(self, task_id: str) -> bool:
@@ -662,11 +661,11 @@ class SchedulerManager:
             task.enabled = True  # resume 后将启用
             try:
                 self._system_scheduler.register(task)
-            except Exception as e:
-                logger.error(f"注册系统级唤醒失败，中止恢复任务 {task_id}: {e}")
+            except Exception:
+                logger.exception("注册系统级唤醒失败，中止恢复任务 %s", task_id)
                 raise
         self.scheduler.resume_job(task_id)
-        logger.info(f"恢复定时任务: {task_id}")
+        logger.info("恢复定时任务: %s", task_id)
         return True
 
     async def get_executions(self, limit: int = 50) -> list[TaskExecution]:

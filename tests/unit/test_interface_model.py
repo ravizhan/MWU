@@ -175,7 +175,7 @@ class TestGamepadController:
 
     def test_invalid_gamepad_type_raises(self):
         """Pydantic Literal validation rejects invalid type before method_to_int."""
-        with pytest.raises(ValidationError, match="Xbox360.*DualShock4.*DS4"):
+        with pytest.raises(ValidationError, match=r"Xbox360.*DualShock4.*DS4"):
             GamepadController.model_validate({"gamepad_type": "InvalidType"})
 
 

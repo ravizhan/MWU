@@ -48,6 +48,8 @@ import threading
 import time
 import webbrowser
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from typing import Annotated
 
 import httpx
 import uvicorn
@@ -264,18 +266,15 @@ async def lifespan(app: FastAPI):
         task = await app_state.scheduler_manager.get_task(pending_id)
         if task is not None and task.enabled and task.wakeup_enabled:
             app_state.send_log(f"冷启动执行系统级任务: {task.name}")
-
-            async def _cold_start_native():
-                admission = await execution.submit_scheduled(
-                    app_state, task, origin="native"
+            # 准入只写一条执行记录，运行本身在后台任务中进行
+            admission = await execution.submit_scheduled(
+                app_state, task, origin="native"
+            )
+            if not admission.accepted:
+                app_state.send_log(
+                    f"冷启动系统级任务跳过: {task.name}"
+                    f" (原因: {admission.skip_status or '未知'})"
                 )
-                if not admission.accepted:
-                    app_state.send_log(
-                        f"冷启动系统级任务跳过: {task.name}"
-                        f" (原因: {admission.skip_status or '未知'})"
-                    )
-
-            asyncio.create_task(_cold_start_native())
 
     monitor_task = asyncio.create_task(log_monitor())
     webbrowser.open_new("http://127.0.0.1:5566")
@@ -487,7 +486,7 @@ def get_device_state():
 
 
 @app.get("/api/resource")
-def get_resource(controller_type: str | None = Query(default=None)):
+def get_resource(controller_type: Annotated[str | None, Query()] = None):
     controller_names = (
         {c.name for c in interface.controller if c.type == controller_type}
         if controller_type
@@ -676,11 +675,10 @@ async def perform_update():
             app_state.send_log(msg)
             return {"status": "failed", "message": msg}
 
-        update_package_path = app_state.update_info["file_name"]
+        update_package_path = Path(app_state.update_info["file_name"])
         download_url = app_state.update_info["download_url"]
         download_source = app_state.update_info.get("download_source", "github")
-        if os.path.exists(update_package_path):
-            os.remove(update_package_path)
+        await asyncio.to_thread(update_package_path.unlink, missing_ok=True)
         app_state.update_status = {
             "status": "downloading",
             "message": "正在下载更新包...",
@@ -702,11 +700,9 @@ async def perform_update():
             await download_file(download_url, update_package_path, proxy)
             file_hash = app_state.update_info.get("file_hash", "")
             if file_hash:
-                with open(update_package_path, "rb") as f:
-                    file_bytes = f.read()
-                    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
-                    if sha256_hash != file_hash:
-                        raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
+                file_bytes = await asyncio.to_thread(update_package_path.read_bytes)
+                if hashlib.sha256(file_bytes).hexdigest() != file_hash:
+                    raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
         except Exception as e:
             msg = f"下载失败: {e}"
             app_state.send_log(msg)
@@ -726,7 +722,7 @@ async def perform_update():
                     cmd = [
                         "./mwu-updater",
                         "-archive",
-                        os.path.abspath(update_package_path),
+                        str(update_package_path.absolute()),
                         "-webhook",
                         "http://127.0.0.1:5566/api/system/shutdown",
                         "-restart-cmd",
@@ -769,15 +765,14 @@ async def perform_update():
                             "message": "更新器自更新完成，正在重启更新器...",
                         }
                         continue
-                    else:
-                        if process.returncode != 0:
-                            msg = f"更新器异常退出: {process.returncode}，请查看updater.log"
-                            app_state.send_log(msg)
-                            app_state.update_status = {
-                                "status": "failed",
-                                "message": msg,
-                            }
-                        break
+                    if process.returncode != 0:
+                        msg = f"更新器异常退出: {process.returncode}，请查看updater.log"
+                        app_state.send_log(msg)
+                        app_state.update_status = {
+                            "status": "failed",
+                            "message": msg,
+                        }
+                    break
             finally:
                 # 更新器线程终态：无论失败还是正常退出，均放行任务准入。
                 # 成功自更新时进程被 webhook 杀除，此 finally 不执行（进程随 flag 消亡），符合预期。

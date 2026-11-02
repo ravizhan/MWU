@@ -182,7 +182,7 @@ class TestNormalizeImportList:
 
 class TestValidateImportableFragment:
     def test_one_invalid_key(self):
-        with pytest.raises(InterfaceLoadError, match="非法字段.*extra"):
+        with pytest.raises(InterfaceLoadError, match=r"非法字段.*extra"):
             _validate_importable_fragment({"task": [], "extra": 1}, Path())
 
     def test_multiple_invalid_keys_sorted(self):

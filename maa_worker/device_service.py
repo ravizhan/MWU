@@ -239,13 +239,11 @@ class DeviceService:
         return str(resolved)
 
     def _append_controller_resource_paths(self, controller) -> list[str]:
-        loaded_paths: list[str] = []
         if controller is None or not controller.attach_resource_path:
-            return loaded_paths
-
-        for path in controller.attach_resource_path:
-            loaded_paths.append(self._load_resource_bundle(path))
-        return loaded_paths
+            return []
+        return [
+            self._load_resource_bundle(path) for path in controller.attach_resource_path
+        ]
 
     def _build_controller_display_labels(self) -> dict[str, str]:
         label_counts: dict[str, int] = {}
@@ -562,7 +560,7 @@ class DeviceService:
                 input_methods=0,
                 config={},
             )
-        elif device_type == "Win32":
+        if device_type == "Win32":
             return DeviceModel(
                 type="Win32",
                 controller_name=controller_name,
@@ -571,7 +569,7 @@ class DeviceService:
                 screencap_methods=0,
                 input_methods=0,
             )
-        elif device_type == "Gamepad":
+        if device_type == "Gamepad":
             hwnd_s, type_s = device_address.split("|", 1)
             return DeviceModel(
                 type="Gamepad",
@@ -581,7 +579,7 @@ class DeviceService:
                 gamepad_type=int(type_s),
                 screencap_methods=0,
             )
-        elif device_type == "PlayCover":
+        if device_type == "PlayCover":
             return DeviceModel(
                 type="PlayCover",
                 controller_name=controller_name,
@@ -589,15 +587,14 @@ class DeviceService:
                 address=device_address,
                 uuid="",
             )
-        elif device_type == "Linux":
+        if device_type == "Linux":
             return DeviceModel(
                 type="Linux",
                 controller_name=controller_name,
                 name=device_address,
                 address=device_address,
             )
-        else:
-            raise ValueError(f"不支持的设备类型: {device_type}")
+        raise ValueError(f"不支持的设备类型: {device_type}")
 
     def _apply_screenshot_target(self, controller, definition) -> None:
         if definition.display_raw:

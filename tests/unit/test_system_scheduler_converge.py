@@ -1,6 +1,6 @@
 """Tests for services/system_scheduler.py — converge semantics with a fake backend."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -170,7 +170,9 @@ class TestNonCronTrigger:
             name="日期任务",
             wakeup_enabled=True,
             enabled=True,
-            trigger_config=DateTriggerConfig(run_date=datetime(2026, 1, 1, 9, 0)),
+            trigger_config=DateTriggerConfig(
+                run_date=datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+            ),
         )
 
         with pytest.raises(ValueError, match="仅 Cron 触发器支持系统级唤醒"):
@@ -184,7 +186,9 @@ class TestNonCronTrigger:
             name="日期任务",
             wakeup_enabled=True,
             enabled=True,
-            trigger_config=DateTriggerConfig(run_date=datetime(2026, 1, 1, 9, 0)),
+            trigger_config=DateTriggerConfig(
+                run_date=datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+            ),
         )
 
         report = scheduler.converge([task])

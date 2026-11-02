@@ -1,4 +1,5 @@
 import platform
+from pathlib import Path
 
 import httpx
 
@@ -62,7 +63,7 @@ def check_mirrorchyan_update(
                 timeout=15,
             )
             data = resp.json()
-        except Exception as exc:  # noqa: BLE001 - 记录后继续尝试镜像地址
+        except Exception as exc:
             last_error = exc
             continue
         if data.get("code") == 0:
@@ -124,10 +125,12 @@ def check_github_update(
     }
 
 
-async def download_file(url: str, dest: str, proxy: str | None = None):
-    async with httpx.AsyncClient(follow_redirects=True, proxy=proxy) as client:
-        async with client.stream("GET", url) as resp:
-            resp.raise_for_status()
-            with open(dest, "wb") as f:
-                async for chunk in resp.aiter_bytes():
-                    f.write(chunk)
+async def download_file(url: str, dest: Path, proxy: str | None = None):
+    async with (
+        httpx.AsyncClient(follow_redirects=True, proxy=proxy) as client,
+        client.stream("GET", url) as resp,
+    ):
+        resp.raise_for_status()
+        with dest.open("wb") as f:
+            async for chunk in resp.aiter_bytes():
+                f.write(chunk)
