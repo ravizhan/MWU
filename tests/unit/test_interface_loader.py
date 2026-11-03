@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from models.interface import InterfaceModel
-from models.interface_loader import (
+from backend.models.interface import InterfaceModel
+from backend.models.interface_loader import (
     InterfaceLoadError,
     _expand_scan_select_options,
     _MergeState,

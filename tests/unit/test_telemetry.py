@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from maa_worker.focus_protocol import UnifiedFocusResolver
-from models.interface import InterfaceModel, SentryTelemetry
-from services import telemetry
+from backend.maa_worker.focus_protocol import UnifiedFocusResolver
+from backend.models.interface import InterfaceModel, SentryTelemetry
+from backend.services import telemetry
 
 
 def _interface(**extra) -> InterfaceModel:

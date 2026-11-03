@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from maa_worker.hotkey import hotkey_value_to_codes, split_hotkey_combo
-from maa_worker.pipeline_override import PipelineOverrideService
-from models.interface import (
+from backend.maa_worker.hotkey import hotkey_value_to_codes, split_hotkey_combo
+from backend.maa_worker.pipeline_override import PipelineOverrideService
+from backend.models.interface import (
     Controller,
     HotkeyCase,
     LinuxController,

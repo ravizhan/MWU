@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from services.system_scheduler_backend import (
+from backend.scheduler.system_scheduler_backend import (
     CommandError,
     LinuxBackend,
     MacOSBackend,
@@ -41,7 +41,7 @@ class TestLinuxCrontabReadSafety:
             raise _error(stderr="crontab: no crontab for root\n")
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         assert backend._read_crontab() == ""
 
@@ -52,7 +52,7 @@ class TestLinuxCrontabReadSafety:
             raise _error(stderr="crontab: can't open your crontab file: 权限不够\n")
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         with pytest.raises(RuntimeError, match="读取 crontab 失败"):
             backend._read_crontab()
@@ -64,7 +64,7 @@ class TestLinuxCrontabReadSafety:
             raise OSError("crontab 不存在")
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         with pytest.raises(RuntimeError, match="读取 crontab 失败"):
             backend._read_crontab()
@@ -81,7 +81,7 @@ class TestLinuxCrontabReadSafety:
             return _completed(stdout=content)
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         assert backend.list_registered_task_ids() == {
             "11111111-1111-4111-8111-111111111111",
@@ -93,7 +93,7 @@ class TestWindowsQueryFailure:
     def make_backend(self, monkeypatch, fake_run):
         backend = WindowsBackend()
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         return backend
 
@@ -130,7 +130,7 @@ class TestWindowsUnregisterIdempotent:
             )
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         # 不抛错即为幂等成功
         backend.unregister("11111111-1111-4111-8111-111111111111")
@@ -144,7 +144,7 @@ class TestWindowsUnregisterIdempotent:
             )
 
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run", fake_run
+            "backend.scheduler.system_scheduler_backend.subprocess.run", fake_run
         )
         with pytest.raises(CommandError):
             backend.unregister("11111111-1111-4111-8111-111111111111")
@@ -179,7 +179,7 @@ class TestMacOSBootout:
     def test_not_loaded_bootout_is_success(self, monkeypatch):
         backend = MacOSBackend()
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run",
+            "backend.scheduler.system_scheduler_backend.subprocess.run",
             self._bootout_run(3, "Boot-out failed: 3: No such process"),
         )
         # 不抛错即为幂等成功
@@ -188,7 +188,7 @@ class TestMacOSBootout:
     def test_other_bootout_error_propagates(self, monkeypatch):
         backend = MacOSBackend()
         monkeypatch.setattr(
-            "services.system_scheduler_backend.subprocess.run",
+            "backend.scheduler.system_scheduler_backend.subprocess.run",
             self._bootout_run(1, "launchctl: Error: the job was not properly loaded"),
         )
         # 真实错误（与“未加载”无关）必须上抛，避免误删 plist

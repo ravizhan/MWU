@@ -1,0 +1,219 @@
+import threading
+import time
+import traceback
+from typing import TYPE_CHECKING
+
+from backend.models.scheduler import PreTaskCommand, TaskOptionsByTask, TaskOptionValue
+from backend.services import telemetry
+
+if TYPE_CHECKING:
+    from backend.maa_worker.worker import MaaWorker
+    from backend.services.telemetry import RunTrace
+
+
+class TaskService:
+    def __init__(self, worker: "MaaWorker"):
+        self.worker = worker
+
+    def _get_task_definition(self, task_name: str):
+        return next(
+            (
+                task
+                for task in self.worker.interface.task or []
+                if task.name == task_name
+            ),
+            None,
+        )
+
+    def _is_task_compatible(
+        self,
+        task_definition,
+        controller_names: set[str],
+        resource_name: str | None,
+    ) -> tuple[bool, str]:
+        if task_definition is None:
+            return True, ""
+
+        if task_definition.controller and not controller_names.intersection(
+            task_definition.controller
+        ):
+            return (
+                False,
+                "当前控制器不受支持"
+                + f" (支持: {', '.join(task_definition.controller)})",
+            )
+
+        if task_definition.resource and (
+            resource_name is None or resource_name not in task_definition.resource
+        ):
+            return (
+                False,
+                "当前资源不受支持" + f" (支持: {', '.join(task_definition.resource)})",
+            )
+
+        return True, ""
+
+    def start(
+        self,
+        task_list: list[str],
+        options: TaskOptionsByTask,
+        task_name: str | None = None,
+        pre_tasks: list[PreTaskCommand] | None = None,
+        global_options: dict[str, TaskOptionValue] | None = None,
+        trace: "RunTrace | None" = None,
+    ) -> bool:
+        self.worker.task_state.last_error = None
+        if not self.worker.device_state.connected:
+            return False
+        if not self.worker.device_state.current_resource_name:
+            self.worker.device_state.last_resource_error = "请先设置资源"
+            self.worker.events.send_log(self.worker.device_state.last_resource_error)
+            return False
+
+        controller_names = self.worker.device.get_active_controller_names()
+        current_resource_name = self.worker.device_state.current_resource_name
+
+        filtered_task_list: list[str] = []
+        for queued_task_name in task_list:
+            task_definition = self._get_task_definition(queued_task_name)
+            compatible, reason = self._is_task_compatible(
+                task_definition,
+                controller_names,
+                current_resource_name,
+            )
+            if compatible:
+                filtered_task_list.append(queued_task_name)
+                continue
+
+            self.worker.events.send_log(f"跳过任务 {queued_task_name}: {reason}")
+
+        if not filtered_task_list:
+            self.worker.task_state.last_error = "当前资源/控制器下无可执行任务"
+            self.worker.events.send_log(self.worker.task_state.last_error)
+            return False
+
+        if not self.worker.agents.ensure_started_once():
+            return False
+
+        state = self.worker.task_state
+        if not state.lock.acquire(blocking=False):
+            return False
+        try:
+            if state.running:
+                return False
+            if state.stop_flag:
+                # 前置阶段已收到停止请求：保持标志，不启动任务线程
+                return False
+            state.running = True
+            state.last_status = "running"
+            state.last_error = None
+            state.current_task_name = task_name
+            state.thread = threading.Thread(
+                target=self.run_process,
+                args=(
+                    filtered_task_list,
+                    options,
+                    pre_tasks or [],
+                    global_options or {},
+                    trace,
+                ),
+                daemon=True,
+            )
+            state.thread.start()
+            return True
+        finally:
+            state.lock.release()
+
+    def stop(self) -> bool:
+        state = self.worker.task_state
+        with self.worker.focus_state.lock:
+            state.stop_flag = True
+        # post_stop 同步置位 MAA 停止标志，之后放行 modal 时动作不会再执行；
+        # 不能 wait()：停止任务排在被 modal 阻塞的当前任务之后，会死锁。
+        if self.worker.tasker.running:
+            self.worker.tasker.post_stop()
+        self.worker.focus.cancel_pending()
+        self.worker.pretasks.stop_current()
+        while self.worker.tasker.running:
+            time.sleep(0.5)
+        return True
+
+    def _finish_stopped(self) -> None:
+        state = self.worker.task_state
+        state.last_status = "stopped"
+        state.last_error = "任务已终止"
+        self.worker.events.send_log("任务已终止")
+
+    def run_process(
+        self,
+        task_list: list[str],
+        options: TaskOptionsByTask,
+        pre_tasks: list[PreTaskCommand] | None = None,
+        global_options: dict[str, TaskOptionValue] | None = None,
+        trace: "RunTrace | None" = None,
+    ):
+        state = self.worker.task_state
+        state.pre_tasks = pre_tasks or []
+        try:
+            self.worker.events.emit_task_started(task_list)
+            for queued_task_name in task_list:
+                if state.stop_flag:
+                    self.worker.tasker.post_stop().wait()
+                    self._finish_stopped()
+                    return
+
+                task_definition = self._get_task_definition(queued_task_name)
+                if task_definition is None:
+                    self.worker.events.send_log(
+                        f"跳过任务 {queued_task_name}: 未找到任务定义"
+                    )
+                    continue
+
+                pipeline_override = self.worker.pipeline.build_task_pipeline_override(
+                    queued_task_name,
+                    options.get(queued_task_name, {}),
+                    global_options or {},
+                )
+                if trace is not None:
+                    trace.task_started(
+                        queued_task_name,
+                        telemetry.summarize_options(
+                            options.get(queued_task_name, {}), self.worker.interface
+                        ),
+                    )
+                if pipeline_override:
+                    task_result = self.worker.tasker.post_task(
+                        task_definition.entry, pipeline_override
+                    )
+                else:
+                    task_result = self.worker.tasker.post_task(task_definition.entry)
+                self.worker.events.send_log("正在运行任务: " + queued_task_name)
+                while not task_result.done:
+                    time.sleep(0.5)
+                    if state.stop_flag:
+                        self.worker.tasker.post_stop().wait()
+                        self._finish_stopped()
+                        return
+                if trace is not None:
+                    trace.task_finished(queued_task_name, bool(task_result.succeeded))
+            if state.stop_flag:
+                self._finish_stopped()
+                return
+            state.last_status = "success"
+            state.last_error = None
+        except Exception as exc:
+            if trace is not None:
+                trace.fail_open_task()
+            traceback.print_exc()
+            state.last_status = "failed"
+            state.last_error = str(exc) or "任务执行失败"
+            self.worker.events.send_log("任务出现异常，请检查终端日志")
+            self.worker.events.send_log(
+                f"请将日志反馈至 {self.worker.interface.github}/issues"
+            )
+        finally:
+            state.running = False
+            state.thread = None
+            state.current_task_name = None
+            state.current_pre_task_process = None
+            time.sleep(0.5)

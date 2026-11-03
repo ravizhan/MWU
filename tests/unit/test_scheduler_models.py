@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from models.scheduler import (
+from backend.models.scheduler import (
     CronTriggerConfig,
     DateTriggerConfig,
     IntervalTriggerConfig,

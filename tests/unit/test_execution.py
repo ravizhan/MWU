@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app_state import AppState
-from maa_worker.execution import (
+from backend.core.state import AppState
+from backend.maa_worker.execution import (
     add_execution,
     finish_execution,
     init_db,
@@ -22,9 +22,9 @@ from maa_worker.execution import (
     submit_manual,
     submit_scheduled,
 )
-from maa_worker.pretask_service import PretaskError, PretaskStopped
-from models.interface import Option, OptionCase
-from models.scheduler import (
+from backend.maa_worker.pretask_service import PretaskError, PretaskStopped
+from backend.models.interface import Option, OptionCase
+from backend.models.scheduler import (
     CronTriggerConfig,
     ManualStartPayload,
     PreTaskCommand,
@@ -32,7 +32,7 @@ from models.scheduler import (
     ScheduledTaskDeviceConfig,
     TaskExecution,
 )
-from models.settings import SettingsModel
+from backend.models.settings import SettingsModel
 
 
 def make_payload(task_name: str = "Startup") -> ManualStartPayload:
@@ -495,7 +495,7 @@ class TestSubmitManual:
 
         # add_execution 抛错：准入必须回滚 active_run，否则槽位永久占用、后续启动全被拒 busy
         with monkeypatch.context() as m:
-            m.setattr("maa_worker.execution.add_execution", _boom)
+            m.setattr("backend.maa_worker.execution.add_execution", _boom)
             with pytest.raises(RuntimeError, match="disk failure"):
                 await submit_manual(state, make_payload())
 
@@ -823,7 +823,9 @@ class TestPretaskAdmission:
         settings = SimpleNamespace(
             runtime=SimpleNamespace(autoRetry=True, maxRetryCount=1, retryInterval=0)
         )
-        monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
+        monkeypatch.setattr(
+            "backend.maa_worker.execution.load_settings", lambda: settings
+        )
         ordering: list[str] = []
         worker = _FakeWorker(start_result=True, ordering=ordering)
         worker.tasks = _FakeSuccessfulTaskService(
@@ -903,7 +905,9 @@ class TestStopAndCancel:
         settings = SimpleNamespace(
             runtime=SimpleNamespace(autoRetry=True, maxRetryCount=1, retryInterval=0)
         )
-        monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
+        monkeypatch.setattr(
+            "backend.maa_worker.execution.load_settings", lambda: settings
+        )
         worker = _FakeWorker(start_result=True, block_connect=True)
         state.worker = worker
 
@@ -1024,7 +1028,7 @@ async def test_connect_attempts_follow_auto_retry_setting(
     settings = SimpleNamespace(
         runtime=SimpleNamespace(autoRetry=auto_retry, maxRetryCount=3, retryInterval=0)
     )
-    monkeypatch.setattr("maa_worker.execution.load_settings", lambda: settings)
+    monkeypatch.setattr("backend.maa_worker.execution.load_settings", lambda: settings)
     worker = _FakeWorker(start_result=True, block_connect=True)
     worker.device.fail_connect = True
     worker.device.release.set()

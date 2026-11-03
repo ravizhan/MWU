@@ -88,7 +88,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 #### 1. 动态加载（黑魔法）
 
-通过动态解析技术将 Agent 脚本直接转换为 MaaFramework 的 `custom` 插件，支持动态加载并注册自定义的 Action 和 Recognition。技术详情请参考 [maa_worker/agent_loader.py](https://github.com/ravizhan/MWU/blob/main/maa_worker/agent_loader.py)。
+通过动态解析技术将 Agent 脚本直接转换为 MaaFramework 的 `custom` 插件，支持动态加载并注册自定义的 Action 和 Recognition。技术详情请参考 [backend/maa_worker/agent_loader.py](https://github.com/ravizhan/MWU/blob/main/backend/maa_worker/agent_loader.py)。
 
 - **依赖说明**：Agent 脚本可直接使用 MWU 内置的依赖库（详见 `pyproject.toml`）。由于 Nuitka 编译特性，部分内置库可能不完整。
 - **扩展依赖**：若需使用第三方库，请在根目录下创建 `requirements.txt`。在 GitHub Action 发版时，系统会自动下载依赖至 `deps` 文件夹并完成打包。
@@ -282,11 +282,48 @@ uv run python -m nuitka --standalone --assume-yes-for-downloads --user-package-c
 
 ```
 MWU/
-├── main.py                      # FastAPI 应用入口，自动打开浏览器
-├── maa_utils.py                 # MaaWorker 类，处理所有 MAA 框架交互
-├── app_state.py                 # 全局应用状态管理
-├── scheduler_manager.py         # 定时任务调度管理器
+├── main.py                      # CLI 入口：参数解析、单实例检查、启动 uvicorn
 ├── interface.json               # 项目接口配置（V2 协议）
+│
+├── backend/                     # 后端 Python 包
+│   ├── runtime.py               # 进程级单例：应用根目录、interface/语言、共享状态
+│   ├── app.py                   # FastAPI 应用、生命周期、静态资源与 SPA 托管
+│   ├── api/                     # 按领域拆分的 APIRouter
+│   │   ├── interface.py         # interface 读取与 scan-select 重扫
+│   │   ├── device.py            # 设备、资源与实时画面
+│   │   ├── config.py            # 设置与任务配置读写
+│   │   ├── update.py            # 更新检查与系统关机
+│   │   ├── run.py               # 启动/停止、确认交互与日志 SSE
+│   │   └── scheduler.py         # 定时任务 CRUD 与内部派发
+│   ├── core/                    # 路径、状态、设置读写、密钥与 JSON 工具
+│   │   ├── paths.py             # 应用根目录解析
+│   │   ├── state.py             # AppState、日志广播与运行上下文
+│   │   ├── settings_io.py       # 设置原子写入
+│   │   ├── secret_store.py      # 敏感选项加密存储
+│   │   └── json_utils.py        # JSON5 容错读取
+│   ├── maa_worker/              # MAA 核心工作进程
+│   │   ├── worker.py            # MaaWorker 类，处理所有 MAA 框架交互
+│   │   ├── execution.py         # 运行准入、准备、取消与历史
+│   │   ├── agent_loader.py      # Agent 动态加载器
+│   │   ├── agent_service.py     # Agent 生命周期与 PI 环境
+│   │   ├── device_service.py    # 设备发现、连接、资源加载
+│   │   ├── event_service.py     # 日志、实时事件与通知
+│   │   ├── pipeline_override.py # pipeline_override 合并逻辑
+│   │   └── task_service.py      # 任务线程启动/停止与执行主循环
+│   ├── scheduler/               # 定时任务调度
+│   │   ├── manager.py           # APScheduler 管理器
+│   │   ├── system_scheduler.py  # 系统级调度适配器
+│   │   └── native_cron.py       # cron 与系统调度转换
+│   ├── services/                # 后端业务服务
+│   │   ├── update_service.py    # 更新服务实现
+│   │   └── telemetry.py         # 遥测上报
+│   └── models/                  # 数据模型目录
+│       ├── api.py               # API 请求/响应模型
+│       ├── interface.py         # interface 数据模型
+│       ├── interface_loader.py  # interface 加载逻辑
+│       ├── scheduler.py         # 定时任务相关模型
+│       ├── settings.py          # 设置数据模型
+│       └── task_config.py       # 任务配置模型
 │
 ├── agent/                       # Agent 动态扩展目录
 │   ├── main.py                  # Agent 主程序
@@ -298,26 +335,6 @@ MWU/
 │   ├── settings.json            # 应用设置
 │   ├── task_config.json         # 任务配置缓存
 │   └── maa_option.json          # MAA 选项配置
-│
-├── models/                      # 数据模型目录
-│   ├── api.py                   # API 请求/响应模型
-│   ├── interface.py             # interface 数据模型
-│   ├── interface_loader.py      # interface 加载逻辑
-│   ├── scheduler.py             # 定时任务相关模型
-│   ├── settings.py              # 设置数据模型
-│   └── task_config.py           # 任务配置模型
-│
-├── maa_worker/                  # MAA 核心工作进程
-│   ├── agent_loader.py          # Agent 动态加载器
-│   ├── agent_service.py         # Agent 生命周期与 PI 环境
-│   ├── device_service.py        # 设备发现、连接、资源加载
-│   ├── event_service.py         # 日志、实时事件与通知
-│   ├── pipeline_override.py     # pipeline_override 合并逻辑
-│   ├── runtime.py               # Worker 运行时状态对象
-│   └── task_service.py          # 任务线程启动/停止与执行主循环
-│
-├── services/                    # 后端业务服务
-│   └── update_service.py        # 更新服务实现
 │
 ├── updater/                     # Go 更新器目录
 │   ├── main.go                  # 更新器主程序
@@ -385,21 +402,23 @@ modal 没有超时，也不会因为浏览器关闭或断线而自动确认。�
 
 #### 📐 关键文件说明
 
-- `main.py`：FastAPI 路由与生命周期管理（启动 `MaaWorker`、调度器、日志流）
-- `app_state.py`：运行时状态与日志广播
-- `maa_utils.py`：`MaaWorker` 组装层（依赖初始化、Service 装配、截图与关闭）
-- `maa_worker/device_service.py`：设备发现、连接、资源加载
-- `maa_worker/task_service.py`：任务线程启动/停止与执行主循环
-- `maa_worker/pipeline_override.py`：任务选项与 pipeline_override 合并
-- `maa_worker/event_service.py`：统一日志、实时事件、系统通知与外部通知
-- `maa_worker/focus_processor.py`：focus 渠道分发、modal 确认与停止释放
+- `main.py`：CLI 入口（参数解析、单实例检查、启动 uvicorn）
+- `backend/runtime.py`：进程级单例（应用根目录、`interface.json` 与语言文件加载、共享 `AppState`）
+- `backend/app.py`：FastAPI 应用与生命周期管理（启动 `MaaWorker`、调度器、日志流）
+- `backend/core/state.py`：运行时状态与日志广播
+- `backend/maa_worker/worker.py`：`MaaWorker` 组装层（依赖初始化、Service 装配、截图与关闭）
+- `backend/maa_worker/device_service.py`：设备发现、连接、资源加载
+- `backend/maa_worker/task_service.py`：任务线程启动/停止与执行主循环
+- `backend/maa_worker/pipeline_override.py`：任务选项与 pipeline_override 合并
+- `backend/maa_worker/event_service.py`：统一日志、实时事件、系统通知与外部通知
+- `backend/maa_worker/focus_processor.py`：focus 渠道分发、modal 确认与停止释放
 
 #### 🔧 扩展任务执行流程
 
-任务执行主循环位于 `maa_worker/task_service.py` 的 `run_process`。如果您需要“特殊任务分支 + 默认 pipeline 共存”，推荐按下面方式扩展：
+任务执行主循环位于 `backend/maa_worker/task_service.py` 的 `run_process`。如果您需要“特殊任务分支 + 默认 pipeline 共存”，推荐按下面方式扩展：
 
 ```python
-# maa_worker/task_service.py
+# backend/maa_worker/task_service.py
 
 
 def run_process(self, task_list, options):
@@ -480,10 +499,10 @@ def _run_my_custom_entry(task_service, options):
 
 #### 📝 自定义 Action 和 Recognition
 
-您可以在 `maa_utils.py` 中添加自定义的 Action 和 Recognition：
+您可以在 `backend/maa_worker/worker.py` 中添加自定义的 Action 和 Recognition：
 
 ```python
-# maa_utils.py
+# backend/maa_worker/worker.py
 
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
@@ -525,7 +544,7 @@ class MyCustomAction(CustomAction):
 
 #### 💡 开发建议
 
-1. **优先按模块改动**：设备相关优先改 `maa_worker/device_service.py`，任务流优先改 `maa_worker/task_service.py`，避免把所有逻辑塞进 `maa_utils.py`。
+1. **优先按模块改动**：设备相关优先改 `backend/maa_worker/device_service.py`，任务流优先改 `backend/maa_worker/task_service.py`，避免把所有逻辑塞进 `backend/maa_worker/worker.py`。
 2. **统一事件出口**：日志与通知尽量走 `worker.events.emit` / `send_log` / `send_notification`，便于前端 SSE 与通知配置统一生效。
 3. **保持任务状态可观测**：自定义流程要维护 `worker.task_state.last_status` / `worker.task_state.last_error`，这样定时调度执行记录才能正确展示。
 4. **谨慎新增实时事件类型**：若新增事件名，请同步更新后端 `RealtimeEventName` 与前端事件处理逻辑。

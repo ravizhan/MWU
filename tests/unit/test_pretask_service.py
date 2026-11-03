@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import maa_worker.pretask_service as pretask_module
-from maa_worker.pretask_service import PretaskError, PretaskService
-from models.interface import InputCase, Option, OptionCase, Pretask
-from models.scheduler import PreTaskCommand
+import backend.maa_worker.pretask_service as pretask_module
+from backend.maa_worker.pretask_service import PretaskError, PretaskService
+from backend.models.interface import InputCase, Option, OptionCase, Pretask
+from backend.models.scheduler import PreTaskCommand
 
 
 class _FakeEvents:

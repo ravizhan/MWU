@@ -2,7 +2,7 @@
 
 import io
 
-import json_utils as json
+from backend.core import json_utils as json
 
 
 def test_alias_is_value_error():

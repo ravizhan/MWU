@@ -11,9 +11,9 @@
 - Before using or introducing any third-party library, query that library's latest documentation with Tavily or Context7, read the documentation, and only then modify the related code.
 
 ## Architecture
-- Backend entry is `main.py` (FastAPI routes + app lifecycle + static hosting for `page/`).
-- Worker orchestration lives in `maa_utils.py`; concrete runtime responsibilities are split in `maa_worker/` services (`agent_service.py`, `device_service.py`, `task_service.py`, `event_service.py`, `pipeline_override.py`).
-- Interface and settings schemas live in `models/` and are consumed by both API and runtime.
+- Backend CLI entry is `main.py` (arguments, single-instance check, `uvicorn.run`); the FastAPI app and lifecycle live in `backend/app.py`, with routes split across `backend/api/` and static hosting for `page/`. Process-level singletons (app root, interface/language loading, `AppState`) are in `backend/runtime.py`.
+- Worker orchestration lives in `backend/maa_worker/worker.py`; concrete runtime responsibilities are split in `backend/maa_worker/` services (`agent_service.py`, `device_service.py`, `task_service.py`, `event_service.py`, `pipeline_override.py`).
+- Interface and settings schemas live in `backend/models/` and are consumed by both API and runtime.
 - Frontend source is in `front/src/`:
   - app bootstrap: `front/src/app/`
   - state management: `front/src/stores/`
@@ -37,15 +37,15 @@
   - Updater changes: run `cd updater && go build`
 
 ## Conventions
-- `interface.json` is loaded once at backend startup (`load_interface_model` in `main.py`). There is no general interface hot-reload API.
+- `interface.json` is loaded once at backend startup (`load_interface_model` in `backend/runtime.py`). There is no general interface hot-reload API.
 - The project extends PI option types with `scan_select`; keep both model support and `/api/interface/scan-select/rescan` flow intact when editing interface-related code.
-- Agent custom registration parsing is string-pattern based in `maa_worker/agent_loader.py` and expects decorator lines in this exact form:
+- Agent custom registration parsing is string-pattern based in `backend/maa_worker/agent_loader.py` and expects decorator lines in this exact form:
   - `@AgentServer.custom_action("...")`
   - `@AgentServer.custom_recognition("...")`
   Keep double quotes and plain decorator text to avoid silent registration failures.
 - Device/resource lock recovery relies on `/api/device/state` plus backend connection liveness checks; preserve this chain when changing device lock logic.
 - Task order persistence must merge new interface tasks that are missing from saved `taskOrder` (see `front/src/stores/task-config/taskConfig.ts`), instead of overwriting with persisted order only.
-- Agent environment initialization reads the root `version` file directly in `maa_worker/agent_service.py`; packaged and local runtimes should both ensure this file exists.
+- Agent environment initialization reads the root `version` file directly in `backend/maa_worker/agent_service.py`; packaged and local runtimes should both ensure this file exists.
 
 ## Docs
 - Project overview and development details: `README.md`

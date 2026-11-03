@@ -10,14 +10,14 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from app_state import AppState
-from maa_worker.event_service import EventService
-from maa_worker.focus_processor import FocusEventProcessor
-from maa_worker.focus_protocol import DISPLAY_DIALOG, DISPLAY_LOG, DISPLAY_MODAL
-from maa_worker.sink_service import SinkHandler
-from maa_worker.task_service import TaskService
-from models.api import RealtimeEvent
-from models.settings import SettingsModel
+from backend.core.state import AppState
+from backend.maa_worker.event_service import EventService
+from backend.maa_worker.focus_processor import FocusEventProcessor
+from backend.maa_worker.focus_protocol import DISPLAY_DIALOG, DISPLAY_LOG, DISPLAY_MODAL
+from backend.maa_worker.sink_service import SinkHandler
+from backend.maa_worker.task_service import TaskService
+from backend.models.api import RealtimeEvent
+from backend.models.settings import SettingsModel
 
 MSG = "Node.Action.Starting"
 
@@ -26,7 +26,7 @@ MSG = "Node.Action.Starting"
 def _default_settings(monkeypatch):
     """关闭系统/外部通知，避免测试读写用户设置或发送 webhook。"""
     monkeypatch.setattr(
-        "maa_worker.event_service.load_settings", lambda: SettingsModel()
+        "backend.maa_worker.event_service.load_settings", lambda: SettingsModel()
     )
 
 

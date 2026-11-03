@@ -2,7 +2,7 @@
 
 import pytest
 
-from models.interface import (
+from backend.models.interface import (
     Controller,
     HotkeyCase,
     InputCase,
@@ -14,7 +14,7 @@ from models.interface import (
     Resource,
     Task,
 )
-from models.task_config import (
+from backend.models.task_config import (
     CUSTOM_PRESET_NAME,
     TaskConfigModel,
     _build_option_defaults,

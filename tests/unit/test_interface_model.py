@@ -5,7 +5,7 @@ import re
 import pytest
 from pydantic import ValidationError
 
-from models.interface import (
+from backend.models.interface import (
     Controller,
     GamepadController,
     HotkeyCase,

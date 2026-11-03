@@ -2,9 +2,9 @@
 
 import pytest
 
-from models.scheduler import NativeCron
-from models.scheduler import parse_portable_cron as parse_native_cron
-from services.native_cron import (
+from backend.models.scheduler import NativeCron
+from backend.models.scheduler import parse_portable_cron as parse_native_cron
+from backend.scheduler.native_cron import (
     aps_dow_to_unix,
     native_crons_may_conflict,
     to_crontab_line,

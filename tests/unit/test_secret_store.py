@@ -5,10 +5,19 @@ from pathlib import Path
 
 import pytest
 
-import secret_store
-from models.interface import Controller, InputCase, InterfaceModel, Option, Resource
-from models.settings import SettingsModel
-from settings_io import load_settings_model, write_settings_preserving_custom_devices
+from backend.core import secret_store
+from backend.core.settings_io import (
+    load_settings_model,
+    write_settings_preserving_custom_devices,
+)
+from backend.models.interface import (
+    Controller,
+    InputCase,
+    InterfaceModel,
+    Option,
+    Resource,
+)
+from backend.models.settings import SettingsModel
 
 
 def _interface(with_password_option: bool) -> InterfaceModel:

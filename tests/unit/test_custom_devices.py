@@ -10,14 +10,14 @@ import pytest
 from maa.toolkit import Toolkit
 from pydantic import ValidationError
 
-from app_state import WorkerContext
-from maa_worker.device_service import (
+from backend.core.state import WorkerContext
+from backend.maa_worker.device_service import (
     DeviceService,
     custom_record_to_device,
     is_controller_supported,
 )
-from models.api import CustomDeviceCreate
-from models.device_address import canonicalize_custom_device_address
+from backend.models.api import CustomDeviceCreate
+from backend.models.device_address import canonicalize_custom_device_address
 
 
 def _controller(name: str, type_: str) -> SimpleNamespace:
@@ -211,9 +211,9 @@ def _fake_linux_controller(
 class TestLinuxSupport:
     def test_platform_capability(self):
         controller = _controller("LinuxController", "Linux")
-        with patch("maa_worker.device_service.sys.platform", "linux"):
+        with patch("backend.maa_worker.device_service.sys.platform", "linux"):
             assert is_controller_supported(controller) == (True, "")
-        with patch("maa_worker.device_service.sys.platform", "win32"):
+        with patch("backend.maa_worker.device_service.sys.platform", "win32"):
             assert is_controller_supported(controller) == (
                 False,
                 "platform_not_supported",
@@ -234,7 +234,7 @@ class TestLinuxSupport:
         ]
 
         with (
-            patch("maa_worker.device_service.sys.platform", "linux"),
+            patch("backend.maa_worker.device_service.sys.platform", "linux"),
             patch.object(Toolkit, "find_desktop_windows", return_value=scanned),
         ):
             devices = service._find_devices_for_controller(controller)
@@ -265,7 +265,7 @@ class TestLinuxSupport:
         ]
 
         with (
-            patch("maa_worker.device_service.sys.platform", "linux"),
+            patch("backend.maa_worker.device_service.sys.platform", "linux"),
             patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
         ):
             devices = service._find_devices_for_controller(controller)
@@ -321,10 +321,10 @@ class TestLinuxSupport:
         )
         with (
             patch(
-                "maa_worker.device_service.LinuxController",
+                "backend.maa_worker.device_service.LinuxController",
                 _fake_linux_controller(captured),
             ),
-            patch("maa_worker.device_service.time.sleep"),
+            patch("backend.maa_worker.device_service.time.sleep"),
         ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
@@ -361,11 +361,11 @@ class TestLinuxSupport:
         )
         with (
             patch(
-                "maa_worker.device_service.LinuxController",
+                "backend.maa_worker.device_service.LinuxController",
                 _fake_linux_controller(captured),
             ),
             patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
-            patch("maa_worker.device_service.time.sleep"),
+            patch("backend.maa_worker.device_service.time.sleep"),
         ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
@@ -455,10 +455,10 @@ class TestLinuxSupport:
         )
         with (
             patch(
-                "maa_worker.device_service.LinuxController",
+                "backend.maa_worker.device_service.LinuxController",
                 _fake_linux_controller(captured, screenshot_calls),
             ),
-            patch("maa_worker.device_service.time.sleep"),
+            patch("backend.maa_worker.device_service.time.sleep"),
         ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
@@ -475,7 +475,9 @@ class TestLinuxSupport:
             "Linux",
             "/run/user/1000/wayland-1",
         )
-        with patch("maa_worker.device_service._is_elevated", return_value=False):
+        with patch(
+            "backend.maa_worker.device_service._is_elevated", return_value=False
+        ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
         assert connected is False

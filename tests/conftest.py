@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-# Ensure project root is on sys.path so that imports like `from models.xxx import yyy` work.
+# Ensure project root is on sys.path so that `from backend.xxx import yyy` works.
 _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))

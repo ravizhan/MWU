@@ -6,9 +6,9 @@ from uuid import UUID
 
 import pytest
 
-from models.scheduler import CronTriggerConfig, DateTriggerConfig, ScheduledTask
-from services.system_scheduler import SystemScheduler
-from services.system_scheduler_backend import SystemSchedulerBackend
+from backend.models.scheduler import CronTriggerConfig, DateTriggerConfig, ScheduledTask
+from backend.scheduler.system_scheduler import SystemScheduler
+from backend.scheduler.system_scheduler_backend import SystemSchedulerBackend
 
 T1 = "11111111-1111-4111-8111-111111111111"
 T2 = "22222222-2222-4222-8222-222222222222"

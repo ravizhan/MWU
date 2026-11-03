@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 from apscheduler.triggers.cron import CronTrigger
 
-from app_state import AppState
-from models.interface import Controller, InterfaceModel, Resource, Task
-from models.scheduler import (
+from backend.core.state import AppState
+from backend.models.interface import Controller, InterfaceModel, Resource, Task
+from backend.models.scheduler import (
     CronTriggerConfig,
     ScheduledTaskCreate,
     ScheduledTaskUpdate,
 )
-from scheduler_manager import SchedulerManager
-from services.system_scheduler import ConvergeReport
+from backend.scheduler.manager import SchedulerManager
+from backend.scheduler.system_scheduler import ConvergeReport
 
 
 def make_create(
@@ -197,8 +197,8 @@ class TestScheduledJobFired:
     async def test_wakeup_skips_in_app_dispatch_when_native_supported(
         self, manager_env, monkeypatch
     ):
-        from maa_worker import execution
-        from scheduler_manager import scheduled_job_fired
+        from backend.maa_worker import execution
+        from backend.scheduler.manager import scheduled_job_fired
 
         mgr, state, system_scheduler = manager_env
         system_scheduler.supports_native = True
@@ -214,8 +214,8 @@ class TestScheduledJobFired:
     async def test_wakeup_falls_back_to_in_app_when_native_unsupported(
         self, manager_env, monkeypatch
     ):
-        from maa_worker import execution
-        from scheduler_manager import scheduled_job_fired
+        from backend.maa_worker import execution
+        from backend.scheduler.manager import scheduled_job_fired
 
         mgr, state, system_scheduler = manager_env
         system_scheduler.supports_native = False
