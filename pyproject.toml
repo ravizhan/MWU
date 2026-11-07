@@ -1,6 +1,6 @@
 [project]
 name = "MWU"
-version = "0.20.0"
+version = "0.21.0"
 description = "基于 Vue 的 通用 GUI。由 MaaFramework 强力驱动！"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -29,7 +29,7 @@ dev = [
     "ty>=0.0.91",
 ]
 build = [
-    "nuitka[all]>=4.3.3",
+    "nuitka[all]>=4.3.4",
 ]
 
 [tool.pytest.ini_options]
