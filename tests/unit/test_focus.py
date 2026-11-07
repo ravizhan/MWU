@@ -69,7 +69,6 @@ def make_worker() -> SimpleNamespace:
         focus_state=state.focus,
         message_conn=state.message_conn,
         interface=_FakeInterface(),
-        http_client=None,
         tasker=_FakeTasker(),
         pretasks=SimpleNamespace(stop_current=lambda: None),
         pipeline=SimpleNamespace(build_task_pipeline_override=lambda *_a, **_k: {}),

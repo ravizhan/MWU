@@ -1,7 +1,6 @@
 import io
 from typing import TYPE_CHECKING
 
-import httpx
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
@@ -39,7 +38,6 @@ class MaaWorker:
         self.message_conn = state.message_conn
         self.resource = resource
         self.tasker = Tasker()
-        self.http_client = httpx.Client(timeout=30)
 
         self.context = WorkerContext(
             app_root=resolve_app_root(),
@@ -96,4 +94,3 @@ class MaaWorker:
             self.agent_state.agent_client.disconnect()
         for process in self.agent_state.processes:
             process.terminate()
-        self.http_client.close()

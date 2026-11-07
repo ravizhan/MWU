@@ -411,7 +411,8 @@ modal 没有超时，也不会因为浏览器关闭或断线而自动确认。�
 - `backend/maa_worker/device_service.py`：设备发现、连接、资源加载
 - `backend/maa_worker/task_service.py`：任务线程启动/停止与执行主循环
 - `backend/maa_worker/pipeline_override.py`：任务选项与 pipeline_override 合并
-- `backend/maa_worker/event_service.py`：统一日志、实时事件、系统通知与外部通知
+- `backend/maa_worker/event_service.py`：统一日志、实时事件、系统通知与外部通知分发
+- `backend/services/notification.py`：基于 apprise 的外部通知渠道（钉钉、飞书、企业微信、Server 酱、OneBot、SMTP 等）
 - `backend/maa_worker/focus_processor.py`：focus 渠道分发、modal 确认与停止释放
 
 #### 🔧 扩展任务执行流程

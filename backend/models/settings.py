@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from backend.models.device_address import DeviceType
+from backend.models.notification import NotificationChannel
 from backend.models.scheduler import TaskOptionValue
 
 
@@ -17,15 +18,7 @@ class Notification(BaseModel):
     systemNotification: bool = False
     browserNotification: bool = False
     externalNotification: bool = False
-    webhook: str = ""
-    contentType: Literal["application/json", "application/x-www-form-urlencoded"] = (
-        "application/json"
-    )
-    headers: str = ""
-    body: str = ""
-    username: str = ""
-    password: str = ""
-    method: Literal["POST", "GET"] = "POST"
+    channels: list[NotificationChannel] = Field(default_factory=list)
     notifyOnComplete: bool = True
     notifyOnError: bool = True
 
