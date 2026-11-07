@@ -1,12 +1,12 @@
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import plyer
 
-from backend.core import json_utils as json
 from backend.core.settings_io import default_settings_path, load_settings_model
 from backend.models.api import RealtimeEvent, RealtimeEventLevel, RealtimeEventName
 from backend.models.settings import SettingsModel
+from backend.services.notification import send_external
 
 if TYPE_CHECKING:
     from backend.maa_worker.worker import MaaWorker
@@ -73,60 +73,26 @@ class EventService:
         if "notification" not in event.notify:
             return
 
-        title = event.title
+        title = event.title or self.worker.text.app_name()
         message = event.message
         settings = load_settings()
 
         if settings.notification.systemNotification:
             try:
-                self.show_system_notification(
-                    title or self.worker.text.app_name(), message
-                )
+                self.show_system_notification(title, message)
             except Exception as exc:
                 self.send_log(f"系统通知发送失败: {exc}")
 
         if settings.notification.externalNotification:
-            try:
-                template_body = settings.notification.body.strip()
-                if template_body:
-                    body = json.loads(
-                        template_body.replace("{{title}}", title or "").replace(
-                            "{{message}}", message
-                        )
-                    )
-                else:
-                    body = {
-                        "title": title or self.worker.text.app_name(),
-                        "message": message,
-                    }
-
-                headers = {}
-                if settings.notification.headers:
-                    headers = json.loads(settings.notification.headers)
-
-                auth = None
-                if settings.notification.username and settings.notification.password:
-                    auth = (
-                        settings.notification.username,
-                        settings.notification.password,
-                    )
-
-                if settings.notification.method != "POST":
-                    self.worker.http_client.get(
-                        settings.notification.webhook, params=body
-                    )
-                    return
-
-                kwargs: dict[str, Any] = {"headers": headers}
-                if auth is not None:
-                    kwargs["auth"] = auth
-                if settings.notification.contentType == "application/json":
-                    kwargs["json"] = body
-                else:
-                    kwargs["data"] = body
-                self.worker.http_client.post(settings.notification.webhook, **kwargs)
-            except Exception as exc:
-                self.send_log(f"外部通知发送失败: {exc}")
+            errors = send_external(
+                settings.notification.channels,
+                title,
+                message,
+                event.level,
+                self.worker.text.app_name(),
+            )
+            for error in errors:
+                self.send_log(f"外部通知发送失败: {error}")
 
     def send_log(self, msg: str):
         self.emit("log", msg)

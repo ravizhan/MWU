@@ -69,108 +69,38 @@
       </div>
     </section>
 
-    <!-- External connection (collapses when off) -->
+    <!-- External channels (collapses when off) -->
     <section v-if="settings.notification.externalNotification" class="space-y-4 pt-5">
-      <div class="flex items-center gap-2">
-        <NIcon size="18" aria-hidden="true">
-          <LinkOutline />
-        </NIcon>
-        <h3 class="text-sm font-semibold">
-          {{ t("settings.notification.sections.external") }}
-        </h3>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <NIcon size="18" aria-hidden="true">
+            <LinkOutline />
+          </NIcon>
+          <h3 class="text-sm font-semibold">
+            {{ t("settings.notification.sections.external") }}
+          </h3>
+        </div>
+        <NDropdown trigger="click" :options="addChannelOptions" @select="addChannel">
+          <NButton size="small">
+            <template #icon>
+              <NIcon><AddOutline /></NIcon>
+            </template>
+            {{ t("settings.notification.addChannel") }}
+          </NButton>
+        </NDropdown>
       </div>
 
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div class="md:col-span-2">
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.url") }}
-          </label>
-          <NInput
-            :value="settings.notification.webhook"
-            class="w-full font-mono text-sm"
-            placeholder="https://..."
-            :input-props="{ autocomplete: 'off', spellcheck: false }"
-            @update:value="handleSettingChange('notification', 'webhook', $event)"
-          />
-        </div>
-
-        <div>
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.method") }}
-          </label>
-          <NSelect
-            :value="settings.notification.method"
-            class="w-full"
-            :options="methodOptions"
-            @update:value="handleMethodChange"
-          />
-        </div>
-
-        <div v-if="settings.notification.method !== 'GET'">
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.contentType") }}
-          </label>
-          <NSelect
-            :value="settings.notification.contentType"
-            class="w-full"
-            :options="contentTypeOptions"
-            @update:value="handleContentTypeChange"
-          />
-        </div>
-
-        <div class="md:col-span-2">
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.headers") }}
-          </label>
-          <NInput
-            :value="settings.notification.headers"
-            class="w-full font-mono text-sm"
-            placeholder='{"Authorization":"Bearer ..."}'
-            :input-props="{ autocomplete: 'off', spellcheck: false }"
-            @update:value="handleSettingChange('notification', 'headers', $event)"
-          />
-        </div>
-
-        <div class="md:col-span-2">
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.body") }}
-          </label>
-          <NInput
-            type="textarea"
-            :value="settings.notification.body"
-            class="min-h-24 w-full font-mono text-sm"
-            placeholder='{"desp":"{{message}}","title":"{{title}}"}'
-            :autosize="{ minRows: 4 }"
-            :input-props="{ spellcheck: false }"
-            @update:value="handleSettingChange('notification', 'body', $event)"
-          />
-        </div>
-
-        <div>
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.username") }}
-          </label>
-          <NInput
-            :value="settings.notification.username"
-            class="w-full"
-            :input-props="{ autocomplete: 'username' }"
-            @update:value="handleSettingChange('notification', 'username', $event)"
-          />
-        </div>
-
-        <div>
-          <label class="mb-2 block text-sm font-medium">
-            {{ t("settings.notification.fields.password") }}
-          </label>
-          <NInput
-            type="password"
-            :value="settings.notification.password"
-            class="w-full"
-            :input-props="{ autocomplete: 'current-password' }"
-            @update:value="handleSettingChange('notification', 'password', $event)"
-          />
-        </div>
-      </div>
+      <p v-if="!settings.notification.channels.length" class="text-sm opacity-60">
+        {{ t("settings.notification.noChannels") }}
+      </p>
+      <NotificationChannelCard
+        v-for="channel in settings.notification.channels"
+        :key="channel.id"
+        :channel="channel"
+        :definition="definitions[channel.type]"
+        @update="updateChannel"
+        @delete="removeChannel(channel.id)"
+      />
     </section>
 
     <!-- Trigger timing -->
@@ -214,29 +144,34 @@
 <script setup lang="ts">
 import { computed } from "vue"
 import { useI18n } from "vue-i18n"
-import { DesktopOutline, GlobeOutline, LinkOutline, NotificationsOutline } from "@vicons/ionicons5"
+import {
+  AddOutline,
+  DesktopOutline,
+  GlobeOutline,
+  LinkOutline,
+  NotificationsOutline,
+} from "@vicons/ionicons5"
+import NotificationChannelCard from "@/components/settings/notification/NotificationChannelCard.vue"
+import {
+  CHANNEL_TYPES,
+  channelDefinitions,
+  findChannelType,
+} from "@/components/settings/notification/channels"
 import { testNotificationApi } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useSettingsStore } from "@/stores"
 import { tryCatch } from "@/utils/tryCatch"
-import type { SettingsModel } from "@/types/settingsModel"
+import type { NotificationChannel, SettingsModel } from "@/types/settingsModel"
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
 
-const methodOptions = computed(() => [
-  { label: t("settings.notification.fields.post"), value: "POST" },
-  { label: t("settings.notification.fields.get"), value: "GET" },
-])
+const definitions = computed(() => channelDefinitions(t))
 
-const contentTypeOptions = computed(() => [
-  { label: t("settings.notification.fields.json"), value: "application/json" },
-  {
-    label: t("settings.notification.fields.formUrlencoded"),
-    value: "application/x-www-form-urlencoded",
-  },
-])
+const addChannelOptions = computed(() =>
+  CHANNEL_TYPES.map((type) => ({ key: type, label: definitions.value[type].label })),
+)
 
 const isTestNotificationDisabled = computed(() => {
   const notification = settings.value.notification
@@ -251,23 +186,13 @@ const isTestNotificationDisabled = computed(() => {
 
   return (
     notification.externalNotification &&
-    !notification.webhook &&
+    !notification.channels.some((channel) => channel.enabled) &&
     !notification.systemNotification &&
     !notification.browserNotification
   )
 })
 
 type EditableCategory = Exclude<keyof SettingsModel, "about">
-type NotificationMethod = SettingsModel["notification"]["method"]
-type NotificationContentType = SettingsModel["notification"]["contentType"]
-
-function isNotificationMethod(value: string): value is NotificationMethod {
-  return value === "POST" || value === "GET"
-}
-
-function isNotificationContentType(value: string): value is NotificationContentType {
-  return value === "application/json" || value === "application/x-www-form-urlencoded"
-}
 
 async function handleSettingChange<K extends EditableCategory, P extends keyof SettingsModel[K]>(
   category: K,
@@ -277,18 +202,32 @@ async function handleSettingChange<K extends EditableCategory, P extends keyof S
   await settingsStore.updateSetting(category, key, value)
 }
 
-function handleMethodChange(value: string | number | null) {
-  if (typeof value !== "string" || !isNotificationMethod(value)) {
-    return
-  }
-  void handleSettingChange("notification", "method", value)
+function saveChannels(channels: NotificationChannel[]) {
+  void handleSettingChange("notification", "channels", channels)
 }
 
-function handleContentTypeChange(value: string | number | null) {
-  if (typeof value !== "string" || !isNotificationContentType(value)) {
-    return
-  }
-  void handleSettingChange("notification", "contentType", value)
+function addChannel(key: string | number) {
+  const type = findChannelType(key)
+  if (!type) return
+  const params = Object.fromEntries(
+    definitions.value[type].fields.map((field) => [field.key, field.default]),
+  )
+  saveChannels([
+    ...settings.value.notification.channels,
+    { id: crypto.randomUUID(), type, enabled: true, params },
+  ])
+}
+
+function updateChannel(updated: NotificationChannel) {
+  saveChannels(
+    settings.value.notification.channels.map((channel) =>
+      channel.id === updated.id ? updated : channel,
+    ),
+  )
+}
+
+function removeChannel(id: string) {
+  saveChannels(settings.value.notification.channels.filter((channel) => channel.id !== id))
 }
 
 async function handleBrowserNotificationChange(enabled: boolean) {

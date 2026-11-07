@@ -8,18 +8,33 @@ export interface UpdateSettings {
   mirrorchyanCdk: string
 }
 
-// 外部通知设置
+export type NotificationChannelType =
+  | "dingtalk"
+  | "feishu"
+  | "wecom"
+  | "serverchan"
+  | "onebot"
+  | "smtp"
+  | "telegram"
+  | "bark"
+  | "wxpusher"
+  | "pushplus"
+  | "webhook"
+
+// 外部通知渠道；params 全部为字符串，字段集合由 type 决定并由后端校验
+export interface NotificationChannel {
+  id: string
+  type: NotificationChannelType
+  enabled: boolean
+  params: Record<string, string>
+}
+
+// 通知设置
 export interface NotificationSettings {
   systemNotification: boolean
   browserNotification: boolean
   externalNotification: boolean
-  webhook: string
-  contentType: "application/json" | "application/x-www-form-urlencoded"
-  headers: string
-  body: string
-  username: string
-  password: string
-  method: "POST" | "GET"
+  channels: NotificationChannel[]
   notifyOnComplete: boolean
   notifyOnError: boolean
 }
