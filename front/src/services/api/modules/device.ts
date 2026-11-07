@@ -77,6 +77,7 @@ export interface DeviceControllerCapability {
   type: DeviceControllerType
   label: string
   display_label: string
+  icon?: string | null
   enabled: boolean
   reason: string
   search_mode: "select" | "input"

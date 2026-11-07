@@ -61,8 +61,6 @@
     },
     "runtime": {
       "title": "Runtime Settings",
-      "timeout": "Timeout",
-      "timeoutSuffix": "sec",
       "autoRetry": "Auto Retry",
       "maxRetryCount": "Max Retries"
     },

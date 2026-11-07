@@ -9,6 +9,7 @@ export interface PostResourceResult {
 export interface ResourceInfo {
   name: string
   label?: string | null
+  icon?: string | null
   controller?: string[] | null
 }
 

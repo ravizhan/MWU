@@ -33,6 +33,7 @@
           <NIcon size="20" class="cursor-grab active:cursor-grabbing shrink-0">
             <ReorderThreeOutline />
           </NIcon>
+          <InterfaceIcon :icon="interfaceStore.getTaskByName(item.id)?.icon" class="h-5 w-5" />
           <span
             class="flex-1 text-base truncate select-none"
             :class="{ 'opacity-60': isIncompatible(item.id) }"
@@ -74,6 +75,7 @@ import { CloseOutline, ReorderThreeOutline, WarningOutline } from "@vicons/ionic
 import { useInterfaceStore } from "@/stores"
 import type { QueuedTaskItem } from "@/types/taskConfigModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 
 interface Props {
   tasks: QueuedTaskItem[]

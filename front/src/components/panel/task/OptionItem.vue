@@ -8,7 +8,10 @@
       }"
     >
       <div class="min-w-0 flex-1">
-        <div class="text-sm">{{ resolvedLabel }}</div>
+        <div class="flex items-center gap-1.5 text-sm">
+          <InterfaceIcon :icon="option.icon" class="h-6 w-6" />
+          <span>{{ resolvedLabel }}</span>
+        </div>
         <InterfaceDescription :text="option.description" />
       </div>
       <div class="flex flex-1 justify-end">
@@ -74,6 +77,7 @@ import type { NullableTaskOptionValue } from "@/types/schedulerModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { tryCatch } from "@/utils/tryCatch"
 import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 import OptionCheckboxControl from "@/components/common/controls/OptionCheckboxControl.vue"
 import OptionHotkeyControl from "@/components/common/controls/OptionHotkeyControl.vue"
 import OptionInputControl from "@/components/common/controls/OptionInputControl.vue"
@@ -166,6 +170,7 @@ const selectOptions = computed(() => {
   return currentOption.cases.map((caseItem) => ({
     label: resolveCaseLabel(caseItem.label, caseItem.name),
     value: caseItem.name,
+    icon: caseItem.icon,
   }))
 })
 

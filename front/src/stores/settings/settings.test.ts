@@ -33,7 +33,7 @@ describe("settings persistence", () => {
       .mockReturnValueOnce(second.promise)
 
     const store = useSettingsStore()
-    const firstUpdate = store.updateSetting("runtime", "timeout", 120)
+    const firstUpdate = store.updateSetting("runtime", "maxRetryCount", 5)
     const secondUpdate = store.updateSetting("runtime", "retryInterval", 10)
 
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
@@ -41,13 +41,13 @@ describe("settings persistence", () => {
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
 
     expect(vi.mocked(api.updateSettings).mock.calls[1][0].runtime).toMatchObject({
-      timeout: 120,
+      maxRetryCount: 5,
       retryInterval: 10,
     })
 
     second.resolve(true)
     await expect(Promise.all([firstUpdate, secondUpdate])).resolves.toEqual([true, true])
-    expect(store.settings.runtime).toMatchObject({ timeout: 120, retryInterval: 10 })
+    expect(store.settings.runtime).toMatchObject({ maxRetryCount: 5, retryInterval: 10 })
   })
 
   it("does not let an older failed write roll back a newer value", async () => {
@@ -58,31 +58,31 @@ describe("settings persistence", () => {
       .mockReturnValueOnce(second.promise)
 
     const store = useSettingsStore()
-    const firstUpdate = store.updateSetting("runtime", "timeout", 120)
-    const secondUpdate = store.updateSetting("runtime", "timeout", 180)
+    const firstUpdate = store.updateSetting("runtime", "maxRetryCount", 5)
+    const secondUpdate = store.updateSetting("runtime", "maxRetryCount", 7)
 
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
     first.resolve(false)
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
 
-    expect(store.settings.runtime.timeout).toBe(180)
-    expect(vi.mocked(api.updateSettings).mock.calls[1][0].runtime.timeout).toBe(180)
+    expect(store.settings.runtime.maxRetryCount).toBe(7)
+    expect(vi.mocked(api.updateSettings).mock.calls[1][0].runtime.maxRetryCount).toBe(7)
 
     second.resolve(true)
     await expect(Promise.all([firstUpdate, secondUpdate])).resolves.toEqual([false, true])
-    expect(store.settings.runtime.timeout).toBe(180)
+    expect(store.settings.runtime.maxRetryCount).toBe(7)
   })
 
   it("restores the previous settings when reset persistence fails", async () => {
     vi.mocked(api.updateSettings).mockResolvedValue(false)
     const store = useSettingsStore()
     store.settings.telemetry.helpImproveSoftware = false
-    store.settings.runtime.timeout = 120
+    store.settings.runtime.maxRetryCount = 5
 
     await expect(store.resetSettings()).resolves.toBe(false)
 
     expect(store.settings.telemetry.helpImproveSoftware).toBe(false)
-    expect(store.settings.runtime.timeout).toBe(120)
+    expect(store.settings.runtime.maxRetryCount).toBe(5)
   })
 
   it("allows retrying a failed settings load without using defaults as saved consent", async () => {
@@ -142,7 +142,7 @@ describe("settings persistence", () => {
       .mockResolvedValueOnce(false)
 
     const toEnglish = store.updateSetting("ui", "language", "en-US")
-    const laterSave = store.updateSetting("runtime", "timeout", 120)
+    const laterSave = store.updateSetting("runtime", "maxRetryCount", 5)
     first.resolve(false)
     await vi.waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(2))
     expect(i18n.global.locale.value).toBe("en-US")

@@ -9,48 +9,15 @@
           <div v-if="piPretasks.length > 0" class="text-xs font-medium opacity-60">
             {{ $t("panel.piPretask.title") }}
           </div>
-          <div
+          <PiPretaskRow
             v-for="(item, index) in piPretasks"
             :key="`${item.key}-${index}`"
-            class="grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-1"
-          >
-            <NTooltip :disabled="!item.pretask.description && item.compatible" :max-width="320">
-              <template #trigger>
-                <NEl
-                  tag="div"
-                  class="min-w-0 truncate px-3 py-2 rounded-lg border border-solid text-sm font-medium"
-                  :class="{ 'opacity-50': !item.compatible }"
-                  :style="{
-                    borderColor: 'var(--divider-color)',
-                    background: 'var(--card-color)',
-                  }"
-                >
-                  {{ item.displayName }}
-                </NEl>
-              </template>
-              <div class="space-y-1">
-                <div v-if="item.pretask.description">
-                  {{ resolveInterfaceText(item.pretask.description, item.pretask.description) }}
-                </div>
-                <div v-if="!item.compatible">
-                  {{ $t("panel.piPretask.incompatible") }}
-                </div>
-              </div>
-            </NTooltip>
-            <NSwitch
-              size="small"
-              :value="item.enabled"
-              @update:value="settingsStore.setPretaskEnabled(item.key, $event)"
-            />
-            <NEl
-              v-if="item.enabled && item.pretask.option?.length"
-              tag="div"
-              class="col-span-2 overflow-hidden rounded-lg border border-solid"
-              style="border-color: var(--divider-color)"
-            >
-              <TaskSettingOptionRow v-for="n in item.pretask.option" :key="n" :name="n" />
-            </NEl>
-          </div>
+            :pretask="item.pretask"
+            :display-name="item.displayName"
+            :compatible="item.compatible"
+            :enabled="item.enabled"
+            @update:enabled="settingsStore.setPretaskEnabled(item.key, $event)"
+          />
 
           <div v-if="piPretasks.length > 0" class="flex items-center gap-2 py-1">
             <span class="h-px flex-1" style="background: var(--divider-color)" />
@@ -103,6 +70,7 @@ import { pretaskKey } from "@/stores/interface/interface"
 import type { Pretask } from "@/types/interfaceModel"
 import type { PreTaskCommand } from "@/types/taskConfigModel"
 import PreTaskHeader from "@/components/panel/task/PreTaskHeader.vue"
+import PiPretaskRow from "@/components/panel/task/PiPretaskRow.vue"
 import PreTaskRow from "@/components/panel/task/PreTaskRow.vue"
 import PreTaskToolbar from "@/components/panel/task/PreTaskToolbar.vue"
 import PreTaskWarnDialog from "@/components/panel/task/PreTaskWarnDialog.vue"

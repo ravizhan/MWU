@@ -25,6 +25,7 @@ def _controller(name: str, type_: str) -> SimpleNamespace:
         name=name,
         type=type_,
         label=name,
+        icon=None,
         display_short_side=720,
         display_long_side=None,
         display_expand=None,

@@ -19,6 +19,7 @@
             v-if="interfaceStore.getPresetList.length > 0"
             :value="configStore.selectedPresetName"
             :options="presetOptions"
+            :render-label="renderIconLabel"
             size="small"
             class="ml-auto w-36 max-w-[40vw]"
             @update:value="handlePresetChange"
@@ -145,6 +146,7 @@ import {
 } from "@/stores"
 import { CUSTOM_PRESET_NAME, type QueuedTaskItem } from "@/types/taskConfigModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import { renderIconLabel } from "@/utils/interface/iconLabel"
 import { useViewport } from "@/utils/viewport/useViewport"
 
 const { t } = useI18n()
@@ -171,6 +173,7 @@ const presetOptions = computed(() => [
   ...interfaceStore.getPresetList.map((preset) => ({
     label: resolveInterfaceText(preset.label, preset.name),
     value: preset.name,
+    icon: preset.icon,
     disabled: !interfaceStore.isPresetCompatible(preset, deviceStore.selectedControllerName),
   })),
 ])

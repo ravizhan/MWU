@@ -264,6 +264,7 @@
             <NSelect
               v-model:value="formData.controller_name"
               :options="deviceControllerOptions"
+              :render-label="renderIconLabel"
               :placeholder="t('panel.selectDeviceType')"
               :disabled="loadingDevices"
               size="medium"
@@ -307,6 +308,7 @@
             <NSelect
               v-model:value="formData.resource_name"
               :options="resourceOptions"
+              :render-label="renderIconLabel"
               :placeholder="t('panel.selectResource')"
               :disabled="!formData.controller_name || loadingResources"
               size="medium"
@@ -375,6 +377,7 @@ import SchedulerTaskDialogTriggerType from "./SchedulerTaskDialogTriggerType.vue
 import { toIsoOrEmpty, toDatetimeLocalValue } from "@/utils/datetime"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useViewport } from "@/utils/viewport/useViewport"
+import { renderIconLabel } from "@/utils/interface/iconLabel"
 import type { ScheduledTask } from "@/types/schedulerModel"
 import { useSchedulerTaskForm } from "./composables/useSchedulerTaskForm"
 import { useTaskEnvironment } from "./composables/useTaskEnvironment"

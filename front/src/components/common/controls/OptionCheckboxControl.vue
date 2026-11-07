@@ -7,7 +7,10 @@
       :disabled="isLocked(checkbox.name)"
       @update:checked="handleCheckboxChange(checkbox.name, $event)"
     >
-      {{ resolveCaseLabel(checkbox.label, checkbox.name) }}
+      <span class="inline-flex items-center gap-1.5">
+        <InterfaceIcon :icon="checkbox.icon" class="h-6 w-6" />
+        {{ resolveCaseLabel(checkbox.label, checkbox.name) }}
+      </span>
     </NCheckbox>
     <NText
       v-if="minCount > 0 || maxCount !== undefined"
@@ -31,6 +34,7 @@ import { computed } from "vue"
 import { useI18n } from "vue-i18n"
 import type { CheckboxOption } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 
 const { option, value } = defineProps<{
   option: CheckboxOption

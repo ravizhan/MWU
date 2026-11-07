@@ -1,6 +1,6 @@
 <template>
   <div class="flex min-w-0 items-center gap-2">
-    <img v-if="icon" :src="icon" alt="" class="h-5 w-5 shrink-0 object-contain" />
+    <InterfaceIcon v-if="section.kind === 'declared'" :icon="section.group?.icon" class="h-5 w-5" />
     <div class="min-w-0">
       <div class="font-medium">{{ label }}</div>
       <div v-if="description" class="text-xs opacity-60">{{ description }}</div>
@@ -12,7 +12,8 @@
 import { computed } from "vue"
 import { useI18n } from "vue-i18n"
 import type { TaskGroupSection } from "@/utils/task-config/order"
-import { resolveInterfaceAssetUrl, resolveInterfaceText } from "@/utils/interface/content"
+import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 
 const { section } = defineProps<{ section: TaskGroupSection }>()
 
@@ -27,10 +28,5 @@ const label = computed(() => {
 const description = computed(() => {
   if (section.kind !== "declared" || !section.group?.description) return ""
   return resolveInterfaceText(section.group.description, section.group.description)
-})
-
-const icon = computed(() => {
-  if (section.kind !== "declared") return undefined
-  return resolveInterfaceAssetUrl(section.group?.icon)
 })
 </script>

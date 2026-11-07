@@ -3,12 +3,7 @@
     <NCollapseItem v-for="section in sections" :key="section.name" :name="section.name">
       <template #header>
         <div class="flex min-w-0 items-center gap-2">
-          <img
-            v-if="resolveSectionIcon(section.icon)"
-            :src="resolveSectionIcon(section.icon)"
-            alt=""
-            class="h-5 w-5 shrink-0 object-contain"
-          />
+          <InterfaceIcon :icon="section.icon" class="h-5 w-5" />
           <div class="min-w-0">
             <div class="font-medium">{{ resolveSectionLabel(section) }}</div>
             <div v-if="section.description" class="text-xs opacity-60">
@@ -42,7 +37,8 @@ import { computed } from "vue"
 import { useI18n } from "vue-i18n"
 import { useInterfaceStore } from "@/stores"
 import type { SettingSection } from "@/types/interfaceModel"
-import { resolveInterfaceAssetUrl, resolveInterfaceText } from "@/utils/interface/content"
+import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 import TaskSettingOptionRow from "@/components/settings/sections/TaskSettingOptionRow.vue"
 
 const { t } = useI18n()
@@ -66,9 +62,5 @@ function resolveSectionLabel(section: SettingSection): string {
 
 function resolveSectionDescription(description: string): string {
   return resolveInterfaceText(description, description)
-}
-
-function resolveSectionIcon(icon: string | undefined): string | undefined {
-  return resolveInterfaceAssetUrl(icon)
 }
 </script>

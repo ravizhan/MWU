@@ -162,6 +162,7 @@ const recipeCards = computed(() => {
       name: preset.name,
       label: resolveInterfaceText(preset.label, preset.name),
       description: resolveInterfaceText(preset.description, "") || t("panel.preset.noDescription"),
+      icon: preset.icon,
       taskCount,
     }
   })

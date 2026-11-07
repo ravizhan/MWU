@@ -11,6 +11,8 @@ import { tryCatch } from "@/utils/tryCatch"
 import type { PanelLastConnectedDevice } from "@/types/settingsModel"
 import type { SchedulerTaskFormData } from "./useSchedulerTaskForm"
 
+type IconSelectOption = { label: string; value: string; icon?: string | null }
+
 export interface TaskEnvironment {
   availableDevices: Ref<ConnectableDevice[]>
   availableResources: Ref<ResourceInfo[]>
@@ -18,9 +20,9 @@ export interface TaskEnvironment {
   loadingResources: Ref<boolean>
   selectedControllerType: Ref<DeviceControllerType | null>
   isPlayCover: Ref<boolean>
-  deviceControllerOptions: Ref<Array<{ label: string; value: string }>>
+  deviceControllerOptions: Ref<IconSelectOption[]>
   deviceAddressOptions: Ref<Array<{ label: string; value: string }>>
-  resourceOptions: Ref<Array<{ label: string; value: string }>>
+  resourceOptions: Ref<IconSelectOption[]>
   selectedDeviceAddress: Ref<string | null>
   handleDeviceAddressUpdate: (value: string | null) => void
 }
@@ -76,6 +78,7 @@ export function useTaskEnvironment(
       .map((controller) => ({
         label: resolveInterfaceText(controller.label, controller.name),
         value: controller.name,
+        icon: controller.icon,
       })),
   )
 
@@ -109,6 +112,7 @@ export function useTaskEnvironment(
     availableResources.value.map((resource) => ({
       label: resolveInterfaceText(resource.label, resource.name),
       value: resource.name,
+      icon: resource.icon,
     })),
   )
 

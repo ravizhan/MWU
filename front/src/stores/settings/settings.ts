@@ -32,7 +32,6 @@ const defaultSettings: SettingsModel = {
     language: "zh-CN",
   },
   runtime: {
-    timeout: 300,
     autoRetry: true,
     maxRetryCount: 3,
     retryInterval: 5,

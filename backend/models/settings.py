@@ -37,7 +37,6 @@ class UI(BaseModel):
 
 
 class Runtime(BaseModel):
-    timeout: int = Field(default=300, ge=60, le=3600)
     autoRetry: bool = True
     maxRetryCount: int = Field(default=3, ge=1, le=10)
     retryInterval: int = Field(default=5, ge=1)

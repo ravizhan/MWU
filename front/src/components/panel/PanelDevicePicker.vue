@@ -3,6 +3,7 @@
     <NSelect
       :value="selectedController"
       :options="controllerOptions"
+      :render-label="renderIconLabel"
       :placeholder="t('panel.selectDeviceType')"
       :disabled="disabled"
       class="flex-1 min-w-[8rem]"
@@ -34,6 +35,7 @@
 
 <script setup lang="ts">
 import { useI18n } from "vue-i18n"
+import { renderIconLabel } from "@/utils/interface/iconLabel"
 
 const {
   selectedController,
@@ -48,7 +50,12 @@ const {
   selectedController: string | null
   selectedDeviceKey: string | null
   playCoverAddress: string
-  controllerOptions: Array<{ label: string; value: string; disabled?: boolean }>
+  controllerOptions: Array<{
+    label: string
+    value: string
+    icon?: string | null
+    disabled?: boolean
+  }>
   deviceOptions: Array<{ label: string; value: string; disabled?: boolean }>
   disabled: boolean
   selectedControllerDisabled: boolean

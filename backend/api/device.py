@@ -97,6 +97,7 @@ def get_resource(controller_type: Annotated[str | None, Query()] = None):
         {
             "name": r.name,
             "label": r.label,
+            "icon": r.icon,
             "controller": r.controller,
         }
         for r in interface.resource

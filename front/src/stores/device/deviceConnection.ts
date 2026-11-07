@@ -68,7 +68,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
     controllerCapabilities: DeviceControllerCapability[]
     playCoverAddress: string
     resource: string | null
-    resourcesList: Array<{ label: string; value: string }>
+    resourcesList: Array<{ label: string; value: string; icon?: string | null }>
     loading: boolean
     isDeviceResourceLocked: boolean
     connectedControllerName: string | null
@@ -107,6 +107,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         return {
           label: item.display_label === item.label ? label : `${label}(${item.name})`,
           value: item.display_label,
+          icon: item.icon,
           disabled: !item.enabled,
         }
       })
@@ -586,6 +587,7 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       this.resourcesList = resourceData.map((item) => ({
         label: item.label || item.name,
         value: item.name,
+        icon: item.icon,
       }))
       const savedResource = settingsStore.settings.panel.lastResource
       if (savedResource && resourceData.some((item) => item.name === savedResource)) {

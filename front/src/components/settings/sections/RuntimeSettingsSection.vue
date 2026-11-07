@@ -2,23 +2,6 @@
   <div class="space-y-0">
     <div class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4">
       <label class="text-sm font-medium md:text-right">
-        {{ t("settings.runtime.timeout") }}
-      </label>
-      <div class="flex items-center gap-2">
-        <NInputNumber
-          :value="settings.runtime.timeout"
-          class="w-32"
-          :min="60"
-          :max="3600"
-          :step="30"
-          @update:value="handleNumberChange('timeout', $event, 60, 3600)"
-        />
-        <span class="text-sm opacity-60">{{ t("settings.runtime.timeoutSuffix") }}</span>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4">
-      <label class="text-sm font-medium md:text-right">
         {{ t("settings.runtime.autoRetry") }}
       </label>
       <NSwitch
@@ -60,7 +43,7 @@ const settings = computed(() => settingsStore.settings)
 
 type EditableCategory = keyof SettingsModel
 type MaybeNullForNumbers<T> = T extends number ? T | null : T
-type RuntimeNumberKey = "timeout" | "maxRetryCount"
+type RuntimeNumberKey = "maxRetryCount"
 
 async function handleSettingChange<K extends EditableCategory, P extends keyof SettingsModel[K]>(
   category: K,

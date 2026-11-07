@@ -308,6 +308,7 @@ class DeviceService:
                     "type": controller.type,
                     "label": controller.label or controller.name or controller.type,
                     "display_label": display_labels[controller.name],
+                    "icon": controller.icon,
                     "enabled": supported,
                     "reason": "" if supported else reason,
                     "search_mode": "input"

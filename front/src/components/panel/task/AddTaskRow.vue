@@ -9,6 +9,7 @@
         :aria-disabled="!compatible"
         @click="handleClick"
       >
+        <InterfaceIcon :icon="task.icon" class="h-5 w-5" />
         <span class="flex-1 truncate">{{ label }}</span>
         <NIcon size="16" class="shrink-0 opacity-50"><AddOutline /></NIcon>
       </button>
@@ -24,6 +25,7 @@ import { AddOutline } from "@vicons/ionicons5"
 import { useInterfaceStore } from "@/stores"
 import type { Task } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
+import InterfaceIcon from "@/components/common/InterfaceIcon.vue"
 
 interface Props {
   task: Task

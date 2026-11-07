@@ -33,7 +33,6 @@ export interface UISettings {
 
 // 运行设置
 export interface RuntimeSettings {
-  timeout: number
   autoRetry: boolean
   maxRetryCount: number
   retryInterval: number
