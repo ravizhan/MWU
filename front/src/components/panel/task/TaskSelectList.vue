@@ -17,9 +17,9 @@
         ghost-class="ghost"
       >
         <NEl
-          tag="div"
           v-for="item in taskListData"
           :key="item.uid"
+          tag="div"
           class="task-row flex items-center gap-3 px-3 py-2.5 border-b border-solid last:border-b-0 cursor-pointer transition-colors"
           :style="{
             borderColor: 'var(--divider-color)',

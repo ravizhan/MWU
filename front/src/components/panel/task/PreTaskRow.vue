@@ -32,11 +32,11 @@
 import { ReorderThreeOutline, TrashOutline } from "@vicons/ionicons5"
 import type { PreTaskCommand } from "@/types/taskConfigModel"
 
-const item = defineModel<PreTaskCommand>("item", { required: true })
-
 const emit = defineEmits<{
   (event: "delete"): void
 }>()
+
+const item = defineModel<PreTaskCommand>("item", { required: true })
 </script>
 
 <style scoped>

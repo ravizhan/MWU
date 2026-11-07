@@ -24,14 +24,17 @@ export default defineConfig({
   ],
   build: {
     outDir: "../page",
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks(id: string) {
-          if (id.includes("node_modules")) {
-            if (id.includes("naive-ui")) return "naive-ui"
-            if (/[\\/](vue|vue-router|pinia|vue-i18n|@vue)[\\/]/.test(id)) return "vendor-vue"
-            if (id.includes("zod") || id.includes("cron-converter")) return "vendor-utils"
-          }
+        codeSplitting: {
+          groups: [
+            { name: "naive-ui", test: /node_modules[\\/].*naive-ui/ },
+            {
+              name: "vendor-vue",
+              test: /node_modules[\\/].*[\\/](vue|vue-router|pinia|vue-i18n|@vue)[\\/]/,
+            },
+            { name: "vendor-utils", test: /node_modules[\\/].*(zod|cron-converter)/ },
+          ],
         },
       },
     },

@@ -109,6 +109,8 @@ import PreTaskWarnDialog from "@/components/panel/task/PreTaskWarnDialog.vue"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { hasPretaskAck, setPretaskAck } from "@/utils/pretaskWarning"
 
+const { embedded = false, controllerName = null, resourceName = null } = defineProps<Props>()
+
 defineOptions({ inheritAttrs: false })
 
 interface Props {
@@ -124,8 +126,6 @@ interface PretaskListItem {
   compatible: boolean
   enabled: boolean
 }
-
-const { embedded = false, controllerName = null, resourceName = null } = defineProps<Props>()
 
 const modelValue = defineModel<PreTaskCommand[]>()
 const interfaceStore = useInterfaceStore()

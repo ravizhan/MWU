@@ -33,11 +33,10 @@
 import { ref, watch } from "vue"
 import { useI18n } from "vue-i18n"
 
-const show = defineModel<boolean>("show", { required: true })
 const emit = defineEmits<{
   (event: "confirm", dontRemind: boolean): void
 }>()
-
+const show = defineModel<boolean>("show", { required: true })
 const { t } = useI18n()
 const dontRemind = ref(false)
 

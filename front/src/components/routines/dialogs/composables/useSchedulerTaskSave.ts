@@ -4,7 +4,7 @@ import { useSchedulerStore, useTaskConfigStore } from "@/stores"
 import { schedulerTaskFormSchema } from "@/validation/scheduler"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { tryCatch } from "@/utils/tryCatch"
-import type { ZodIssue } from "zod"
+import type { z } from "zod"
 import type { ScheduledTask } from "@/types/schedulerModel"
 import type { SchedulerTaskFormData } from "./useSchedulerTaskForm"
 
@@ -23,20 +23,20 @@ export interface SchedulerTaskSave {
   handleSave: () => Promise<void>
 }
 
-function triggerRuleMessage(issue: ZodIssue): string {
-  if (issue.path[1] === "cron") return "settings.scheduler.rules.cronInvalid"
+function triggerRuleMessage(issue: z.core.$ZodIssue, t: (key: string) => string): string {
+  if (issue.path[1] === "cron") return t("settings.scheduler.rules.cronInvalid")
   if (issue.path[1] === "run_date") {
     return issue.message.includes("future")
-      ? "settings.scheduler.rules.dateInPast"
-      : "settings.scheduler.rules.dateRequired"
+      ? t("settings.scheduler.rules.dateInPast")
+      : t("settings.scheduler.rules.dateRequired")
   }
-  if (issue.path[1] === "end_date") return "settings.scheduler.rules.intervalEndBeforeStart"
-  return "settings.scheduler.rules.intervalRequired"
+  if (issue.path[1] === "end_date") return t("settings.scheduler.rules.intervalEndBeforeStart")
+  return t("settings.scheduler.rules.intervalRequired")
 }
 
 /** 把 zod 校验问题路由到对应分区，并提示该分区的规则文案。 */
 function reportFormIssue(
-  issue: ZodIssue,
+  issue: z.core.$ZodIssue,
   callbacks: SaveCallbacks,
   t: (key: string) => string,
 ): void {
@@ -48,7 +48,7 @@ function reportFormIssue(
   }
   if (path.startsWith("trigger_config")) {
     callbacks.focusSection("schedule")
-    showGlobalMessage("error", t(triggerRuleMessage(issue)))
+    showGlobalMessage("error", triggerRuleMessage(issue, t))
     return
   }
   callbacks.focusSection("content", "task-list")

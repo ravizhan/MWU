@@ -32,9 +32,9 @@ const {
   showRescan?: boolean
 }>()
 
-const value = defineModel<string | null>("value", { required: true })
-
 const emit = defineEmits<{
   (event: "rescan"): void
 }>()
+
+const value = defineModel<string | null>("value", { required: true })
 </script>

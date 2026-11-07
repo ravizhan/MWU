@@ -6,7 +6,7 @@ const positiveIntegerSchema = z
   .string()
   .trim()
   .pipe(integerStringSchema)
-  .pipe(z.coerce.number<string>().int().positive().safe())
+  .pipe(z.coerce.number<string>().int().positive())
   .transform(String)
 
 /** IPv4 or hostname plus TCP port, normalized to host:port. */

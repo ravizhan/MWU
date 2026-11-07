@@ -114,7 +114,7 @@ watch(
   log,
   () => {
     if (!autoScroll.value) return
-    nextTick(() => {
+    void nextTick(() => {
       logPanel.value?.scrollToBottom()
     })
   },

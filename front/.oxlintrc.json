@@ -1,35 +1,115 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "vue", "vitest"],
+  "categories": {
+    "correctness": "error"
+  },
   "env": {
-    "es6": true
+    "builtin": true,
+    "browser": true
   },
   "options": {
     "typeAware": true,
     "typeCheck": true
   },
   "ignorePatterns": ["auto-imports.d.ts", "components.d.ts", "env.d.ts"],
+  "rules": {
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-console": ["error", { "allow": ["warn", "error"] }],
+    "no-nested-ternary": "error",
+    "prefer-const": "error",
+    "complexity": ["warn", { "max": 10 }],
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "fetch",
+        "message": "Call the backend through src/services/api modules."
+      }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "naive-ui",
+            "importNames": ["useMessage"],
+            "message": "Use showGlobalMessage() from @/services/feedback/message."
+          }
+        ]
+      }
+    ],
+
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-deprecated": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-unnecessary-type-conversion": "error",
+
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "import/no-self-import": "error",
+
+    "vue/define-props-declaration": ["error", "type-based"],
+    "vue/define-emits-declaration": ["error", "type-based"],
+    "vue/define-props-destructuring": "error",
+    "vue/prop-name-casing": ["error", "camelCase"],
+    "vue/require-typed-ref": "error",
+    "vue/no-import-compiler-macros": "error",
+
+    "vitest/require-mock-type-parameters": "off"
+  },
   "overrides": [
     {
-      "files": ["src/**/*.{js,jsx,ts,tsx,vue}"],
-      "env": {
-        "browser": true
-      }
-    },
-    {
-      "files": ["src/**/*.vue"],
-      "plugins": ["vue"]
-    },
-    {
-      "files": ["vite.config.ts", "uno.config.ts"],
-      "env": {
-        "node": true
-      }
-    },
-    {
-      "files": ["**/test/**", "**/*.test.{js,jsx,ts,tsx}"],
-      "plugins": ["vitest"],
+      "files": ["src/**/*.test.ts", "src/tests/**"],
       "env": {
         "vitest": true
+      },
+      "rules": {
+        "no-restricted-globals": "off",
+        "typescript/no-non-null-assertion": "off",
+        "vitest/no-disabled-tests": "error",
+        "vitest/no-focused-tests": "error",
+        "vitest/no-identical-title": "error",
+        "vitest/no-import-node-test": "error"
+      }
+    },
+    {
+      "files": ["src/stores/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@/stores",
+                "message": "Inside stores, import the concrete store module to avoid cycles."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/services/api/**", "src/utils/interface/content.ts"],
+      "rules": {
+        "no-restricted-globals": "off"
+      }
+    },
+    {
+      "files": ["src/services/feedback/FeedbackBridge.vue"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["*.config.ts"],
+      "env": {
+        "browser": false,
+        "node": true
       }
     }
   ]

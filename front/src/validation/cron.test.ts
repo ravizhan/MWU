@@ -23,9 +23,7 @@ describe("cronExpressionSchema", () => {
     it(`corpus: ${c.name}`, () => {
       const result = cronExpressionSchema.safeParse(c.input)
       expect(result.success).toBe(c.valid)
-      if (c.valid && result.success) {
-        expect(result.data).toBe(c.canonical)
-      }
+      expect(result.data ?? null).toBe(c.canonical)
     })
   }
 })

@@ -149,7 +149,7 @@ export const useSettingsStore = defineStore("settings", {
       if (state.settings.ui.darkMode === "auto") {
         return state.systemPrefersDark
       }
-      return !!state.settings.ui.darkMode
+      return state.settings.ui.darkMode
     },
   },
 

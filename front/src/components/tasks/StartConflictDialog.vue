@@ -63,7 +63,7 @@ function handleClose() {
 async function handleStopRestart() {
   const success = await deviceStore.stopActiveAndRestart()
   if (success) {
-    router.push({ name: "logs" })
+    void router.push({ name: "logs" })
   }
 }
 </script>

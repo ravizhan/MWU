@@ -76,9 +76,20 @@ import { ref, computed, watch, onUnmounted } from "vue"
 import { useI18n } from "vue-i18n"
 import { ArrowUpCircleOutline } from "@vicons/ionicons5"
 import { marked } from "marked"
-import { performUpdateApi, getUpdateStatusApi, type UpdateInfo } from "@/services/api"
+import {
+  performUpdateApi,
+  getUpdateStatusApi,
+  isBackendReachable,
+  type UpdateInfo,
+} from "@/services/api"
 import DOMPurify from "dompurify"
 import { tryCatch } from "@/utils/tryCatch"
+
+const { show, updateInfo } = defineProps<Props>()
+
+const emit = defineEmits<{
+  (e: "update:show", value: boolean): void
+}>()
 
 const { t } = useI18n()
 
@@ -86,11 +97,6 @@ interface Props {
   show: boolean
   updateInfo: UpdateInfo | null
 }
-
-const { show, updateInfo } = defineProps<Props>()
-const emit = defineEmits<{
-  (e: "update:show", value: boolean): void
-}>()
 
 const version_info = computed(() => {
   return (
@@ -195,8 +201,7 @@ const waitForBackendRestart = () => {
   const maxRetries = 60
 
   const checkBackend = async () => {
-    const [response, err] = await tryCatch(() => fetch("/api/settings", { method: "GET" }))
-    if (err || !response?.ok) {
+    if (!(await isBackendReachable())) {
       return false
     }
     statusMessage.value = t("settings.update.restarting")
@@ -219,7 +224,7 @@ const waitForBackendRestart = () => {
     window.location.reload()
   }
 
-  pollBackend()
+  void pollBackend()
 }
 
 const handleUpdate = async () => {

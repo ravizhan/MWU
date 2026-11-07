@@ -12,6 +12,8 @@ const locale: Locale =
   savedLocale === "zh-CN" || savedLocale === "en-US" ? savedLocale : DEFAULT_LOCALE
 
 const i18n = createI18n<[MessageSchema], Locale, false>({
+  // Composition mode becomes the default in vue-i18n v12; until then it must be requested.
+  // oxlint-disable-next-line typescript/no-deprecated
   legacy: false,
   globalInjection: true,
   locale,

@@ -26,11 +26,11 @@ interface RecipeCardPreset {
   taskCount: number
 }
 
-const { t } = useI18n()
 const { preset } = defineProps<{ preset: RecipeCardPreset }>()
 const emit = defineEmits<{
   (e: "apply", name: string): void
 }>()
+const { t } = useI18n()
 </script>
 
 <style scoped>

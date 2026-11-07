@@ -31,12 +31,13 @@ import { useI18n } from "vue-i18n"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
 
+const { contents } = defineProps<{ contents: string[] }>()
+
+const emit = defineEmits<{ (event: "confirm"): void }>()
+
 const { t } = useI18n()
 
 const show = defineModel<boolean>("show", { required: true })
-const { contents } = defineProps<{ contents: string[] }>()
-const emit = defineEmits<{ (event: "confirm"): void }>()
-
 const renderedContents = computed(() =>
   contents.map((content) => {
     const parsed = marked.parse(content, { gfm: true })

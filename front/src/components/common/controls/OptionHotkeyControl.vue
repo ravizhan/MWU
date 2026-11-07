@@ -64,9 +64,11 @@ function handleKeydown(name: string, event: KeyboardEvent): void {
   event.preventDefault()
   const issue = getHotkeyCaptureIssue(event)
   if (issue) {
-    const messageKey =
-      issue === "unsupported_key" ? "option.hotkeyUnsupportedKey" : "option.hotkeyTooManyModifiers"
-    captureError.value = { name, message: t(messageKey) }
+    const message =
+      issue === "unsupported_key"
+        ? t("option.hotkeyUnsupportedKey")
+        : t("option.hotkeyTooManyModifiers")
+    captureError.value = { name, message }
     return
   }
   const combo = buildHotkeyCombo(event)

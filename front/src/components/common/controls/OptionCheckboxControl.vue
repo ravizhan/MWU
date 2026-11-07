@@ -32,8 +32,6 @@ import { useI18n } from "vue-i18n"
 import type { CheckboxOption } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 
-const { t } = useI18n()
-
 const { option, value } = defineProps<{
   option: CheckboxOption
   value: string[]
@@ -42,6 +40,8 @@ const { option, value } = defineProps<{
 const emit = defineEmits<{
   (event: "update:value", value: string[]): void
 }>()
+
+const { t } = useI18n()
 
 const normalizedValue = computed(() => {
   const selected = new Set(value)

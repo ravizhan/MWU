@@ -231,7 +231,7 @@ function selectFirstTask() {
 async function handleStart() {
   const success = await deviceStore.StartTask()
   if (success) {
-    router.push({ name: "logs" })
+    void router.push({ name: "logs" })
   }
 }
 

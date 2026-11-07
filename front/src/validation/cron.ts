@@ -74,7 +74,7 @@ export const cronExpressionSchema = z
         if (month !== null && day !== null && day > MONTH_MAX_DAYS[month - 1]) return false
         return true
       })
-      return err === null && result === true
+      return err === null && result
     },
     { message: "cron does not meet strict scheduling requirements" },
   )

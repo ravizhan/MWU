@@ -44,7 +44,7 @@
     </div>
 
     <div
-      v-if="interfaceStore.interface?.mirrorchyan_rid"
+      v-if="hasMirrorchyan"
       class="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-2 md:gap-4 items-center py-4"
     >
       <label class="text-sm font-medium md:text-right">
@@ -89,6 +89,7 @@ const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const interfaceStore = useInterfaceStore()
 const settings = computed(() => settingsStore.settings)
+const hasMirrorchyan = computed(() => Boolean(interfaceStore.interface.mirrorchyan_rid))
 const checkingUpdate = ref(false)
 
 const updateChannelOptions = computed(() => [

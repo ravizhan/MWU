@@ -105,15 +105,14 @@ const {
   currentSettingTaskId,
 } = defineProps<Props>()
 
-const activeTab = defineModel<ActiveTab>("activeTab", { required: true })
-const preTasks = defineModel<PreTaskCommand[]>("preTasks", { required: true })
-
 const emit = defineEmits<{
   (e: "update:tasks", value: QueuedTaskItem[]): void
   (e: "config", uid: string, name: string): void
   (e: "remove", uid: string): void
   (e: "add", name: string): void
 }>()
+const activeTab = defineModel<ActiveTab>("activeTab", { required: true })
+const preTasks = defineModel<PreTaskCommand[]>("preTasks", { required: true })
 
 const { t } = useI18n()
 const showAddTask = ref(false)
