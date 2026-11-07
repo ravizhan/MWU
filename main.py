@@ -6,7 +6,9 @@
 # nuitka-project: --noinclude-custom-mode=annotated_types:bytecode
 # nuitka-project: --noinclude-custom-mode=anyio:bytecode
 # nuitka-project: --noinclude-custom-mode=apscheduler:bytecode
+# nuitka-project: --noinclude-custom-mode=apprise:bytecode
 # nuitka-project: --noinclude-custom-mode=certifi:bytecode
+# nuitka-project: --noinclude-custom-mode=charset_normalizer:bytecode
 # nuitka-project: --noinclude-custom-mode=click:bytecode
 # nuitka-project: --noinclude-custom-mode=cron_converter:bytecode
 # nuitka-project: --noinclude-custom-mode=cryptography:bytecode
@@ -18,13 +20,17 @@
 # nuitka-project: --noinclude-custom-mode=idna:bytecode
 # nuitka-project: --noinclude-custom-mode=json5:bytecode
 # nuitka-project: --noinclude-custom-mode=maa:bytecode
+# nuitka-project: --noinclude-custom-mode=markdown:bytecode
 # nuitka-project: --noinclude-custom-mode=numpy:bytecode
+# nuitka-project: --noinclude-custom-mode=oauthlib:bytecode
 # nuitka-project: --noinclude-custom-mode=opentelemetry:bytecode
 # nuitka-project: --noinclude-custom-mode=PIL:bytecode
 # nuitka-project: --noinclude-custom-mode=plyer:bytecode
 # nuitka-project: --noinclude-custom-mode=pydantic:bytecode
 # nuitka-project: --noinclude-custom-mode=pydantic_core:bytecode
 # nuitka-project: --noinclude-custom-mode=pydantic_extra_types:bytecode
+# nuitka-project: --noinclude-custom-mode=requests:bytecode
+# nuitka-project: --noinclude-custom-mode=requests_oauthlib:bytecode
 # nuitka-project: --noinclude-custom-mode=sentry_sdk:bytecode
 # nuitka-project: --noinclude-custom-mode=six:bytecode
 # nuitka-project: --noinclude-custom-mode=sqlalchemy:bytecode
@@ -36,6 +42,7 @@
 # nuitka-project: --noinclude-custom-mode=tzlocal:bytecode
 # nuitka-project: --noinclude-custom-mode=urllib3:bytecode
 # nuitka-project: --noinclude-custom-mode=uvicorn:bytecode
+# nuitka-project: --noinclude-custom-mode=yaml:bytecode
 import argparse
 import socket
 import sys

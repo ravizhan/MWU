@@ -74,6 +74,7 @@ import PiPretaskRow from "@/components/panel/task/PiPretaskRow.vue"
 import PreTaskRow from "@/components/panel/task/PreTaskRow.vue"
 import PreTaskToolbar from "@/components/panel/task/PreTaskToolbar.vue"
 import PreTaskWarnDialog from "@/components/panel/task/PreTaskWarnDialog.vue"
+import { createId } from "@/utils/id"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { hasPretaskAck, setPretaskAck } from "@/utils/pretaskWarning"
 
@@ -130,7 +131,7 @@ function addPreTask() {
   preTasks.value = [
     ...preTasks.value,
     {
-      id: crypto.randomUUID(),
+      id: createId(),
       command: "",
       enabled: true,
       timeout: 30,

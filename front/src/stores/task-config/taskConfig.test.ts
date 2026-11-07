@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
+import { describe, expect, it, beforeEach, vi } from "vitest"
 import { setActivePinia, createPinia } from "pinia"
 
 vi.mock("@/services/api", () => ({
@@ -111,16 +111,8 @@ function initTaskConfigStore() {
 describe("useTaskConfigStore", () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    let uuidCounter = 0
-    vi.stubGlobal("crypto", {
-      randomUUID: vi.fn<() => string>(() => `mock-uuid-${++uuidCounter}`),
-    })
     vi.clearAllMocks()
     setupInterface()
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
   })
 
   it("has correct initial state", () => {
