@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from backend.maa_worker.worker import MaaWorker
 
 
-PI_INTERFACE_VERSION = "v2.10.5"
+PI_INTERFACE_VERSION = "v2.11.0"
 
 
 class AgentService:
@@ -57,6 +57,7 @@ class AgentService:
             "PI_CLIENT_LANGUAGE": self.worker.text.language(),
             "PI_CLIENT_MAAFW_VERSION": "v" + metadata.version("maafw"),
             "PI_VERSION": self.worker.interface.version or "",
+            "PI_USER_DATA_DIR": str(self.worker.context.app_root),
             "PI_CONTROLLER": json.dumps(
                 controller_payload, ensure_ascii=False, separators=(",", ":")
             ),
