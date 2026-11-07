@@ -1,19 +1,17 @@
 <template>
-  <NCard :bordered="false" content-style="padding: 0.5rem">
-    <div class="markdown-body min-h-20 max-h-52 overflow-y-auto" v-html="htmlContent" />
+  <NCard v-if="htmlContent" :bordered="false" content-style="padding: 0.5rem">
+    <div class="markdown-body max-h-52 overflow-y-auto" v-html="htmlContent" />
   </NCard>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { useI18n } from "vue-i18n"
 import DOMPurify from "dompurify"
 import { marked } from "marked"
 import { useIndexStore, useInterfaceStore } from "@/stores"
 import type { Task } from "@/types/interfaceModel"
 import { resolveInterfaceDocumentContent, resolveInterfaceText } from "@/utils/interface/content"
 
-const { t } = useI18n()
 const interfaceStore = useInterfaceStore()
 const indexStore = useIndexStore()
 const documentContent = ref("")
@@ -64,9 +62,11 @@ watch(
   { immediate: true },
 )
 
+// Tasks without a description render nothing; the option panel already shows the empty state.
 const htmlContent = computed(() => {
-  const source = documentContent.value?.trim() ? documentContent.value : t("panel.empty")
-  const parsed = marked.parse(source || "", { gfm: true })
+  const source = documentContent.value.trim()
+  if (!source) return ""
+  const parsed = marked.parse(source, { gfm: true })
   return DOMPurify.sanitize(typeof parsed === "string" ? parsed : "")
 })
 </script>

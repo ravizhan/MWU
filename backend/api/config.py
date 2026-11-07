@@ -85,14 +85,3 @@ def save_task_config(config: TaskConfigModel):
     except Exception as e:
         app_state.send_log(f"保存任务配置失败: {e}")
         return {"status": "failed", "message": str(e)}
-
-
-@router.delete("/api/task-config")
-def reset_task_config():
-    try:
-        if TASK_CONFIG_FILE.exists():
-            TASK_CONFIG_FILE.unlink()
-        return {"status": "success"}
-    except Exception as e:
-        app_state.send_log(f"重置任务配置失败: {e}")
-        return {"status": "failed", "message": str(e)}

@@ -1,12 +1,14 @@
 <template>
-  <div class="space-y-3">
+  <div class="flex flex-col gap-3 flex-1 min-h-0">
     <TaskOptionPanel
+      class="flex-1 min-h-0"
       :current-task-id="selectedTaskId"
       :options="configStore.options"
       :empty-text="t('settings.scheduler.dialog.selectTaskTip')"
       :no-options-text="t('settings.scheduler.dialog.noOptions')"
+      scrollbar-class="flex-1 min-h-0 overflow-y-auto rounded-xl"
     />
-    <TaskDescriptionCard />
+    <TaskDescriptionCard class="shrink-0" />
   </div>
 </template>
 

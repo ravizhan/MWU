@@ -1,6 +1,6 @@
 import { defineStore } from "pinia"
 import i18n from "@/app/i18n"
-import { getTaskConfig, resetTaskConfig, saveTaskConfig } from "@/services/api"
+import { getTaskConfig, saveTaskConfig } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
 import { pretaskKey } from "@/stores/interface/interface"
@@ -308,17 +308,23 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       return { tasks, taskOptions: cloneTaskOptionsByTask(taskOptions), preTasks: [] }
     },
 
+    /** Interface-declared default for one preset; the custom preset (or an unknown name) starts empty. */
+    buildDefaultSnapshot(presetName: string): TaskPresetSnapshot {
+      const preset = useInterfaceStore().getPresetList.find((item) => item.name === presetName)
+      if (!preset) {
+        return { tasks: [], taskOptions: {}, preTasks: [] }
+      }
+      return this.buildPresetSnapshot(preset)
+    },
+
     /** Server-normalized snapshots are trusted as-is; presets the server did not send fall back to the interface. */
     seedPresetSnapshots(
       persistedSnapshots: Record<string, TaskPresetSnapshot> = {},
     ): Record<string, TaskPresetSnapshot> {
       const interfaceStore = useInterfaceStore()
       const presetSnapshots: Record<string, TaskPresetSnapshot> = {
-        [CUSTOM_PRESET_NAME]: persistedSnapshots[CUSTOM_PRESET_NAME] ?? {
-          tasks: [],
-          taskOptions: {},
-          preTasks: [],
-        },
+        [CUSTOM_PRESET_NAME]:
+          persistedSnapshots[CUSTOM_PRESET_NAME] ?? this.buildDefaultSnapshot(CUSTOM_PRESET_NAME),
       }
 
       for (const preset of interfaceStore.getPresetList) {
@@ -440,20 +446,25 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       await saveTaskConfig(this.buildPersistedConfig())
     },
 
-    async resetConfig(): Promise<boolean> {
-      const targetPresetName = useInterfaceStore().getPresetList[0]?.name ?? CUSTOM_PRESET_NAME
-      if (!this.canApplyPresetPretasks(targetPresetName)) {
+    /** 仅把当前预设恢复为 interface 默认值；其他预设的快照原样保留。先落盘，成功后才改本地状态。 */
+    async resetCurrentPreset(): Promise<boolean> {
+      const presetName = this.selectedPresetName
+      if (!this.canApplyPresetPretasks(presetName)) {
         return false
       }
-      if (!(await resetTaskConfig())) {
+      const snapshot = this.buildDefaultSnapshot(presetName)
+      this.syncCurrentPresetSnapshot()
+      const saved = await saveTaskConfig({
+        selectedPreset: presetName,
+        presets: { ...this.presetSnapshots, [presetName]: snapshot },
+      })
+      if (!saved) {
         showGlobalMessage("error", i18n.global.t("panel.configResetFailed"))
         return false
       }
-      this.presetSnapshots = this.seedPresetSnapshots()
-      this.selectedPresetName = targetPresetName
-      this.preTasks = []
-      this.hydrateSnapshot(this.presetSnapshots[this.selectedPresetName])
-      if (!(await this.applyPresetPretasks(this.selectedPresetName))) {
+      this.presetSnapshots[presetName] = snapshot
+      this.hydrateSnapshot(snapshot)
+      if (!(await this.applyPresetPretasks(presetName))) {
         showGlobalMessage("error", i18n.global.t("panel.configResetPretaskNotSaved"))
         return false
       }

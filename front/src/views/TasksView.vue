@@ -1,16 +1,16 @@
 <template>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start max-w-7xl mx-auto">
+  <div class="tasks-view grid grid-cols-1 md:grid-cols-2 gap-4 max-w-7xl mx-auto">
     <!-- Left: Task list with start/stop -->
     <NCard
-      ref="leftCard"
       :bordered="false"
-      content-style="display: flex; flex-direction: column; padding-bottom: 0"
-      header-style="padding-bottom: 0.5rem"
+      class="tasks-column"
+      content-style="display: flex; flex-direction: column; min-height: 0; gap: 0.75rem"
+      header-style="padding-bottom: 0.75rem"
     >
       <template #header>
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="text-base shrink-0 flex items-center gap-2">
-            <NIcon size="24">
+        <div class="flex items-center gap-2 h-8">
+          <h2 class="text-base font-semibold shrink-0 flex items-center gap-2">
+            <NIcon size="22">
               <ListOutline />
             </NIcon>
             {{ t("panel.taskList") }}
@@ -32,60 +32,76 @@
         </div>
       </template>
       <PreTaskList
-        ref="preTaskList"
         v-model="configStore.preTasks"
-        class="mb-3"
+        class="shrink-0"
         :controller-name="deviceStore.selectedControllerName"
         :resource-name="deviceStore.resource"
       />
       <TaskSelectList
+        class="min-h-0"
         :tasks="configStore.taskList"
         :controller-name="deviceStore.selectedControllerName"
         :resource-name="deviceStore.resource"
         :hide-incompatible="true"
-        :max-height="taskListMaxHeight"
         :selected-uid="selectedTaskUid"
         @update:tasks="handleTasksUpdate"
         @config="handleConfigTask"
         @remove="handleRemoveTask"
       />
-      <div class="flex justify-center gap-2 pt-4 shrink-0">
-        <NButton
-          type="primary"
-          class="min-w-32"
-          :disabled="indexStore.TaskRunning"
-          @click="handleStart"
-        >
+      <div class="mt-auto shrink-0 flex flex-col items-center gap-1">
+        <div class="flex justify-center gap-2">
+          <NButton
+            type="primary"
+            class="min-w-32"
+            :disabled="indexStore.TaskRunning"
+            @click="handleStart"
+          >
+            <template #icon>
+              <NIcon><PlayOutline /></NIcon>
+            </template>
+            {{ t("panel.start") }}
+          </NButton>
+          <NButton
+            type="warning"
+            class="min-w-32"
+            :disabled="!indexStore.TaskRunning"
+            @click="handleStop"
+          >
+            <template #icon>
+              <NIcon><StopOutline /></NIcon>
+            </template>
+            {{ t("panel.stop") }}
+          </NButton>
+        </div>
+        <NButton quaternary size="small" type="warning" @click="handleResetPreset">
           <template #icon>
-            <NIcon><PlayOutline /></NIcon>
+            <NIcon><RefreshOutline /></NIcon>
           </template>
-          {{ t("panel.start") }}
-        </NButton>
-        <NButton
-          type="warning"
-          class="min-w-32"
-          :disabled="!indexStore.TaskRunning"
-          @click="handleStop"
-        >
-          <template #icon>
-            <NIcon><StopOutline /></NIcon>
-          </template>
-          {{ t("panel.stop") }}
-        </NButton>
-      </div>
-      <div class="text-center shrink-0 py-2">
-        <NButton quaternary size="small" type="warning" @click="deviceStore.resetConfig()">
           {{ t("panel.resetConfig") }}
         </NButton>
       </div>
     </NCard>
 
-    <!-- Right: Task Options + Description (desktop only) -->
+    <!-- Right: Task Options + Description (hidden on mobile, which uses the drawer) -->
     <NCard
       :bordered="false"
-      class="task-settings-card"
-      content-style="display: flex; flex-direction: column"
+      class="tasks-column task-settings-card"
+      content-style="display: flex; flex-direction: column; min-height: 0"
+      header-style="padding-bottom: 0.75rem"
     >
+      <template #header>
+        <div class="flex items-center gap-2 h-8 min-w-0">
+          <h2 class="text-base font-semibold shrink-0 flex items-center gap-2">
+            <NIcon size="22">
+              <OptionsOutline />
+            </NIcon>
+            {{ t("panel.taskSettings") }}
+          </h2>
+          <NTag v-if="selectedTaskLabel" type="primary" size="small" class="ml-auto min-w-0">
+            <span class="block truncate">{{ selectedTaskLabel }}</span>
+          </NTag>
+        </div>
+      </template>
       <PanelTaskColumn />
     </NCard>
 
@@ -103,10 +119,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from "vue"
+import { computed, onMounted, onUnmounted, ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { useRouter } from "vue-router"
-import { AddOutline, ListOutline, PlayOutline, StopOutline } from "@vicons/ionicons5"
+import {
+  AddOutline,
+  ListOutline,
+  OptionsOutline,
+  PlayOutline,
+  RefreshOutline,
+  StopOutline,
+} from "@vicons/ionicons5"
 import PanelTaskColumn from "@/components/panel/PanelTaskColumn.vue"
 import AddTaskDialog from "@/components/panel/task/AddTaskDialog.vue"
 import TaskSettingsDrawer from "@/components/panel/task/TaskSettingsDrawer.vue"
@@ -152,76 +175,9 @@ const presetOptions = computed(() => [
   })),
 ])
 
-/* Left column must fit under the sticky navbar without page overflow. The
-   task list is the only flexible region, so its max-height = viewport minus
-   navbar, main vertical padding, the card's fixed chrome (header/buttons/
-   reset/padding) and the PreTaskList's current height. Expanding PreTaskList
-   shrinks the list by the same amount; collapsing restores it. Desktop only. */
-const leftCard = useTemplateRef("leftCard")
-const preTaskList = useTemplateRef("preTaskList")
-const preTaskHeight = ref(0)
-const chromeHeight = ref(0)
-const topOffset = ref(0)
-const bottomReserve = ref(0)
-const viewportHeight = ref(0)
-let resizeObserver: ResizeObserver | null = null
-
-const taskListMaxHeight = computed(() => {
-  if (isMobile.value || viewportHeight.value === 0) {
-    return ""
-  }
-  const available =
-    viewportHeight.value -
-    topOffset.value -
-    bottomReserve.value -
-    chromeHeight.value -
-    preTaskHeight.value
-  return `${Math.round(Math.max(160, available))}px`
-})
-
-function measureHeights() {
-  const cardEl: HTMLElement | undefined = leftCard.value?.$el
-  const preTaskEl: HTMLElement | undefined = preTaskList.value?.$el
-  preTaskHeight.value = preTaskEl?.offsetHeight ?? 0
-  if (cardEl) {
-    // The scroll container is the single overflow-y-auto child (TaskSelectList).
-    const listEl = cardEl.querySelector<HTMLElement>(".overflow-y-auto")
-    // Card height = preTask + listScroll + chrome, so chrome is exact.
-    chromeHeight.value = cardEl.offsetHeight - preTaskHeight.value - (listEl?.offsetHeight ?? 0)
-    // Space the card top occupies from the viewport top (navbar + wrapper
-    // top padding), and the bottom padding to preserve below the grid.
-    topOffset.value = cardEl.getBoundingClientRect().top
-  }
-  bottomReserve.value = bottomPaddingOf("main") + bottomPaddingOf("main > div")
-}
-
-function bottomPaddingOf(selector: string): number {
-  const el = document.querySelector(selector)
-  return el ? parseFloat(getComputedStyle(el).paddingBottom) : 0
-}
-
-watch(isMobile, measureHeights)
-
-function handleWindowResize() {
-  viewportHeight.value = window.innerHeight
-  measureHeights()
-}
-
-onMounted(() => {
-  viewportHeight.value = window.innerHeight
-  window.addEventListener("resize", handleWindowResize)
-  const el = preTaskList.value?.$el
-  if (el) {
-    resizeObserver = new ResizeObserver(measureHeights)
-    resizeObserver.observe(el)
-  }
-  measureHeights()
-})
-
-onUnmounted(() => {
-  window.removeEventListener("resize", handleWindowResize)
-  resizeObserver?.disconnect()
-  resizeObserver = null
+const selectedTaskLabel = computed(() => {
+  const task = interfaceStore.getTaskByName(indexStore.SelectedTaskID)
+  return task ? resolveInterfaceText(task.label, task.name) : ""
 })
 
 function handleTasksUpdate(tasks: QueuedTaskItem[]) {
@@ -257,6 +213,17 @@ function handleConfigTask(uid: string, name: string) {
 
 function handlePresetChange(name: string) {
   if (!configStore.selectPreset(name)) return
+  selectFirstTask()
+}
+
+async function handleResetPreset() {
+  if (await deviceStore.resetCurrentPreset()) {
+    selectFirstTask()
+  }
+}
+
+// Queue items are rebuilt with new uids, so drop the stale click and follow the new head.
+function selectFirstTask() {
   clickedTaskUid.value = null
   indexStore.SelectTask(configStore.taskList[0]?.id ?? "")
 }
@@ -283,16 +250,28 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Below md the settings live in TaskSettingsDrawer. A scoped rule is used
+   because a utility class would race naive-ui's own `.n-card { display: flex }`. */
 .task-settings-card {
   display: none;
 }
-@media (min-width: 1024px) {
+/* From md up both columns share one viewport-fitted row: viewport minus the
+   4rem navbar, the 2rem wrapper padding and main's bottom padding (6rem while
+   the dock is shown below lg, 1rem above). Inner lists scroll instead of the page. */
+@media (min-width: 768px) {
+  .tasks-view {
+    height: max(32rem, calc(100dvh - 12rem));
+  }
+  .tasks-column {
+    min-height: 0;
+  }
   .task-settings-card {
-    display: block;
-    /* Vertically center within the grid row. The left card is capped to the
-       viewport, so the row height tracks the visible area and the settings
-       card stays centered regardless of its own height. */
-    align-self: center;
+    display: flex;
+  }
+}
+@media (min-width: 1024px) {
+  .tasks-view {
+    height: max(32rem, calc(100dvh - 7rem));
   }
 }
 </style>

@@ -4,7 +4,6 @@ import { setActivePinia, createPinia } from "pinia"
 vi.mock("@/services/api", () => ({
   getTaskConfig: vi.fn<() => void>(),
   saveTaskConfig: vi.fn<() => void>(),
-  resetTaskConfig: vi.fn<() => void>(),
   getSettings: vi.fn<() => void>(),
   updateSettings: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
 }))
@@ -431,18 +430,28 @@ describe("useTaskConfigStore", () => {
     })
   })
 
-  describe("resetConfig", () => {
-    it("resets to the first interface preset with empty preTasks and its pretask state", async () => {
+  describe("resetCurrentPreset", () => {
+    // selectPreset also fires an async pretask save; switch directly so only the reset touches settings.
+    function switchPreset(presetName: string) {
+      const store = useTaskConfigStore()
+      store.syncCurrentPresetSnapshot()
+      store.selectedPresetName = presetName
+      store.hydrateSnapshot(store.presetSnapshots[presetName])
+    }
+
+    it("restores only the selected preset to its interface defaults and pretask state", async () => {
       const store = initTaskConfigStore()
       const settingsStore = useSettingsStore()
-      store.selectPreset("preset2")
+      store.taskList = store.buildQueueFromIds(["Task C"])
+      switchPreset("preset1")
+      store.taskList = store.buildQueueFromIds(["Task B"])
+      store.options["Task B"] = { mode: ["manual"] }
       store.preTasks = [{ id: "pt1", command: "echo old", enabled: true, timeout: 30 }]
       settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
-      vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
+      vi.mocked(api.saveTaskConfig).mockResolvedValue(true)
 
-      await store.resetConfig()
+      await expect(store.resetCurrentPreset()).resolves.toBe(true)
 
-      expect(api.resetTaskConfig).toHaveBeenCalledTimes(1)
       expect(store.selectedPresetName).toBe("preset1")
       expect(store.preTasks).toEqual([])
       expect(store.taskList.map((task) => task.id)).toEqual(["Task A"])
@@ -451,19 +460,38 @@ describe("useTaskConfigStore", () => {
         params: { host: "preset-host", port: "" },
       })
       expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: true, Cleanup: false })
+      expect(store.presetSnapshots[CUSTOM_PRESET_NAME].tasks).toEqual(["Task C"])
+      const persisted = vi.mocked(api.saveTaskConfig).mock.calls[0][0]
+      expect(persisted.presets.preset1.tasks).toEqual(["Task A"])
+      expect(persisted.presets[CUSTOM_PRESET_NAME].tasks).toEqual(["Task C"])
     })
 
-    it("keeps local config and settings when the backend reset fails", async () => {
+    it("empties the custom preset without touching interface presets", async () => {
+      const store = initTaskConfigStore()
+      switchPreset("preset2")
+      store.taskList = store.buildQueueFromIds(["Task C"])
+      switchPreset(CUSTOM_PRESET_NAME)
+      store.taskList = store.buildQueueFromIds(["Task A"])
+      vi.mocked(api.saveTaskConfig).mockResolvedValue(true)
+
+      await expect(store.resetCurrentPreset()).resolves.toBe(true)
+
+      expect(store.taskList).toEqual([])
+      expect(store.presetSnapshots.preset2.tasks).toEqual(["Task C"])
+      expect(api.updateSettings).not.toHaveBeenCalled()
+    })
+
+    it("keeps local config and settings when saving the reset fails", async () => {
       const store = initTaskConfigStore()
       const settingsStore = useSettingsStore()
-      store.selectPreset("preset2")
+      switchPreset("preset1")
+      store.taskList = store.buildQueueFromIds(["Task B"])
       settingsStore.settings.pretaskEnabled = { Launch: false, Cleanup: true }
-      vi.mocked(api.updateSettings).mockClear()
-      vi.mocked(api.resetTaskConfig).mockResolvedValue(false)
+      vi.mocked(api.saveTaskConfig).mockResolvedValue(false)
 
-      await expect(store.resetConfig()).resolves.toBe(false)
+      await expect(store.resetCurrentPreset()).resolves.toBe(false)
 
-      expect(store.selectedPresetName).toBe("preset2")
+      expect(store.taskList.map((task) => task.id)).toEqual(["Task B"])
       expect(settingsStore.settings.pretaskEnabled).toEqual({ Launch: false, Cleanup: true })
       expect(api.updateSettings).not.toHaveBeenCalled()
       expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetFailed")
@@ -471,10 +499,11 @@ describe("useTaskConfigStore", () => {
 
     it("reports a partial reset when the pretask settings save fails", async () => {
       const store = initTaskConfigStore()
-      vi.mocked(api.resetTaskConfig).mockResolvedValue(true)
+      switchPreset("preset1")
+      vi.mocked(api.saveTaskConfig).mockResolvedValue(true)
       vi.mocked(api.updateSettings).mockResolvedValueOnce(false)
 
-      await expect(store.resetConfig()).resolves.toBe(false)
+      await expect(store.resetCurrentPreset()).resolves.toBe(false)
 
       expect(showGlobalMessage).toHaveBeenCalledWith("error", "panel.configResetPretaskNotSaved")
     })

@@ -39,24 +39,3 @@ export function saveTaskConfig(config: PersistedTaskConfig): Promise<boolean> {
       return false
     })
 }
-
-export function resetTaskConfig(): Promise<boolean> {
-  return fetch("/api/task-config", {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  })
-    .then((res) => res.json())
-    .then((data: ApiResponse) => {
-      if (data.status === "success") {
-        return true
-      }
-      console.error("Failed to reset task config:", data.message)
-      return false
-    })
-    .catch((error) => {
-      console.error("Failed to reset task config:", error)
-      return false
-    })
-}

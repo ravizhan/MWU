@@ -813,14 +813,16 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return false
     },
 
-    // --- Config reset ---
-    async resetConfig() {
+    // --- Preset reset ---
+    async resetCurrentPreset(): Promise<boolean> {
       const t = i18n.global.t
       const configStore = useTaskConfigStore()
 
-      if (confirm(t("panel.resetConfigConfirm")) && (await configStore.resetConfig())) {
-        showGlobalMessage("success", t("panel.configReset"))
+      if (!confirm(t("panel.resetConfigConfirm")) || !(await configStore.resetCurrentPreset())) {
+        return false
       }
+      showGlobalMessage("success", t("panel.configReset"))
+      return true
     },
 
     // --- Lifecycle ---

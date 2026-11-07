@@ -1,12 +1,15 @@
 <template>
-  <NCard :bordered="false" content-style="padding: 0.5rem">
+  <NCard
+    :bordered="false"
+    content-style="padding: 0.5rem; min-height: 0; display: flex; flex-direction: column"
+  >
     <div v-if="showHeader && currentTaskName" class="text-center mb-2">
       <NTag type="primary" size="large">{{ headerLabel }}{{ currentTaskName }}</NTag>
     </div>
 
     <div :class="scrollbarClass">
-      <div v-if="!currentTaskId" class="text-center py-8 opacity-50">
-        <NIcon size="30" class="mx-auto mb-2"><SettingsOutline /></NIcon>
+      <div v-if="!currentTaskId" :class="emptyStateClass">
+        <NIcon size="30" class="mb-2"><SettingsOutline /></NIcon>
         <p>{{ emptyText }}</p>
       </div>
       <NEl v-else-if="taskOptions.length > 0" tag="div" class="rounded-lg overflow-hidden">
@@ -17,8 +20,8 @@
           :task-options="currentTaskOptions"
         />
       </NEl>
-      <div v-else class="text-center py-8 opacity-50">
-        <NIcon size="30" class="mx-auto mb-2"><FileTrayOutline /></NIcon>
+      <div v-else :class="emptyStateClass">
+        <NIcon size="30" class="mb-2"><FileTrayOutline /></NIcon>
         <p>{{ noOptionsText }}</p>
       </div>
     </div>
@@ -54,6 +57,10 @@ const {
 } = defineProps<Props>()
 
 const interfaceStore = useInterfaceStore()
+
+// h-full centers the placeholder when the panel is stretched; it is a no-op at natural height.
+const emptyStateClass =
+  "h-full flex flex-col items-center justify-center text-center py-8 opacity-50"
 
 const currentTaskName = computed(() => {
   if (!currentTaskId) return ""
