@@ -375,6 +375,7 @@ import SchedulerTaskDialogContentTabs from "./SchedulerTaskDialogContentTabs.vue
 import SchedulerTaskDialogSectionNav from "./SchedulerTaskDialogSectionNav.vue"
 import SchedulerTaskDialogTriggerType from "./SchedulerTaskDialogTriggerType.vue"
 import { toIsoOrEmpty, toDatetimeLocalValue } from "@/utils/datetime"
+import { createId } from "@/utils/id"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useViewport } from "@/utils/viewport/useViewport"
 import { renderIconLabel } from "@/utils/interface/iconLabel"
@@ -511,7 +512,7 @@ function syncTaskListData(preferredOrder: string[]) {
   for (const taskId of preferredOrder) {
     const task = taskMap.get(taskId)
     if (task) {
-      orderedTasks.push({ ...task, uid: crypto.randomUUID() })
+      orderedTasks.push({ ...task, uid: createId() })
     }
   }
 
@@ -636,7 +637,7 @@ function handleAddTask(name: string) {
     task_list,
     formData.value.task_options,
   )
-  taskListData.value = [...taskListData.value, { ...task, uid: crypto.randomUUID() }]
+  taskListData.value = [...taskListData.value, { ...task, uid: createId() }]
 }
 
 function handleRemoveTask(uid: string) {

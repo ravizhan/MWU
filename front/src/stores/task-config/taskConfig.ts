@@ -4,6 +4,7 @@ import { getTaskConfig, saveTaskConfig } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { pretaskKey, useInterfaceStore } from "@/stores/interface/interface"
 import { useSettingsStore } from "@/stores/settings/settings"
+import { createId } from "@/utils/id"
 import { tryCatch } from "@/utils/tryCatch"
 import type { Option, Preset, PresetTaskOptionValue } from "@/types/interfaceModel"
 import type {
@@ -73,7 +74,7 @@ function cloneTaskOptionsByTask(
 
 function createQueuedTaskItem(task: TaskListItem): QueuedTaskItem {
   return {
-    uid: crypto.randomUUID(),
+    uid: createId(),
     id: task.id,
     name: task.name,
   }

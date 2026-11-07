@@ -1,3 +1,4 @@
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -5,6 +6,7 @@ import plyer
 
 from backend.core.settings_io import default_settings_path, load_settings_model
 from backend.models.api import RealtimeEvent, RealtimeEventLevel, RealtimeEventName
+from backend.models.notification import NotificationChannel
 from backend.models.settings import SettingsModel
 from backend.services.notification import send_external
 
@@ -69,7 +71,7 @@ class EventService:
         self.deliver_notification(realtime_event)
 
     def deliver_notification(self, event: RealtimeEvent):
-        """按设置发送系统/外部通知（可能阻塞在网络请求上，须在工作线程调用）。"""
+        """按设置发送系统/外部通知；外部渠道在守护线程发送，sink 回调与停止不等待网络。"""
         if "notification" not in event.notify:
             return
 
@@ -84,15 +86,21 @@ class EventService:
                 self.send_log(f"系统通知发送失败: {exc}")
 
         if settings.notification.externalNotification:
-            errors = send_external(
-                settings.notification.channels,
-                title,
-                message,
-                event.level,
-                self.worker.text.app_name(),
-            )
-            for error in errors:
-                self.send_log(f"外部通知发送失败: {error}")
+            threading.Thread(
+                target=self._send_external,
+                args=(settings.notification.channels, title, message, event.level),
+                daemon=True,
+            ).start()
+
+    def _send_external(
+        self,
+        channels: list[NotificationChannel],
+        title: str,
+        message: str,
+        level: RealtimeEventLevel,
+    ) -> None:
+        for error in send_external(channels, title, message, level):
+            self.send_log(f"外部通知发送失败: {error}")
 
     def send_log(self, msg: str):
         self.emit("log", msg)

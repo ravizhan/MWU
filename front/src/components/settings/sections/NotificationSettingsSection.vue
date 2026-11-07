@@ -160,6 +160,7 @@ import {
 import { testNotificationApi } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useSettingsStore } from "@/stores"
+import { createId } from "@/utils/id"
 import { tryCatch } from "@/utils/tryCatch"
 import type { NotificationChannel, SettingsModel } from "@/types/settingsModel"
 
@@ -214,7 +215,7 @@ function addChannel(key: string | number) {
   )
   saveChannels([
     ...settings.value.notification.channels,
-    { id: crypto.randomUUID(), type, enabled: true, params },
+    { id: createId(), type, enabled: true, params },
   ])
 }
 

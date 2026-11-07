@@ -48,7 +48,17 @@ _NOTIFY_TYPES: dict[RealtimeEventLevel, NotifyType] = {
     "error": NotifyType.FAILURE,
 }
 
+# 插件会把 app_id 写进 User-Agent 等 HTTP/邮件头，只能用 ASCII；显示名走通知标题
+_APP_ID = "MWU"
+
 type _RobotRequest = tuple[str, dict[str, str], dict[str, Any]]
+
+
+def _request_error(exc: requests.RequestException) -> str:
+    """requests 的异常文本包含完整 URL（钉钉/企业微信的 token 在其中），只报状态码或异常类型。"""
+    if exc.response is not None:
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
 
 
 class _RobotWebhook(NotifyBase):
@@ -94,8 +104,11 @@ class _RobotWebhook(NotifyBase):
             )
             response.raise_for_status()
             error = self._error_of(response.json())
-        except (requests.RequestException, ValueError) as exc:
-            self.logger.warning("请求失败: %s", exc)
+        except requests.RequestException as exc:
+            self.logger.warning("请求失败: %s", _request_error(exc))
+            return False
+        except ValueError as exc:
+            self.logger.warning("响应不是合法 JSON: %s", exc)
             return False
         if error is not None:
             self.logger.warning("返回错误: %s", error)
@@ -209,13 +222,20 @@ class _Webhook(NotifyBase):
     ) -> bool:
         p = self._params
         template = p.body.strip()
+
+        def escape(value: str) -> str:
+            # 编码成 JSON 字符串字面量再去掉两侧引号，占位符在字符串内时结果仍是合法 JSON
+            return json.dumps(value, ensure_ascii=False)[1:-1]
+
         try:
             payload = (
                 json.loads(
-                    template.replace("{{title}}", title).replace("{{message}}", body)
+                    template.replace("{{title}}", escape(title)).replace(
+                        "{{message}}", escape(body)
+                    )
                 )
                 if template
-                else {"title": title or self.app_id, "message": body}
+                else {"title": title, "message": body}
             )
         except ValueError as exc:
             self.logger.warning("Body 模板不是合法 JSON: %s", exc)
@@ -239,7 +259,7 @@ class _Webhook(NotifyBase):
         try:
             requests.request(p.method, p.url, **request).raise_for_status()
         except requests.RequestException as exc:
-            self.logger.warning("请求失败: %s", exc)
+            self.logger.warning("请求失败: %s", _request_error(exc))
             return False
         return True
 
@@ -329,10 +349,9 @@ def send_external(
     title: str,
     message: str,
     level: RealtimeEventLevel,
-    app_name: str,
 ) -> list[str]:
     """向所有启用的渠道发送通知，返回每个失败渠道的错误描述（全部成功时为空）。"""
-    asset = AppriseAsset(app_id=app_name, storage_mode="memory")
+    asset = AppriseAsset(app_id=_APP_ID, storage_mode="memory")
     apprise = Apprise(asset=asset)
     errors: list[str] = []
     for channel in channels:

@@ -3,6 +3,7 @@ import { useI18n } from "vue-i18n"
 import { useSchedulerStore, useTaskConfigStore } from "@/stores"
 import { schedulerTaskFormSchema } from "@/validation/scheduler"
 import { showGlobalMessage } from "@/services/feedback/message"
+import { createId } from "@/utils/id"
 import { tryCatch } from "@/utils/tryCatch"
 import type { z } from "zod"
 import type { ScheduledTask } from "@/types/schedulerModel"
@@ -91,7 +92,7 @@ export function useSchedulerTaskSave(
       description: taskPayload.description ?? undefined,
       preTasks: taskPayload.preTasks.map((preTask) => ({
         ...preTask,
-        id: preTask.id ?? crypto.randomUUID(),
+        id: preTask.id ?? createId(),
       })),
     }
 
