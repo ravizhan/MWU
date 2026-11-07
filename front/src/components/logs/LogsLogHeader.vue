@@ -38,10 +38,10 @@
         quaternary
         circle
         size="small"
-        :disabled="!hasLog"
-        aria-label="Download log"
-        title="Download log"
-        @click="emit('download')"
+        :loading="exporting"
+        :aria-label="t('panel.logExport')"
+        :title="t('panel.logExport')"
+        @click="emit('export')"
       >
         <template #icon>
           <NIcon size="18"><DownloadOutline /></NIcon>
@@ -61,14 +61,15 @@ import {
   DownloadOutline,
 } from "@vicons/ionicons5"
 
-const { autoScroll, hasLog } = defineProps<{
+const { autoScroll, exporting, hasLog } = defineProps<{
   autoScroll: boolean
+  exporting: boolean
   hasLog: boolean
 }>()
 
 const emit = defineEmits<{
   (e: "copy"): void
-  (e: "download"): void
+  (e: "export"): void
   (e: "toggle-auto-scroll"): void
 }>()
 

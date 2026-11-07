@@ -89,6 +89,17 @@ def seal_task_options(task_options: TaskOptionsByTask) -> TaskOptionsByTask:
     }
 
 
+def password_values(options: dict[str, TaskOptionValue]) -> list[str]:
+    """返回已解密选项映射中 password 输入的非空明文值。"""
+    return [
+        field_value
+        for option_name, value in options.items()
+        if (names := _password_fields.get(option_name)) and isinstance(value, dict)
+        for field_name, field_value in value.items()
+        if field_name in names and field_value
+    ]
+
+
 def reveal(value: Any) -> Any:
     """返回解密后的递归副本；无法解密的值清空并记录警告（不记录值本身）。"""
     if isinstance(value, str):

@@ -1,12 +1,13 @@
-"""设备连接、资源选择与实时画面。"""
+"""设备连接、资源选择、实时画面、截图与点击。"""
 
 import asyncio
+import time
 from typing import Annotated
 
-from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Query, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from backend.models.api import CustomDeviceCreate, DeviceModel
+from backend.models.api import ClickPayload, CustomDeviceCreate, DeviceModel
 from backend.runtime import (
     app_state,
     interface,
@@ -38,6 +39,29 @@ async def stream_live(fps: int = 15):
         video_stream_generator(fps),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@router.get("/api/device/screenshot")
+async def screenshot():
+    png = await asyncio.to_thread(app_state.worker.get_screencap_bytes, "PNG")
+    if png is None:
+        return JSONResponse(
+            {"status": "failed", "message": "截图失败，请确认设备已连接"},
+            status_code=409,
+        )
+    filename = time.strftime("screenshot-%Y%m%d-%H%M%S.png")
+    return Response(
+        png,
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/device/click")
+async def click(payload: ClickPayload):
+    if await asyncio.to_thread(app_state.worker.click, payload.x, payload.y):
+        return {"status": "success"}
+    return {"status": "failed", "message": "点击失败，请确认设备已连接"}
 
 
 @router.get("/api/device")

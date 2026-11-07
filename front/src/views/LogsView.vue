@@ -9,12 +9,17 @@
       >
         <div class="flex flex-col gap-3 h-full">
           <LogsPreviewHeader
+            :capturing="capturing"
             :connected="connected"
             :fps="fps"
             :fps-options="fpsOptions"
             :streaming="streaming"
+            :tap-enabled="tapEnabled"
+            @copy-screenshot="handleCopyScreenshot"
+            @save-screenshot="handleSaveScreenshot"
             @start="handleStartStream"
             @stop="handleStopStream"
+            @toggle-tap="tapEnabled = !tapEnabled"
             @update:fps="fps = $event"
           />
           <LogsPreviewStream
@@ -22,6 +27,8 @@
             :connected="connected"
             :stream-url="streamUrl"
             :streaming="streaming"
+            :tap-enabled="tapEnabled"
+            @tap="handleTap"
           />
         </div>
       </NCard>
@@ -36,9 +43,10 @@
       <div class="h-full flex flex-col gap-3 p-4">
         <LogsLogHeader
           :auto-scroll="autoScroll"
+          :exporting="exporting"
           :has-log="Boolean(log)"
           @copy="handleCopy"
-          @download="handleDownload"
+          @export="handleExport"
           @toggle-auto-scroll="autoScroll = !autoScroll"
         />
         <LogsLogPanel ref="logPanel" :log="log" class="flex-1 min-h-0" />
@@ -56,7 +64,10 @@ import LogsLogHeader from "@/components/logs/LogsLogHeader.vue"
 import LogsLogPanel from "@/components/logs/LogsLogPanel.vue"
 import LogsPreviewHeader from "@/components/logs/LogsPreviewHeader.vue"
 import LogsPreviewStream from "@/components/logs/LogsPreviewStream.vue"
-import { downloadTextFile } from "@/utils/download"
+import { exportLogsApi, getScreenshot, postDeviceClick } from "@/services/api"
+import { showGlobalMessage } from "@/services/feedback/message"
+import { downloadBlob } from "@/utils/download"
+import { tryCatch } from "@/utils/tryCatch"
 
 type StreamPreviewRef = {
   clearStream: () => void
@@ -80,6 +91,9 @@ const streamUrl = ref("")
 const streamPreview = useTemplateRef<StreamPreviewRef>("streamPreview")
 const logPanel = useTemplateRef<LogPanelRef>("logPanel")
 const autoScroll = ref(true)
+const tapEnabled = ref(false)
+const capturing = ref(false)
+const exporting = ref(false)
 
 function handleStartStream() {
   if (!connected.value) {
@@ -92,6 +106,7 @@ function handleStartStream() {
 function handleStopStream() {
   streamPreview.value?.clearStream()
   streaming.value = false
+  tapEnabled.value = false
 }
 
 function handleCopy() {
@@ -99,9 +114,53 @@ function handleCopy() {
   navigator.clipboard.writeText(log.value).catch(() => {})
 }
 
-function handleDownload() {
-  if (!log.value) return
-  downloadTextFile("mwu.log", log.value)
+async function handleExport() {
+  exporting.value = true
+  const [file, err] = await tryCatch(() => exportLogsApi())
+  exporting.value = false
+  if (err) {
+    showGlobalMessage("error", t("panel.logExportFailed", { message: err.message }))
+    return
+  }
+  downloadBlob(file.filename, file.blob)
+}
+
+async function handleSaveScreenshot() {
+  capturing.value = true
+  const [file, err] = await tryCatch(() => getScreenshot())
+  capturing.value = false
+  if (err) {
+    showGlobalMessage("error", err.message)
+    return
+  }
+  downloadBlob(file.filename, file.blob)
+}
+
+async function handleCopyScreenshot() {
+  // Clipboard image writes need a secure context (localhost/HTTPS), not plain-HTTP LAN.
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+    showGlobalMessage("error", t("panel.screenshotCopyUnsupported"))
+    return
+  }
+  capturing.value = true
+  // Pass the pending blob so the write stays inside the click's user activation.
+  const blob = getScreenshot().then((file) => file.blob)
+  const [, err] = await tryCatch(() =>
+    navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]),
+  )
+  capturing.value = false
+  if (err) {
+    showGlobalMessage("error", t("panel.screenshotCopyFailed", { message: err.message }))
+    return
+  }
+  showGlobalMessage("success", t("panel.screenshotCopied"))
+}
+
+async function handleTap(point: { x: number; y: number }) {
+  const [result, err] = await tryCatch(() => postDeviceClick(point.x, point.y))
+  if (err || result.status !== "success") {
+    showGlobalMessage("error", result?.message || t("panel.previewTapFailed"))
+  }
 }
 
 watch(connected, (newValue) => {

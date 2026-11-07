@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from wakepy import ActivationResult, keep
+
 from backend.core.state import ActiveRun, AppState
 from backend.maa_worker.event_service import load_settings
 from backend.maa_worker.pretask_service import PretaskError, PretaskStopped
@@ -321,7 +323,7 @@ async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admissi
         )
         await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
         state.active_execution_task = asyncio.create_task(
-            _complete_run(state, run_id, payload)
+            _run_keep_awake(state, run_id, payload)
         )
         _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
@@ -404,7 +406,7 @@ async def submit_scheduled(
             else None
         )
         state.active_execution_task = asyncio.create_task(
-            _complete_run(state, run_id, payload, task_list=task.task_list)
+            _run_keep_awake(state, run_id, payload, task_list=task.task_list)
         )
         _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
@@ -455,6 +457,28 @@ def _deliver_terminal_side_effects(worker, event, error: str | None) -> None:
     worker.events.deliver_notification(event)
     if error:
         worker.events.send_log(f"任务异常详情: {error}")
+
+
+async def _run_keep_awake(
+    state: AppState,
+    run_id: str,
+    payload: ManualStartPayload | None,
+    *,
+    task_list: list[str] | None = None,
+) -> None:
+    """整次运行期间阻止系统休眠（不阻止息屏）；无法阻止时记录原因后照常运行。
+
+    wakepy 的 Mode 不跨线程，进入与退出都在事件循环线程的同一协程内完成。
+    """
+
+    def _on_fail(result: ActivationResult) -> None:
+        state.send_log(
+            f"无法阻止系统休眠，运行期间系统可能进入睡眠: "
+            f"{result.get_failure_text(style='inline')}"
+        )
+
+    with keep.running(on_fail=_on_fail):
+        await _complete_run(state, run_id, payload, task_list=task_list)
 
 
 async def _complete_run(
