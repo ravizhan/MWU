@@ -38,7 +38,7 @@ def _controller(name: str, type_: str) -> SimpleNamespace:
 
 class _FakeWorker:
     def __init__(self, base_dir: Path, controllers: list[Any] | None = None):
-        self.context = WorkerContext(interface_base_dir=base_dir)
+        self.context = WorkerContext(app_root=base_dir, interface_base_dir=base_dir)
         self.interface = SimpleNamespace(
             controller=controllers
             or [
@@ -659,7 +659,7 @@ class TestCustomDevicePersistence:
             },
         ]
 
-    def test_path_uses_interface_base_dir_not_cwd(
+    def test_path_uses_app_root_not_cwd(
         self, app_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         other_cwd = tmp_path / "other_cwd"

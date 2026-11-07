@@ -62,10 +62,15 @@ class TestNormalizeRootRelativePath:
         with pytest.raises(ValueError, match="不允许使用绝对路径"):
             _normalize_root_relative_path("C:\\windows", field_name="p")
 
-    @pytest.mark.parametrize("bad", [".", "..", "a/../b", "a//b"])
+    @pytest.mark.parametrize("bad", ["..", "a/../b", "a//b"])
     def test_dot_segments_raise(self, bad):
         with pytest.raises(ValueError, match="不允许包含"):
             _normalize_root_relative_path(bad, field_name="p")
+
+    def test_current_dir_segments_dropped(self):
+        assert _normalize_root_relative_path("./a/./b", field_name="p") == "a/b"
+        with pytest.raises(ValueError, match="不能为空"):
+            _normalize_root_relative_path("./.", field_name="p")
 
 
 # ---------------------------------------------------------------------------

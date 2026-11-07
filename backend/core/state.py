@@ -25,6 +25,7 @@ _HISTORY_MAXLEN = 2000
 
 @dataclass
 class WorkerContext:
+    app_root: Path
     interface_base_dir: Path
     interface_translations: dict[str, dict] | None = None
 

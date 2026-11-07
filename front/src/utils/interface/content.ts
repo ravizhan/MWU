@@ -45,40 +45,40 @@ export function isExternalUrl(value: string): boolean {
   return /^(?:https?:)?\/\//i.test(value) || /^(?:data|blob):/i.test(value)
 }
 
-function normalizeRootRelativePath(path: string): string | undefined {
+type RootRelativePathCheck = { path: string } | { reason: string }
+
+function checkRootRelativePath(path: string): RootRelativePathCheck {
   const normalizedPath = path.trim().replace(/\\/g, "/")
   if (!normalizedPath) {
-    notifyInvalidPath(path, "路径不能为空")
-    return undefined
+    return { reason: "路径不能为空" }
   }
 
   if (normalizedPath.startsWith("//")) {
-    notifyInvalidPath(path, "不允许使用 UNC 或双斜杠开头路径")
-    return undefined
+    return { reason: "不允许使用 UNC 或双斜杠开头路径" }
   }
 
   if (normalizedPath.startsWith("/")) {
-    notifyInvalidPath(path, "不允许使用绝对路径")
-    return undefined
+    return { reason: "不允许使用绝对路径" }
   }
 
   if (windowsDrivePattern.test(normalizedPath)) {
-    notifyInvalidPath(path, "不允许使用 Windows 盘符路径")
-    return undefined
+    return { reason: "不允许使用 Windows 盘符路径" }
   }
 
   if (normalizedPath.includes(":")) {
-    notifyInvalidPath(path, "不允许包含冒号(:)")
-    return undefined
+    return { reason: "不允许包含冒号(:)" }
   }
 
-  const parts = normalizedPath.split("/")
-  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
-    notifyInvalidPath(path, "禁止使用 . 或 .. 路径段")
-    return undefined
+  // "./a/b" 与 "a/b" 等价；".." 与空段（"a//b"）仍拒绝
+  const parts = normalizedPath.split("/").filter((part) => part !== ".")
+  if (parts.length === 0) {
+    return { reason: "路径不能为空" }
+  }
+  if (parts.some((part) => part.length === 0 || part === "..")) {
+    return { reason: "禁止使用 .. 或空路径段" }
   }
 
-  return parts.join("/")
+  return { path: parts.join("/") }
 }
 
 function notifyInvalidPath(path: string, reason: string): void {
@@ -90,17 +90,30 @@ function notifyInvalidPath(path: string, reason: string): void {
   showGlobalMessage("error", `资源路径不合法: ${path || "(空)"}，${reason}`)
 }
 
-export function buildResourceUrl(path: string): string | undefined {
-  const normalizedPath = normalizeRootRelativePath(path)
-  if (!normalizedPath) {
-    return undefined
-  }
-
+function toResourceUrl(normalizedPath: string): string {
   if (normalizedPath === "resource" || normalizedPath.startsWith("resource/")) {
     return `/${normalizedPath}`
   }
 
   return `/api/file?path=${encodeURIComponent(normalizedPath)}`
+}
+
+export function buildResourceUrl(path: string): string | undefined {
+  const check = checkRootRelativePath(path)
+  if ("reason" in check) {
+    notifyInvalidPath(path, check.reason)
+    return undefined
+  }
+  return toResourceUrl(check.path)
+}
+
+async function fetchText(url: string): Promise<string | undefined> {
+  const [response, fetchErr] = await tryCatch(() => fetch(url))
+  if (fetchErr || !response?.ok) {
+    return undefined
+  }
+  const [text, textErr] = await tryCatch(() => response.text())
+  return textErr ? undefined : text
 }
 
 export function resolveInterfaceText(value?: string | null, fallback = ""): string {
@@ -146,14 +159,37 @@ export async function resolveInterfaceDocumentContent(value?: string | null): Pr
     return resolvedValue
   }
 
-  const [response, fetchErr] = await tryCatch(() => fetch(url))
-  if (fetchErr || !response?.ok) {
-    return resolvedValue
+  return (await fetchText(url)) ?? resolvedValue
+}
+
+export type InterfaceLinkedContent =
+  | { kind: "empty" }
+  | { kind: "url"; text: string }
+  | { kind: "file"; text: string; content: string }
+  | { kind: "text"; text: string }
+
+/**
+ * 解析可为文件路径、URL 或纯文本的字段（如 license/contact）：先按项目根相对路径读取文件，
+ * 读取不到再当纯文本。纯文本常含冒号等非法路径字符，因此这里不弹路径错误提示。
+ */
+export async function resolveInterfaceLinkedContent(
+  value?: string | null,
+): Promise<InterfaceLinkedContent> {
+  const text = resolveInterfaceText(value).trim()
+  if (!text) {
+    return { kind: "empty" }
+  }
+  if (isExternalUrl(text)) {
+    return { kind: "url", text }
   }
 
-  const [text, textErr] = await tryCatch(() => response.text())
-  if (textErr) {
-    return resolvedValue
+  const check = checkRootRelativePath(text)
+  if ("reason" in check) {
+    return { kind: "text", text }
   }
-  return text
+  const content = await fetchText(toResourceUrl(check.path))
+  if (content === undefined) {
+    return { kind: "text", text }
+  }
+  return { kind: "file", text, content }
 }

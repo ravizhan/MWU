@@ -7,7 +7,7 @@ from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 from PIL import Image
 
-from backend.core.paths import resolve_app_root
+from backend.core.paths import resolve_app_root, resolve_project_dir
 from backend.core.state import WorkerContext
 from backend.maa_worker.agent_service import AgentService
 from backend.maa_worker.device_service import DeviceService
@@ -42,7 +42,8 @@ class MaaWorker:
         self.http_client = httpx.Client(timeout=30)
 
         self.context = WorkerContext(
-            interface_base_dir=resolve_app_root(),
+            app_root=resolve_app_root(),
+            interface_base_dir=resolve_project_dir(),
             interface_translations=interface_translations,
         )
         self.text = InterfaceText(self)
@@ -51,7 +52,7 @@ class MaaWorker:
         self.agent_state = state.agent
         self.focus_state = state.focus
 
-        Toolkit.init_option(str(self.context.interface_base_dir))
+        Toolkit.init_option(str(self.context.app_root))
 
         self.events = EventService(self)
         self.focus = FocusEventProcessor(self)

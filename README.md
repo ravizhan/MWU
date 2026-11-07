@@ -47,7 +47,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 > 请先阅读[MaaFW文档](https://maafw.com/docs/1.1-QuickStarted)，选择一种集成方案
 
-如果您选择低代码或低代码+Agent方案，只需按照指引使用 [MaaFramework 项目模板](https://github.com/MaaXYZ/MaaPracticeBoilerplate) 创建项目，然后将其中的 `.github/workflows/install.yml` 替换为本项目的 [deploy/install.yaml](https://github.com/ravizhan/MWU/blob/main/deploy/install.yml) 即可。
+如果您选择低代码或低代码+Agent方案，只需按照指引使用 [MaaFramework 项目模板](https://github.com/MaaXYZ/MaaPracticeBoilerplate) 创建项目，然后将其中的 `.github/workflows/install.yml` 替换为本项目的 [deploy/install.yml](https://github.com/ravizhan/MWU/blob/main/deploy/install.yml) 即可，项目结构保持模板原样。
 
 如果您需要使用Agent功能，请务必阅读 [Agent 相关说明](https://github.com/ravizhan/MWU#-agent-%E7%9B%B8%E5%85%B3%E8%AF%B4%E6%98%8E)
 
@@ -59,24 +59,23 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 | 配置         | 默认值                  | 修改方法                                                                                                                                                   |
 | ------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 压缩包名     | 仓库名-版本号-平台-架构 | [deploy/install.yml#L170](https://github.com/ravizhan/MWU/blob/baeec32ecc5db8ea6390ceb5575d73e2d2754ba6/deploy/install.yml#L170)，注意下方各处也要一并修改 |
+| 压缩包名     | 仓库名-平台-架构-版本号 | `deploy/install.yml` 中 `install` 任务的 `package_name`                                                                                                    |
 | 可执行文件名 | MWU                     | 暂不可修改                                                                                                                                                 |
 | LOGO         |                         | 暂不可修改                                                                                                                                                 |
 
 ### 📁 路径规范
 
-所有路径统一按软件根目录解析，软件根目录定义为 `mwu.exe` 所在目录。
+`interface.json` 中的路径统一按项目根目录（`interface.json` 所在目录）解析，发布后即 `mwu.exe` 所在目录。
 
-- 路径必须是根目录相对路径
-- 禁止使用 `./` 或 `../`
-- 禁止越界访问软件根目录之外的文件
+- 路径必须是根目录相对路径，开头的 `./` 可省略
+- 禁止使用 `../`
+- 禁止越界访问根目录之外的文件
 
 示例：
 
 - 正确：`resource/tasks/preset/Daily.json`
-- 正确：`config/maa_option.json`
+- 正确：`./resource/tasks/preset/Daily.json`
 - 正确：`tasks/登录.json`
-- 错误：`./resource/tasks/preset/Daily.json`
 - 错误：`../resource/Daily.json`
 - 错误：`../../../../resource/Daily.json`
 
@@ -264,6 +263,8 @@ uv run ruff check --fix .  # 代码检查（规则见 pyproject.toml）
 uv run ruff format .       # 格式化
 ```
 
+源码运行时，测试数据按项目模板的源码结构放在仓库根目录（均已 gitignore）：`assets/interface.json` 与 `assets/resource/` 等 PI 文件以 `assets/` 为项目根解析；`agent/`、`deps/`、`config/` 位于仓库根，Agent 子进程的工作目录也是仓库根。发布后两者都是 `mwu.exe` 所在目录。
+
 Nuitka 位于 `build` 分组，编译后端前需运行 `uv sync --locked --group build`。
 
 `cryptography` 在 Windows ARM64 和 macOS x86_64 上没有预编译 wheel，`uv sync` 会从源码构建：需要 Rust 工具链和 OpenSSL 3，并把 `OPENSSL_DIR` 指向 OpenSSL 安装目录（CI 中由 `.github/actions/cryptography-deps` 准备）。
@@ -283,7 +284,7 @@ uv run python -m nuitka --standalone --assume-yes-for-downloads --user-package-c
 ```
 MWU/
 ├── main.py                      # CLI 入口：参数解析、单实例检查、启动 uvicorn
-├── interface.json               # 项目接口配置（V2 协议）
+├── assets/                      # 本地测试数据（interface.json、resource/ 等，gitignore）
 │
 ├── backend/                     # 后端 Python 包
 │   ├── runtime.py               # 进程级单例：应用根目录、interface/语言、共享状态
@@ -296,7 +297,7 @@ MWU/
 │   │   ├── run.py               # 启动/停止、确认交互与日志 SSE
 │   │   └── scheduler.py         # 定时任务 CRUD 与内部派发
 │   ├── core/                    # 路径、状态、设置读写、密钥与 JSON 工具
-│   │   ├── paths.py             # 应用根目录解析
+│   │   ├── paths.py             # 程序根与项目根目录解析
 │   │   ├── state.py             # AppState、日志广播与运行上下文
 │   │   ├── settings_io.py       # 设置原子写入
 │   │   ├── secret_store.py      # 敏感选项加密存储

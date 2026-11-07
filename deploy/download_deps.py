@@ -28,11 +28,12 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8")
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
-    try:
-        with Path("requirements.txt").open() as f:
-            packages = [req.name for req in requirements.parse(f) if req.name]
-    except FileNotFoundError:
-        sys.exit("错误: 找不到 requirements.txt 文件")
+    requirements_file = Path("requirements.txt")
+    if not requirements_file.is_file():
+        print("未找到 requirements.txt，跳过 Agent 依赖下载")
+        return
+    with requirements_file.open() as f:
+        packages = [req.name for req in requirements.parse(f) if req.name]
 
     for pkg_name in packages:
         if pkg_name in SKIPPED_PACKAGES:

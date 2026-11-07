@@ -5,7 +5,7 @@ import threading
 
 from backend.core import json_utils as json
 from backend.core import secret_store
-from backend.core.paths import resolve_app_root
+from backend.core.paths import resolve_app_root, resolve_project_dir
 from backend.core.state import AppState
 from backend.models.interface_loader import (
     InterfaceLoadError,
@@ -17,6 +17,7 @@ from backend.models.task_config import TaskConfigModel
 from backend.services import telemetry
 
 APP_ROOT_DIR = resolve_app_root()
+PROJECT_DIR = resolve_project_dir()
 CONFIG_DIR = APP_ROOT_DIR / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 TASK_CONFIG_FILE = CONFIG_DIR / "task_config.json"
@@ -31,7 +32,7 @@ def load_interface_translations() -> dict[str, dict]:
             raise InterfaceLoadError(f"languages[{locale}] 必须是非空字符串")
 
         resolved_path = resolve_interface_relative_path(
-            APP_ROOT_DIR,
+            PROJECT_DIR,
             relative_path,
             field_name=f"languages[{locale}]",
         )
@@ -51,7 +52,7 @@ def load_interface_translations() -> dict[str, dict]:
 
 
 try:
-    interface = load_interface_model(APP_ROOT_DIR)
+    interface = load_interface_model(PROJECT_DIR)
     interface_translations = load_interface_translations()
 except Exception as e:
     print(e)

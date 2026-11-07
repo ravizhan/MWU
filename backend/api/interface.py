@@ -10,7 +10,7 @@ from backend.models.interface_loader import (
     resolve_interface_relative_path,
 )
 from backend.runtime import (
-    APP_ROOT_DIR,
+    PROJECT_DIR,
     app_state,
     interface,
     interface_lock,
@@ -28,7 +28,7 @@ class ScanSelectRescanRequest(BaseModel):
 def get_file(path: str):
     try:
         resolved_path = resolve_interface_relative_path(
-            APP_ROOT_DIR,
+            PROJECT_DIR,
             path,
             field_name="path",
         )
@@ -57,7 +57,7 @@ def rescan_scan_select(payload: ScanSelectRescanRequest):
 
     try:
         with interface_lock:
-            cases = rescan_scan_select_option(interface, option_name, APP_ROOT_DIR)
+            cases = rescan_scan_select_option(interface, option_name, PROJECT_DIR)
     except InterfaceLoadError as exc:
         return {"status": "failed", "message": str(exc)}
     except Exception as exc:

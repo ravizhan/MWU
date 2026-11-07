@@ -226,9 +226,12 @@ def _normalize_root_relative_path(raw_path: str, *, field_name: str) -> str:
     ):
         raise ValueError(f"{field_name} 不允许使用绝对路径: {raw_path}")
 
-    parts = normalized_path.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise ValueError(f"{field_name} 不允许包含 . 或 .. 路径段: {raw_path}")
+    # "./a/b" 与 "a/b" 等价；".." 与空段（"a//b"）仍拒绝
+    parts = [part for part in normalized_path.split("/") if part != "."]
+    if not parts:
+        raise ValueError(f"{field_name} 不能为空")
+    if any(part in {"", ".."} for part in parts):
+        raise ValueError(f"{field_name} 不允许包含 .. 或空路径段: {raw_path}")
 
     return "/".join(parts)
 

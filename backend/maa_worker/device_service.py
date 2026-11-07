@@ -123,7 +123,7 @@ class DeviceService:
         self.worker = worker
 
     def _settings_path(self) -> Path:
-        return self.worker.context.interface_base_dir / "config" / "settings.json"
+        return self.worker.context.app_root / "config" / "settings.json"
 
     def _load_custom_devices(self) -> list[dict[str, Any]]:
         with SETTINGS_LOCK:

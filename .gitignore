@@ -309,7 +309,6 @@ coverage
 *.tsbuildinfo
 page
 test.html
-resource
 auto-imports.d.ts
 components.d.ts
 debug
@@ -321,7 +320,6 @@ openspec*.*
 .iflow
 .opencode
 .roo
-interface.json
 *.psd
 *.bak
 *.exe
@@ -331,8 +329,8 @@ version
 .codex
 deploy_result
 options
-/tasks
 .sisyphus
 deps
 .explyt
-locales
+# 本地测试数据，按 MaaPracticeBoilerplate 源码结构放置（assets/interface.json 等）
+/assets

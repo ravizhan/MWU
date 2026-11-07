@@ -1,20 +1,35 @@
+# MWU 部署工作流：用本文件替换 MaaPracticeBoilerplate 模板中的 .github/workflows/install.yml，
+# 即可把通用 UI 切换为 MWU。项目结构沿用模板（assets/interface.json、assets/resource、agent/），
+# 发布包命名为 <仓库名>-<平台>-<架构>-<版本>.7z
+name: install
+
+env:
+  # 设置为空字符串时下载 MWU 最新版本，设置为具体版本号（如 v1.2.3）时下载指定版本
+  MWU_VERSION: ""
+  # Agent 黑魔法依赖的目标 Python 版本，需与 MWU 内置 Python 一致
+  PYTHON_VERSION: "3.13"
+
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"  
+      - "v*"
     branches:
       - "**"
     paths:
       - ".github/workflows/install.yml"
       - "assets/**"
+      - "agent/**"
       - "**.py"
+      - "requirements.txt"
   pull_request:
     branches:
       - "**"
     paths:
       - ".github/workflows/install.yml"
       - "assets/**"
+      - "agent/**"
       - "**.py"
+      - "requirements.txt"
   workflow_dispatch:
 
 permissions:
@@ -23,24 +38,19 @@ permissions:
 
 jobs:
   meta:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: set_tag
         run: |
           # 检查标签格式
-          if [[ ${{ github.ref }} =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*)?$ ]]; then
-            is_release=true
-            tag=${GITHUB_REF#refs/tags/}
-            echo "Release tag format is valid: $tag"
-          else
-            is_release=false
-            # 获取最新的发布标签
+          is_release=${{ startsWith(github.ref, 'refs/tags/v') }}
+          tag=$(git describe --tags --match "v*" ${{ github.ref }} || true)
+          if [[ $tag != v* ]]; then
             tag=$(curl -sX GET "https://api.github.com/repos/${{ github.repository }}/releases/latest" --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' | awk '/tag_name/{print $4}' FS='["]')
-            if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-              echo "No valid release tag found, using v0.0.0"
+            if [[ $tag != v* ]]; then
               tag="v0.0.0"
             fi
             tag=$(date "+$tag-%y%m%d-$(git rev-parse --short HEAD)")
@@ -62,115 +72,97 @@ jobs:
           echo tag=$tag | tee -a $GITHUB_OUTPUT
           echo is_release=$is_release | tee -a $GITHUB_OUTPUT
           echo is_prerelease=$is_prerelease | tee -a $GITHUB_OUTPUT
-          echo "repo_name=$(echo ${{ github.repository }} | cut -d'/' -f2)" >> $GITHUB_OUTPUT
+          echo repo_name=${GITHUB_REPOSITORY#*/} | tee -a $GITHUB_OUTPUT
     outputs:
       tag: ${{ steps.set_tag.outputs.tag }}
       is_release: ${{ steps.set_tag.outputs.is_release }}
       is_prerelease: ${{ steps.set_tag.outputs.is_prerelease }}
       repo_name: ${{ steps.set_tag.outputs.repo_name }}
 
-  build:
-    env:
-      UV_INDEX: https://pypi.org/simple
-      repo_name: ${{ needs.meta.outputs.repo_name }}
-      tag: ${{ needs.meta.outputs.tag }}
-    permissions:
-      contents: write
+  install:
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            platform: linux
+          - runner: ubuntu-24.04
+            os: linux
             arch: x86_64
-
-          - os: ubuntu-24.04-arm
-            platform: linux
+          - runner: ubuntu-24.04-arm
+            os: linux
             arch: aarch64
-
-          - os: macos-15-intel
-            platform: macos
+          - runner: macos-15-intel
+            os: macos
             arch: x86_64
-
-          - os: macos-15
-            platform: macos
+          - runner: macos-15
+            os: macos
             arch: aarch64
-
-          - os: windows-2025
-            platform: win
+          - runner: windows-2025
+            os: win
             arch: x86_64
-
-          - os: windows-11-arm
-            platform: win
+          - runner: windows-11-arm
+            os: win
             arch: aarch64
-    runs-on: ${{ matrix.os }}
-    name: Build (${{ matrix.platform }}-${{ matrix.arch }})
-    needs: meta
+    runs-on: ${{ matrix.runner }}
+    env:
+      tag: ${{ needs.meta.outputs.tag }}
+      package_name: ${{ needs.meta.outputs.repo_name }}-${{ matrix.os }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
 
     steps:
-      - name: Check-out repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - name: 'Workaround for missing zstd in windows-11-arm'
-        if: matrix.os == 'windows-11-arm'
+      - name: Workaround for missing zstd in windows-11-arm
+        if: matrix.runner == 'windows-11-arm'
         run: choco install zstandard
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7.5.0
+        uses: astral-sh/setup-uv@v7
         with:
-          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
 
-      - name: Setup Python
-        uses: actions/setup-python@v6.2.0
-        with:
-          python-version: "3.12.10"
-
-      - name: Copy Resources
-        shell: bash
-        run: |
-          curl -L https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/copy_resources.py -o ./copy_resources.py
-          uv run ./copy_resources.py
-
-      - name: Download Dependencies
-        shell: bash
-        run: |
-          curl -L https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/download_deps.py -o ./download_deps.py
-          uv run ./download_deps.py
-
-      - name: Download Artifact from Release
-        id: download_artifact
+      - name: Download MWU
+        id: download_mwu
         uses: robinraju/release-downloader@v1
         with:
           repository: ravizhan/MWU
-          latest: true
-          fileName: MWU-${{ matrix.platform }}-${{ matrix.arch }}-*.7z
-          out-file-path: ./
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fileName: "MWU-${{ matrix.os }}-${{ matrix.arch }}-*.7z"
+          latest: ${{ env.MWU_VERSION == '' }}
+          tag: ${{ env.MWU_VERSION }}
+          out-file-path: "mwu"
 
-      - name: Decompress Artifact to build
+      - name: Extract MWU
+        shell: bash
+        run: 7z x "${{ fromJson(steps.download_mwu.outputs.downloaded_files)[0] }}" -obuild -y
+
+      - name: Install
+        shell: bash
         run: |
-          7z x ${{ fromJson(steps.download_artifact.outputs.downloaded_files)[0] }} -obuild -y
+          curl -fsSL https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/copy_resources.py -o ./copy_resources.py
+          uv run --no-project ./copy_resources.py
+          curl -fsSL https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/download_deps.py -o ./download_deps.py
+          uv run --no-project ./download_deps.py
 
-      - name: Compress Final Artifact
-        run: |
-          7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -mf=BCJ2 -r ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}.7z "./build/*"
+      - name: Compress
+        shell: bash
+        run: 7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -mf=BCJ2 -r "${package_name}.7z" "./build/*"
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}
-          path: ${{ env.repo_name }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ env.tag }}.7z
+          name: ${{ env.package_name }}
+          path: ${{ env.package_name }}.7z
 
   changelog:
     name: Generate changelog
+    needs: meta
     runs-on: ubuntu-latest
     outputs:
       release_body: ${{ steps.git-cliff.outputs.content }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -179,46 +171,41 @@ jobs:
         id: git-cliff
         with:
           config: .github/cliff.toml
-          args: -vv --latest --strip header
+          # 正式版：使用 tag-pattern 只匹配正式版标签，包含所有从上一个正式版以来的提交
+          # 预发布版：正常生成，只包含从上一个标签以来的提交
+          args: >-
+            -vv --latest --strip header
+            ${{ needs.meta.outputs.is_prerelease == 'false' && '--tag-pattern "^v[0-9]+\\.[0-9]+\\.[0-9]+$"' || '' }}
         env:
           OUTPUT: CHANGES.md
           GITHUB_REPO: ${{ github.repository }}
 
-  debug:
-    if: ${{ needs.meta.outputs.is_release == 'false' }}
-    runs-on: ubuntu-slim
-    needs: [meta, build, changelog]
-    steps:
-      - name: Show Outputs
-        run: |
-          echo "Tag: ${{ needs.meta.outputs.tag }}"
-          echo "Is Release: ${{ needs.meta.outputs.is_release }}"
-          echo "Is Pre-release: ${{ needs.meta.outputs.is_prerelease }}"
-          echo "Changelog:"
-          echo "${{ needs.changelog.outputs.release_body }}"
-
   release:
     if: ${{ needs.meta.outputs.is_release == 'true' }}
-    needs: [meta, build, changelog]
-    runs-on: ubuntu-slim
+    needs: [meta, install, changelog]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v8
         with:
           path: release
+          merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2.2.2
+      - uses: softprops/action-gh-release@v2
         with:
-          files: release/**/*.7z
+          files: release/*.7z
           tag_name: ${{ needs.meta.outputs.tag }}
           body: ${{ needs.changelog.outputs.release_body }}
           draft: false
           prerelease: ${{ needs.meta.outputs.is_prerelease == 'true' }}
 
-#      - name: Trigger MirrorChyanUploading
-#        if: ${{ needs.meta.outputs.is_release == 'true' }}
-#        shell: bash
-#        run: |
-#          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan.yml -f tag=${{ needs.meta.outputs.tag }}
-#          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note.yml -f tag=${{ needs.meta.outputs.tag }}
-#        env:
-#          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Mirror酱为第三方分发服务，新项目默认关闭
+        # 若有需要请联系 Mirror酱 开通，直接自行开启是无法使用的
+        # https://mirrorchyan.com/
+      - name: Trigger MirrorChyanUploading
+        if: false
+        shell: bash
+        run: |
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release.yml -f tag=${{ needs.meta.outputs.tag }}
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note.yml -f tag=${{ needs.meta.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

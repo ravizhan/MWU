@@ -584,7 +584,7 @@ def load_agents(
                 agent_process = subprocess.Popen(
                     command,
                     env=env,
-                    cwd=str(maa_worker.context.interface_base_dir),
+                    cwd=str(maa_worker.context.app_root),
                 )
                 if not agent_client.connect():
                     raise RuntimeError("Agent连接失败")

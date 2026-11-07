@@ -228,7 +228,6 @@
       "issue": "Report Issue",
       "contact": "Contact",
       "description": "Description",
-      "defaultDescription": "General GUI for MaaFramework based on Vue",
       "reset": "Reset All Settings",
       "resetConfirm": "Are you sure you want to reset all settings? This cannot be undone.",
       "resetSuccess": "Settings have been reset to default",

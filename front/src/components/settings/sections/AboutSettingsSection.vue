@@ -62,6 +62,7 @@ import { NButton, NIcon } from "naive-ui"
 import type { DataTableColumns } from "naive-ui"
 import { BugOutline, LogoGithub } from "@vicons/ionicons5"
 import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
+import InterfaceLinkedContent from "@/components/common/InterfaceLinkedContent.vue"
 import { getTelemetryStatusApi, type TelemetryStatus } from "@/services/api"
 import { showGlobalMessage } from "@/services/feedback/message"
 import { useInterfaceStore, useSettingsStore } from "@/stores"
@@ -71,11 +72,11 @@ interface AboutRow {
   label: string
   value?: string
   doc?: string
+  /** 文件路径 / URL / 纯文本三态字段 */
+  linked?: string
   href?: string
   icon?: Component
 }
-
-const DEFAULT_GITHUB = "https://github.com/ravizhan/MWU"
 
 /** interface.json 的 `github` 是仓库 URL；作者取 `owner/repo` 的 owner。 */
 function githubOwner(github: string): string {
@@ -119,53 +120,48 @@ async function retryLoadSettings() {
   if (success) await refreshTelemetryStatus()
 }
 
+/** interface.json 中缺失或为空的字段保持为空，不填默认值。 */
 const rows = computed<AboutRow[]>(() => {
   const model = interfaceStore.interface
-  const github = (model.github || DEFAULT_GITHUB).replace(/\/+$/, "")
+  const github = (model.github ?? "").trim().replace(/\/+$/, "")
   const author = githubOwner(github)
 
-  const result: AboutRow[] = [
+  return [
     {
       label: t("settings.about.version"),
-      value: model.version || t("common.unknown"),
+      value: model.version ?? "",
     },
     {
       label: t("settings.about.author"),
-      value: author || t("common.unknown"),
+      value: author,
       href: author ? `https://github.com/${author}` : undefined,
       icon: LogoGithub,
     },
     {
       label: t("settings.about.license"),
-      doc: model.license || "MIT",
+      linked: model.license ?? "",
     },
     {
       label: t("settings.about.homepage"),
       value: github,
-      href: github,
+      href: github || undefined,
       icon: LogoGithub,
     },
     {
       label: t("settings.about.issue"),
-      value: t("settings.about.githubIssues"),
-      href: `${github}/issues`,
+      value: github ? t("settings.about.githubIssues") : "",
+      href: github ? `${github}/issues` : undefined,
       icon: BugOutline,
     },
-  ]
-
-  if (model.contact) {
-    result.push({
+    {
       label: t("settings.about.contact"),
-      doc: model.contact,
-    })
-  }
-
-  result.push({
-    label: t("settings.about.description"),
-    doc: model.description || t("settings.about.defaultDescription"),
-  })
-
-  return result
+      linked: model.contact ?? "",
+    },
+    {
+      label: t("settings.about.description"),
+      doc: model.description ?? "",
+    },
+  ]
 })
 
 const columns = computed<DataTableColumns<AboutRow>>(() => [
@@ -179,6 +175,10 @@ const columns = computed<DataTableColumns<AboutRow>>(() => [
     key: "value",
     title: "",
     render: (row) => {
+      if (row.linked !== undefined) {
+        return h(InterfaceLinkedContent, { value: row.linked, title: row.label })
+      }
+
       if (row.doc !== undefined) {
         return h(InterfaceDescription, { text: row.doc })
       }

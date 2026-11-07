@@ -18,6 +18,7 @@ from backend.maa_worker.worker import MaaWorker
 from backend.runtime import (
     APP_ROOT_DIR,
     INDEX_FILE,
+    PROJECT_DIR,
     SCHEDULER_DB_PATH,
     SETTINGS_FILE,
     app_state,
@@ -146,7 +147,7 @@ async def request_validation_handler(
 
 
 app.mount("/assets", StaticFiles(directory=str(APP_ROOT_DIR / "page/assets")))
-app.mount("/resource", StaticFiles(directory=str(APP_ROOT_DIR / "resource")))
+app.mount("/resource", StaticFiles(directory=str(PROJECT_DIR / "resource")))
 
 for module in (interface_api, device, config, update, run, scheduler):
     app.include_router(module.router)

@@ -4,6 +4,7 @@ import {
   isExternalUrl,
   resolveInterfaceAssetUrl,
   resolveInterfaceDocumentContent,
+  resolveInterfaceLinkedContent,
   resolveInterfaceText,
   setInterfaceTranslations,
 } from "@/utils/interface/content"
@@ -38,13 +39,19 @@ describe("buildResourceUrl", () => {
     expect(buildResourceUrl("images/icon.png")).toBe("/api/file?path=images%2Ficon.png")
   })
 
+  it("drops current-directory segments", () => {
+    expect(buildResourceUrl("./tasks/images/a.png")).toBe("/api/file?path=tasks%2Fimages%2Fa.png")
+    expect(buildResourceUrl("./resource/logo.png")).toBe("/resource/logo.png")
+  })
+
   it.each([
     ["empty", "  "],
     ["UNC", "//server/share"],
     ["absolute", "/etc/passwd"],
     ["Windows drive", "C:\\Users\\test"],
     ["parent segment", "../escape"],
-    ["dot segment", "./relative"],
+    ["only dot segments", "./."],
+    ["empty segment", "a//b"],
     ["colon", "bad:path"],
   ])("rejects %s paths", (_label, path) => {
     expect(buildResourceUrl(path)).toBeUndefined()
@@ -148,5 +155,51 @@ describe("resolveInterfaceDocumentContent", () => {
     } as Response)
 
     expect(await resolveInterfaceDocumentContent("broken.md")).toBe("broken.md")
+  })
+})
+
+describe("resolveInterfaceLinkedContent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns URLs without fetching", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    expect(await resolveInterfaceLinkedContent("https://example.com/LICENSE")).toEqual({
+      kind: "url",
+      text: "https://example.com/LICENSE",
+    })
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("reads extensionless files relative to the project root", async () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve("# MIT"),
+    } as Response)
+
+    expect(await resolveInterfaceLinkedContent("./LICENSE")).toEqual({
+      kind: "file",
+      text: "./LICENSE",
+      content: "# MIT",
+    })
+    expect(fetchSpy).toHaveBeenCalledWith("/api/file?path=LICENSE")
+  })
+
+  it("falls back to text when the file is missing", async () => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false } as Response)
+
+    expect(await resolveInterfaceLinkedContent("MIT")).toEqual({ kind: "text", text: "MIT" })
+  })
+
+  it("treats invalid paths as text without fetching", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    expect(await resolveInterfaceLinkedContent("QQ群: 123456789")).toEqual({
+      kind: "text",
+      text: "QQ群: 123456789",
+    })
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
