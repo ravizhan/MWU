@@ -57,16 +57,24 @@ def list_project_dir(path: str = ""):
             if path.strip()
             else PROJECT_DIR
         )
-        entries = [
-            ProjectEntry(
-                name=entry.name,
-                path=entry.relative_to(PROJECT_DIR).as_posix(),
-                is_dir=entry.is_dir(),
+        entries: list[ProjectEntry] = []
+        for entry in directory.iterdir():
+            # 单个子项不可访问（如无权限的符号链接目标）只跳过该项，不影响整层列表
+            try:
+                is_dir = entry.is_dir()
+                if not (is_dir or entry.is_file()):
+                    continue
+                if not entry.resolve().is_relative_to(PROJECT_DIR):
+                    continue
+            except OSError:
+                continue
+            entries.append(
+                ProjectEntry(
+                    name=entry.name,
+                    path=entry.relative_to(PROJECT_DIR).as_posix(),
+                    is_dir=is_dir,
+                )
             )
-            for entry in directory.iterdir()
-            if (entry.is_dir() or entry.is_file())
-            and entry.resolve().is_relative_to(PROJECT_DIR)
-        ]
     except (ValueError, OSError) as exc:
         return JSONResponse(
             status_code=400,

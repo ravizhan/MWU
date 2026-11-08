@@ -287,6 +287,7 @@
       "browse": "浏览",
       "fileTitle": "选择项目内的文件",
       "directoryTitle": "选择项目内的文件夹",
+      "projectRoot": "项目目录",
       "loadFailed": "读取文件夹失败：{message}"
     }
   },

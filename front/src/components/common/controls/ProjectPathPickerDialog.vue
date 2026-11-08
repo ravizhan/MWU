@@ -15,6 +15,7 @@
           block-line
           :data="nodes"
           :selected-keys="selectedKeys"
+          :default-expanded-keys="[ROOT_KEY]"
           :on-load="loadChildren"
           :override-default-node-click-behavior="clickBehavior"
           @update:selected-keys="selectedKeys = $event"
@@ -59,9 +60,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
+// "." 代表项目目录本身：目录输入可以直接选它，runtime_value 拼接后即项目目录
+const ROOT_KEY = "."
+
 const nodes = ref<TreeOption[]>([])
 const selectedKeys = ref<string[]>([])
 const loading = ref(false)
+let rootLoadSeq = 0
 
 const selectedPath = computed(() => selectedKeys.value[0] ?? "")
 
@@ -104,11 +109,24 @@ watch(
   () => show,
   async (visible) => {
     if (!visible) return
+    const seq = ++rootLoadSeq
     selectedKeys.value = []
     nodes.value = []
     loading.value = true
-    nodes.value = (await fetchNodes("")) ?? []
+    const children = await fetchNodes("")
+    // 加载期间关闭又重开时，只让最新一次请求写入
+    if (seq !== rootLoadSeq) return
     loading.value = false
+    if (!children) return
+    nodes.value = [
+      {
+        key: ROOT_KEY,
+        label: t("option.pathPicker.projectRoot"),
+        isLeaf: false,
+        children,
+        prefix: () => h(NIcon, null, { default: () => h(FolderOutline) }),
+      },
+    ]
   },
 )
 </script>

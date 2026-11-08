@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from backend.maa_worker.pipeline_override import PipelineOverrideService
 from backend.models.interface import InputCase, Option
@@ -40,3 +41,13 @@ def test_absolute_path_and_text_input_are_kept_verbatim():
     assert _override("file", absolute)["Node"]["param"] == absolute
     assert _override("text", "resource/a.json")["Node"]["param"] == "resource/a.json"
     assert _override("directory", "")["Node"]["param"] == ""
+
+
+def test_project_root_selection_resolves_to_project_dir():
+    assert Path(_override("directory", ".")["Node"]["param"]) == PROJECT_DIR
+
+
+@pytest.mark.parametrize("pipeline_type", ["int", "bool"])
+def test_path_input_rejects_non_string_pipeline_type(pipeline_type):
+    with pytest.raises(ValidationError):
+        InputCase(name="target", input_type="file", pipeline_type=pipeline_type)
