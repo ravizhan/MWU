@@ -1,14 +1,19 @@
-"""任务启停、Focus 确认、通知测试与 SSE 日志流。"""
+"""任务启停、Focus 确认、通知测试、SSE 日志流与日志打包导出。"""
 
 import asyncio
+import time
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from backend.core import json_utils as json
+from backend.core import secret_store
 from backend.maa_worker import execution
 from backend.models.scheduler import ManualStartPayload
-from backend.runtime import app_state
+from backend.models.task_config import TaskConfigModel
+from backend.runtime import APP_ROOT_DIR, TASK_CONFIG_FILE, app_state
+from backend.services import log_export
 
 router = APIRouter()
 
@@ -83,4 +88,41 @@ async def stream_logs(request: Request):
             "Access-Control-Allow-Origin": "*",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+def _saved_task_config() -> TaskConfigModel:
+    if not TASK_CONFIG_FILE.exists():
+        return TaskConfigModel()
+    with TASK_CONFIG_FILE.open("r", encoding="utf-8") as f:
+        return TaskConfigModel(**secret_store.reveal(json.load(f)))
+
+
+@router.get("/api/logs/export")
+async def export_logs():
+    """打包日志为 zip 下载；当前保存的与本进程运行用过的 password 明文在打包时抹掉。
+
+    先快照文本日志再收集密码：之后启动的运行写入的新密码不会出现在快照里。
+    """
+    text_logs = await asyncio.to_thread(
+        log_export.snapshot_text_logs, APP_ROOT_DIR, list(app_state.history_message)
+    )
+    secrets = list(app_state.run_secrets)
+    option_maps = [app_state.settings.globalOptionValues]
+    task_config = await asyncio.to_thread(_saved_task_config)
+    for preset in task_config.presets.values():
+        option_maps.extend(preset.taskOptions.values())
+    if app_state.scheduler_manager is not None:
+        for task in await app_state.scheduler_manager.get_all_tasks():
+            option_maps.extend(task.task_options.values())
+    secrets += secret_store.password_values(option_maps)
+
+    bundle = await asyncio.to_thread(
+        log_export.build_bundle, APP_ROOT_DIR, text_logs, secrets
+    )
+    return FileResponse(
+        bundle,
+        media_type="application/zip",
+        filename=time.strftime("mwu-logs-%Y%m%d-%H%M%S.zip"),
+        background=BackgroundTask(bundle.unlink),
     )

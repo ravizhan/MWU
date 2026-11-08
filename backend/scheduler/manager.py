@@ -133,6 +133,9 @@ class SchedulerManager:
         self._db_path = db_path
         self._system_scheduler = system_scheduler
         self.scheduler: AsyncIOScheduler | None = None
+        # 唤醒同分钟冲突检查读任务列表时会让出事件循环；检查与落库必须串行，
+        # 否则并发的两次保存都看不到对方，冲突配置会同时落库。
+        self._wakeup_save_lock = asyncio.Lock()
 
     @staticmethod
     def _desired_wakeup(wakeup_enabled: bool, enabled: bool) -> bool:
@@ -280,6 +283,10 @@ class SchedulerManager:
         if not self.scheduler:
             raise RuntimeError("调度器未初始化")
 
+        async with self._wakeup_save_lock:
+            return await self._create_task(task_create)
+
+    async def _create_task(self, task_create: ScheduledTaskCreate) -> ScheduledTask:
         task_id = str(uuid.uuid4())
         trigger = self._create_trigger(task_create.trigger_config)
         normalized_task_list, normalized_task_options, normalized_pre_tasks = (
@@ -405,7 +412,8 @@ class SchedulerManager:
         """获取所有定时任务"""
         if not self.scheduler:
             return []
-        tasks = (self._decode_job(job) for job in self.scheduler.get_jobs())
+        jobs = await asyncio.to_thread(self.scheduler.get_jobs)
+        tasks = (self._decode_job(job) for job in jobs)
         return [task for task in tasks if task is not None]
 
     async def update_task(
@@ -416,6 +424,12 @@ class SchedulerManager:
         None 仅表示调度器未初始化或任务不存在；其余失败原样抛出，
         由 API 层报告真实原因。
         """
+        async with self._wakeup_save_lock:
+            return await self._update_task(task_id, task_update)
+
+    async def _update_task(
+        self, task_id: str, task_update: ScheduledTaskUpdate
+    ) -> ScheduledTask | None:
         if not self.scheduler:
             self._send_error_notification(
                 "调度器未初始化", "无法更新定时任务：调度器未初始化"

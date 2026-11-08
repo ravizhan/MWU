@@ -1,4 +1,5 @@
 import type { ApiResponse } from "@/services/api/core/types"
+import { fetchAttachment, type DownloadedFile } from "@/services/api/core/attachment"
 
 export interface PostDeviceResult {
   success: boolean
@@ -174,4 +175,20 @@ export function getDeviceState(): Promise<DeviceRuntimeState> {
       }
       return data.state
     })
+}
+
+/** Capture a lossless PNG of the connected device at the controller's capture size. */
+export function getScreenshot(): Promise<DownloadedFile> {
+  return fetchAttachment("/api/device/screenshot", "screenshot.png")
+}
+
+/** Click the device at a point in screenshot coordinates. */
+export function postDeviceClick(x: number, y: number): Promise<ApiResponse> {
+  return fetch("/api/device/click", {
+    method: "POST",
+    body: JSON.stringify({ x, y }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+  }).then((res) => res.json())
 }

@@ -20,6 +20,7 @@ dependencies = [
     "sentry-sdk>=2.73.0",
     "cryptography>=50.0.2",
     "apprise>=2.1.0",
+    "wakepy>=1.0.0",
 ]
 
 [dependency-groups]

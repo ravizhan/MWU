@@ -145,6 +145,8 @@ class AppState:
         self.active_run: ActiveRun | None = None
         self.active_execution_task: asyncio.Task | None = None
         self.update_in_progress = False
+        # 本进程内运行用过的 password 明文，导出日志时抹掉（配置改过或未保存也能覆盖）
+        self.run_secrets: set[str] = set()
         # 系统级调度状态
         self.pending_scheduled_task_id: str | None = None
         self.system_scheduler = None

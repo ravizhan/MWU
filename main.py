@@ -42,6 +42,7 @@
 # nuitka-project: --noinclude-custom-mode=tzlocal:bytecode
 # nuitka-project: --noinclude-custom-mode=urllib3:bytecode
 # nuitka-project: --noinclude-custom-mode=uvicorn:bytecode
+# nuitka-project: --noinclude-custom-mode=wakepy:bytecode
 # nuitka-project: --noinclude-custom-mode=yaml:bytecode
 import argparse
 import socket

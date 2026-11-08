@@ -1,5 +1,6 @@
 """SchedulerManager CRUD、原生唤醒顺序与触发器往返测试。"""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -250,6 +251,22 @@ class TestWakeupMinuteConflict:
         assert system_scheduler.register.call_count == 1
         names = {t.name for t in await mgr.get_all_tasks()}
         assert names == {"任务A"}
+
+    async def test_concurrent_creates_cannot_both_take_same_minute(self, manager_env):
+        mgr, _state, _system_scheduler = manager_env
+        # 两个标签页同时提交：冲突检查读取任务列表时会让出事件循环
+        results = await asyncio.gather(
+            mgr.create_task(
+                make_create("任务A", wakeup_enabled=True, cron="0 9 * * *")
+            ),
+            mgr.create_task(
+                make_create("任务B", wakeup_enabled=True, cron="0 9 * * 1")
+            ),
+            return_exceptions=True,
+        )
+
+        assert sum(isinstance(result, ValueError) for result in results) == 1
+        assert len(await mgr.get_all_tasks()) == 1
 
     async def test_update_rejects_conflict_with_other_task(self, manager_env):
         mgr, _state, _system_scheduler = manager_env

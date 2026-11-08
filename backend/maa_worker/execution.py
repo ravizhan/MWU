@@ -14,8 +14,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from wakepy import ActivationResult
+
+from backend.core import secret_store
 from backend.core.state import ActiveRun, AppState
 from backend.maa_worker.event_service import load_settings
+from backend.maa_worker.keep_awake import keep_running
 from backend.maa_worker.pretask_service import PretaskError, PretaskStopped
 from backend.models.scheduler import (
     ExecutionOrigin,
@@ -321,7 +325,7 @@ async def submit_manual(state: AppState, payload: ManualStartPayload) -> Admissi
         )
         await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
         state.active_execution_task = asyncio.create_task(
-            _complete_run(state, run_id, payload)
+            _run_keep_awake(state, run_id, payload)
         )
         _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
@@ -404,7 +408,7 @@ async def submit_scheduled(
             else None
         )
         state.active_execution_task = asyncio.create_task(
-            _complete_run(state, run_id, payload, task_list=task.task_list)
+            _run_keep_awake(state, run_id, payload, task_list=task.task_list)
         )
         _attach_prestart_cancel_guard(state, run_id)
     except BaseException:
@@ -455,6 +459,28 @@ def _deliver_terminal_side_effects(worker, event, error: str | None) -> None:
     worker.events.deliver_notification(event)
     if error:
         worker.events.send_log(f"任务异常详情: {error}")
+
+
+async def _run_keep_awake(
+    state: AppState,
+    run_id: str,
+    payload: ManualStartPayload | None,
+    *,
+    task_list: list[str] | None = None,
+) -> None:
+    """整次运行期间阻止系统休眠（不阻止息屏）；无法阻止时记录原因后照常运行。
+
+    wakepy 的 Mode 不跨线程，进入与退出都在事件循环线程的同一协程内完成。
+    """
+
+    def _on_fail(result: ActivationResult) -> None:
+        state.send_log(
+            f"无法阻止系统休眠，运行期间系统可能进入睡眠: "
+            f"{result.get_failure_text(style='inline')}"
+        )
+
+    with keep_running(on_fail=_on_fail):
+        await _complete_run(state, run_id, payload, task_list=task_list)
 
 
 async def _complete_run(
@@ -525,6 +551,14 @@ async def _complete_run(
             raise RuntimeError(
                 f"以下多选选项未达到最少选择数量: {', '.join(unmet_options)}"
             )
+
+        # 前置任务与 pipeline override 都可能把密码写进日志；先记下本次用到的明文，
+        # 导出日志时即使配置已改或未保存也能抹掉。
+        state.run_secrets.update(
+            secret_store.password_values(
+                [normalized_global_options, *normalized_task_options.values()]
+            )
+        )
 
         # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
         # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。

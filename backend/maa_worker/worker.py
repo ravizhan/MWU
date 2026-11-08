@@ -65,7 +65,7 @@ class MaaWorker:
 
         self.events.send_log("MAA初始化成功")
 
-    def get_screencap_bytes(self):
+    def get_screencap_bytes(self, image_format: str = "JPEG") -> bytes | None:
         controller = self.device_state.controller
         if not self.device_state.connected or controller is None:
             return None
@@ -74,7 +74,7 @@ class MaaWorker:
             if image is not None:
                 image_pil = Image.fromarray(image[:, :, ::-1])
                 img_byte_arr = io.BytesIO()
-                image_pil.save(img_byte_arr, format="JPEG")
+                image_pil.save(img_byte_arr, format=image_format)
                 return img_byte_arr.getvalue()
         except Exception as e:
             self.events.send_log(f"截图失败，已解除设备锁定: {e}")
@@ -82,6 +82,19 @@ class MaaWorker:
                 "检测到设备连接已断开，已解除设备与资源锁定"
             )
         return None
+
+    def click(self, x: int, y: int) -> bool:
+        """按截图坐标系点击设备；未连接或点击失败返回 False，连接已断开时解除锁定。"""
+        controller = self.device_state.controller
+        if not self.device_state.connected or controller is None:
+            return False
+        if controller.post_click(x, y).wait().succeeded:
+            return True
+        if not self.device.is_connection_alive():
+            self.device.reset_connection_state(
+                "检测到设备连接已断开，已解除设备与资源锁定"
+            )
+        return False
 
     def shutdown(self):
         self.tasks.stop()

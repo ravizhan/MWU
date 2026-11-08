@@ -1,6 +1,5 @@
-/** Download text content as a local file via a temporary blob URL. */
-export function downloadTextFile(filename: string, content: string): void {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" })
+/** Save a blob as a local file via a temporary object URL. */
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url

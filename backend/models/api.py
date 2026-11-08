@@ -73,6 +73,13 @@ class CustomDeviceCreate(BaseModel):
         return self
 
 
+class ClickPayload(BaseModel):
+    """截图坐标系中的点击位置"""
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+
+
 class FocusModal(BaseModel):
     id: str
     message: str
