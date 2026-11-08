@@ -61,7 +61,8 @@ def remember_secrets(values: Iterable[str], path: Path = SECRETS_FILE) -> None:
         known = set(remembered_secrets(path))
         if new <= known:
             return
-        secrets = [secret_store.seal_value(value) for value in sorted(known | new)]
+        # 记录里只有明文，不能用按前缀跳过的 seal_value：以加密前缀开头的密码会被原样落盘
+        secrets = [secret_store.encrypt_value(value) for value in sorted(known | new)]
         atomic_write_json(path, {"secrets": secrets})
 
 

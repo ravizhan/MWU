@@ -60,10 +60,15 @@ def configure(interface: InterfaceModel) -> None:
             _password_fields[option_name] = names
 
 
+def encrypt_value(value: str) -> str:
+    """无条件加密明文，即使明文本身带有加密前缀。"""
+    return _PREFIX + _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+
+
 def seal_value(value: str) -> str:
     if not value or value.startswith(_PREFIX):
         return value
-    return _PREFIX + _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+    return encrypt_value(value)
 
 
 def seal_option_map(options: dict[str, TaskOptionValue]) -> dict[str, TaskOptionValue]:

@@ -45,14 +45,16 @@ def test_secret_used_by_earlier_run_stays_masked_after_change(
     secret_store._fernet.cache_clear()
     secrets_file = tmp_path / "log_secrets.json"
     try:
-        # 第一次运行用 old-pass，之后配置改成 new-pass 再运行；导出时只剩 new-pass 在配置里
-        log_export.remember_secrets(["old-pass"], secrets_file)
+        # 第一次运行用旧密码，之后配置改成 new-pass 再运行；导出时只剩 new-pass 在配置里。
+        # 旧密码恰好带加密前缀，也必须加密落盘并能还原
+        old = "mwu-secret:v1:old-pass"
+        log_export.remember_secrets([old], secrets_file)
         log_export.remember_secrets(["new-pass"], secrets_file)
         assert "old-pass" not in secrets_file.read_text(encoding="utf-8")
 
         debug = tmp_path / "debug"
         debug.mkdir()
-        (debug / "maafw.log").write_text("old-pass new-pass", encoding="utf-8")
+        (debug / "maafw.log").write_text(f"{old} new-pass", encoding="utf-8")
         secrets = ["new-pass", *log_export.remembered_secrets(secrets_file)]
         bundle = log_export.build_bundle(tmp_path, [], secrets)
         try:
