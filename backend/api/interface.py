@@ -24,6 +24,12 @@ class ScanSelectRescanRequest(BaseModel):
     option_name: str
 
 
+class ProjectEntry(BaseModel):
+    name: str
+    path: str
+    is_dir: bool
+
+
 @router.get("/api/file")
 def get_file(path: str):
     try:
@@ -38,6 +44,44 @@ def get_file(path: str):
             content={"status": "failed", "message": str(exc)},
         )
     return FileResponse(resolved_path)
+
+
+@router.get("/api/file/list")
+def list_project_dir(path: str = ""):
+    """列出项目目录内某一层的子项，供 file/directory 输入的选择器懒加载。"""
+    try:
+        directory = (
+            resolve_interface_relative_path(
+                PROJECT_DIR, path, field_name="path", allow_directories=True
+            )
+            if path.strip()
+            else PROJECT_DIR
+        )
+        entries: list[ProjectEntry] = []
+        for entry in directory.iterdir():
+            # 单个子项不可访问（如无权限的符号链接目标）只跳过该项，不影响整层列表
+            try:
+                is_dir = entry.is_dir()
+                if not (is_dir or entry.is_file()):
+                    continue
+                if not entry.resolve().is_relative_to(PROJECT_DIR):
+                    continue
+            except OSError:
+                continue
+            entries.append(
+                ProjectEntry(
+                    name=entry.name,
+                    path=entry.relative_to(PROJECT_DIR).as_posix(),
+                    is_dir=is_dir,
+                )
+            )
+    except (ValueError, OSError) as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "failed", "message": str(exc)},
+        )
+    entries.sort(key=lambda entry: (not entry.is_dir, entry.name.casefold()))
+    return {"status": "success", "entries": entries}
 
 
 @router.get("/api/interface")

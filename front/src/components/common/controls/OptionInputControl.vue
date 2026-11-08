@@ -33,6 +33,17 @@
         :status="isInputError(input.name, input.verify) ? 'error' : undefined"
         @update:value="handleInputChange(input.name, $event, input)"
       />
+      <NInputGroup v-else-if="isPathInput(input)">
+        <NInput
+          size="small"
+          :value="getInputValue(input.name)"
+          :status="isInputError(input.name, input.verify) ? 'error' : undefined"
+          @update:value="handleInputChange(input.name, $event, input)"
+        />
+        <NButton size="small" @click="openPicker(input)">
+          {{ t("option.pathPicker.browse") }}
+        </NButton>
+      </NInputGroup>
       <NInput
         v-else
         size="small"
@@ -41,16 +52,23 @@
         @update:value="handleInputChange(input.name, $event, input)"
       />
     </div>
+    <ProjectPathPickerDialog
+      v-model:show="pickerVisible"
+      :kind="pickerInput?.input_type === 'directory' ? 'directory' : 'file'"
+      @select="handlePickerSelect"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue"
+import { useI18n } from "vue-i18n"
 import { showGlobalMessage } from "@/services/feedback/message"
 import type { InputCase, InputOption } from "@/types/interfaceModel"
 import { resolveInterfaceText } from "@/utils/interface/content"
 import { makeInterfaceInputSchema } from "@/validation/interfaceInput"
 import InterfaceDescription from "@/components/common/InterfaceDescription.vue"
+import ProjectPathPickerDialog from "@/components/common/controls/ProjectPathPickerDialog.vue"
 
 const { option, value } = defineProps<{
   option: InputOption
@@ -61,7 +79,10 @@ const emit = defineEmits<{
   (event: "update:value", value: Record<string, string>): void
 }>()
 
+const { t } = useI18n()
 const inputInvalidState = ref<Record<string, boolean>>({})
+const pickerVisible = ref(false)
+const pickerInput = ref<InputCase | null>(null)
 
 type InputControlType = "string" | "number" | "bool" | "textarea"
 
@@ -109,6 +130,20 @@ function getInputControlType(input: InputCase): InputControlType {
   if (pipelineType === "bool") return "bool"
   if (pipelineType === "textarea") return "textarea"
   return "string"
+}
+
+function isPathInput(input: InputCase): boolean {
+  return input.input_type === "file" || input.input_type === "directory"
+}
+
+function openPicker(input: InputCase): void {
+  pickerInput.value = input
+  pickerVisible.value = true
+}
+
+function handlePickerSelect(path: string): void {
+  if (!pickerInput.value) return
+  handleInputChange(pickerInput.value.name, path, pickerInput.value)
 }
 
 function getInputNumberValue(inputName: string): number | null {

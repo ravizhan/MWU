@@ -110,6 +110,15 @@ class PretaskService:
             value = option_values.get(name)
             if value is None:
                 value = self._default_option_value(option)
+            if option.type == "input" and isinstance(value, dict):
+                base_dir = self.worker.context.interface_base_dir
+                fields = {field.name: field for field in option.inputs or []}
+                value = {
+                    key: fields[key].runtime_value(text, base_dir)
+                    if key in fields
+                    else text
+                    for key, text in value.items()
+                }
             out[name] = value
 
             selected = value if isinstance(value, list) else [value]
