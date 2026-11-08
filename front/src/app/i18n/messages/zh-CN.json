@@ -282,7 +282,13 @@
     "hotkeyCapturing": "请按下快捷键…",
     "hotkeyTooManyModifiers": "快捷键最多支持两个修饰键",
     "hotkeyUnsupportedKey": "该按键不受支持，请换一个键",
-    "checkboxCount": "已选 {count} 项，需选择 {min}–{max} 项"
+    "checkboxCount": "已选 {count} 项，需选择 {min}–{max} 项",
+    "pathPicker": {
+      "browse": "浏览",
+      "fileTitle": "选择项目内的文件",
+      "directoryTitle": "选择项目内的文件夹",
+      "loadFailed": "读取文件夹失败：{message}"
+    }
   },
   "panel": {
     "device": "设备连接",

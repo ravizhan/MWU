@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import (
@@ -373,6 +374,14 @@ class InputCase(BaseModel):
         if self.password and self.default is not None:
             raise ValueError(f"输入项 {self.name} 为 password 时不能设置 default")
         return self
+
+    def runtime_value(self, value: str, project_dir: Path) -> str:
+        """file/directory 输入在配置里保存项目目录相对路径，运行时交给 pipeline 与
+        pretask 的是绝对路径；agent 的 cwd 不一定是项目目录，相对路径会产生歧义。"""
+        if self.input_type not in {"file", "directory"} or not value.strip():
+            return value
+        path = Path(value)
+        return value if path.is_absolute() else str(project_dir / path)
 
 
 class HotkeyCase(BaseModel):

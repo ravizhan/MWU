@@ -282,7 +282,13 @@
     "hotkeyCapturing": "Press shortcut keys...",
     "hotkeyTooManyModifiers": "Shortcuts support at most two modifier keys",
     "hotkeyUnsupportedKey": "This key is not supported, please pick another one",
-    "checkboxCount": "{count} selected, choose {min}–{max}"
+    "checkboxCount": "{count} selected, choose {min}–{max}",
+    "pathPicker": {
+      "browse": "Browse",
+      "fileTitle": "Select a file in the project",
+      "directoryTitle": "Select a folder in the project",
+      "loadFailed": "Failed to read folder: {message}"
+    }
   },
   "panel": {
     "device": "Connect Device",

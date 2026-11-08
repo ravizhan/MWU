@@ -207,7 +207,7 @@ class PipelineOverrideService:
                 raw_text = raw_option_value[0] if raw_option_value else ""
 
             typed_value, text_value = self._coerce_input_value(
-                raw_text,
+                field.runtime_value(raw_text, self.worker.context.interface_base_dir),
                 field.pipeline_type,
             )
             placeholder = f"{{{field.name}}}"

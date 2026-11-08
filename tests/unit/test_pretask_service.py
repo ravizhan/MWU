@@ -1,5 +1,6 @@
 """Unit tests for the unified PI and user pre-task execution service."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -226,6 +227,31 @@ def test_option_json_includes_selected_sub_options_and_skips_inapplicable(
     )
 
     assert recorder.calls[0][0][-1] == '{"mode":"deep","level":{"n":"3"}}'
+
+
+def test_option_json_resolves_relative_path_inputs(monkeypatch):
+    options = {
+        "paths": Option(
+            type="input",
+            inputs=[
+                InputCase(name="cfg", input_type="file"),
+                InputCase(name="note"),
+            ],
+        )
+    }
+    worker = _make_worker(
+        pretasks=[Pretask(exec="pi-tool", option=["paths"])], options=options
+    )
+    recorder = _PopenRecorder([_FakeProcess()])
+    _patch_popen(monkeypatch, recorder)
+
+    PretaskService(worker).run_all(
+        "adb", "main", [], {"paths": {"cfg": "a/b.json", "note": "a/b"}}, {}
+    )
+
+    assert json.loads(recorder.calls[0][0][-1]) == {
+        "paths": {"cfg": str(Path("C:/app-root") / "a/b.json"), "note": "a/b"}
+    }
 
 
 def test_pretask_runs_from_interface_base_dir(monkeypatch):

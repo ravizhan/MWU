@@ -26,3 +26,26 @@ export function rescanScanSelectOption(optionName: string): Promise<OptionCase[]
       return data.cases
     })
 }
+
+export interface ProjectEntry {
+  name: string
+  /** Project-relative POSIX path. */
+  path: string
+  is_dir: boolean
+}
+
+interface ProjectEntriesResponse extends ApiResponse {
+  entries?: ProjectEntry[]
+}
+
+/** List one level of the project directory ("" = project root). */
+export function listProjectDir(path: string): Promise<ProjectEntry[]> {
+  return fetch(`/api/file/list?${new URLSearchParams({ path })}`)
+    .then((res) => res.json())
+    .then((data: ProjectEntriesResponse) => {
+      if (data.status !== "success" || !Array.isArray(data.entries)) {
+        throw new Error(data.message || "读取目录失败")
+      }
+      return data.entries
+    })
+}
