@@ -8,6 +8,7 @@ import functools
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,7 @@ def configure(interface: InterfaceModel) -> None:
             _password_fields[option_name] = names
 
 
-def _seal_value(value: str) -> str:
+def seal_value(value: str) -> str:
     if not value or value.startswith(_PREFIX):
         return value
     return _PREFIX + _fernet().encrypt(value.encode("utf-8")).decode("ascii")
@@ -75,7 +76,7 @@ def seal_option_map(options: dict[str, TaskOptionValue]) -> dict[str, TaskOption
             continue
         sealed[option_name] = {
             field_name: (
-                _seal_value(field_value) if field_name in names else field_value
+                seal_value(field_value) if field_name in names else field_value
             )
             for field_name, field_value in value.items()
         }
@@ -89,10 +90,11 @@ def seal_task_options(task_options: TaskOptionsByTask) -> TaskOptionsByTask:
     }
 
 
-def password_values(options: dict[str, TaskOptionValue]) -> list[str]:
+def password_values(option_maps: Iterable[dict[str, TaskOptionValue]]) -> list[str]:
     """返回已解密选项映射中 password 输入的非空明文值。"""
     return [
         field_value
+        for options in option_maps
         for option_name, value in options.items()
         if (names := _password_fields.get(option_name)) and isinstance(value, dict)
         for field_name, field_value in value.items()

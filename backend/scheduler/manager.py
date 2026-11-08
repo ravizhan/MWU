@@ -405,7 +405,8 @@ class SchedulerManager:
         """获取所有定时任务"""
         if not self.scheduler:
             return []
-        tasks = (self._decode_job(job) for job in self.scheduler.get_jobs())
+        jobs = await asyncio.to_thread(self.scheduler.get_jobs)
+        tasks = (self._decode_job(job) for job in jobs)
         return [task for task in tasks if task is not None]
 
     async def update_task(

@@ -100,7 +100,7 @@ def _saved_task_config() -> TaskConfigModel:
 
 @router.get("/api/logs/export")
 async def export_logs():
-    """打包日志为 zip 下载；password 选项的明文在打包时抹掉。"""
+    """打包日志为 zip 下载；当前保存的与运行用过的 password 明文在打包时抹掉。"""
     option_maps = [app_state.settings.globalOptionValues]
     task_config = await asyncio.to_thread(_saved_task_config)
     for preset in task_config.presets.values():
@@ -108,11 +108,8 @@ async def export_logs():
     if app_state.scheduler_manager is not None:
         for task in await app_state.scheduler_manager.get_all_tasks():
             option_maps.extend(task.task_options.values())
-    secrets = [
-        value
-        for options in option_maps
-        for value in secret_store.password_values(options)
-    ]
+    secrets = secret_store.password_values(option_maps)
+    secrets += await asyncio.to_thread(log_export.remembered_secrets)
 
     bundle = await asyncio.to_thread(
         log_export.build_bundle,

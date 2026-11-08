@@ -16,6 +16,7 @@ from pathlib import Path
 
 from wakepy import ActivationResult, keep
 
+from backend.core import secret_store
 from backend.core.state import ActiveRun, AppState
 from backend.maa_worker.event_service import load_settings
 from backend.maa_worker.pretask_service import PretaskError, PretaskStopped
@@ -33,7 +34,7 @@ from backend.models.task_config import (
     normalize_global_option_values,
     normalize_task_execution_payload,
 )
-from backend.services import telemetry
+from backend.services import log_export, telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -549,6 +550,13 @@ async def _complete_run(
             raise RuntimeError(
                 f"以下多选选项未达到最少选择数量: {', '.join(unmet_options)}"
             )
+
+        # 前置任务与 pipeline override 都可能把密码写进日志；先记下本次用到的明文，
+        # 导出日志时即使配置已改或未保存也能抹掉。
+        run_secrets = secret_store.password_values(
+            [normalized_global_options, *normalized_task_options.values()]
+        )
+        await asyncio.to_thread(log_export.remember_secrets, run_secrets)
 
         # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
         # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。

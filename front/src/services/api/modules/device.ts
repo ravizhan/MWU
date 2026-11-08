@@ -177,7 +177,7 @@ export function getDeviceState(): Promise<DeviceRuntimeState> {
     })
 }
 
-/** Capture a full-resolution PNG of the connected device. */
+/** Capture a lossless PNG of the connected device at the controller's capture size. */
 export function getScreenshot(): Promise<DownloadedFile> {
   return fetchAttachment("/api/device/screenshot", "screenshot.png")
 }
