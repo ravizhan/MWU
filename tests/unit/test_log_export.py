@@ -64,6 +64,22 @@ def test_secret_used_by_earlier_run_stays_masked_after_change(
         secret_store._fernet.cache_clear()
 
 
+def test_corrupt_secret_record_is_ignored_and_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(secret_store, "_key_path", lambda: tmp_path / "secret.key")
+    secret_store._fernet.cache_clear()
+    secrets_file = tmp_path / "log_secrets.json"
+    try:
+        # 写入中断留下的截断文件不能让导出 500 或阻断运行
+        secrets_file.write_text('{"secrets": ["mwu-sec', encoding="utf-8")
+        assert log_export.remembered_secrets(secrets_file) == []
+        log_export.remember_secrets(["pass"], secrets_file)
+        assert log_export.remembered_secrets(secrets_file) == ["pass"]
+    finally:
+        secret_store._fernet.cache_clear()
+
+
 def test_tail_cut_never_starts_inside_a_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

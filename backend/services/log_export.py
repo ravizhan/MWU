@@ -7,8 +7,10 @@
 图片按修改时间从新到旧收录，放不进剩余总量的跳过，继续尝试更旧的小图。
 """
 
+import logging
 import os
 import tempfile
+import threading
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -19,22 +21,35 @@ from backend.core.paths import resolve_app_root
 from backend.core.settings_io import atomic_write_json
 from backend.models.api import RealtimeEvent
 
+logger = logging.getLogger(__name__)
+
 LOG_TAIL_BYTES = 32 * 1024 * 1024
 IMAGE_BUDGET_BYTES = 64 * 1024 * 1024
 SECRETS_FILE = resolve_app_root() / "config" / "log_secrets.json"
 _IMAGE_DIRS = ("on_error", "vision")
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 _MASK = b"******"
+# 运行被取消后 to_thread 里的写入仍会继续，下一次运行可能同时合并记录；
+# 串行化整个读改写，避免旧写入覆盖新值。
+_SECRETS_LOCK = threading.Lock()
 
 
 def remembered_secrets(path: Path = SECRETS_FILE) -> list[str]:
-    """读取运行用过的 password 明文；无法解密的值（密钥丢失）被 reveal 清空后丢弃。"""
+    """读取运行用过的 password 明文；无法解密的值（密钥丢失）被 reveal 清空后丢弃。
+
+    记录只辅助脱敏：文件损坏时记录警告并按空记录处理，不阻断导出和运行，下次记录时重写。
+    """
     if not path.exists():
         return []
-    with path.open("r", encoding="utf-8") as f:
-        return [
-            value for value in secret_store.reveal(json.load(f)["secrets"]) if value
-        ]
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            sealed = json.load(f)["secrets"]
+    except (ValueError, KeyError, TypeError):
+        sealed = None
+    if not isinstance(sealed, list):
+        logger.warning("%s 无法解析，已忽略其中的密码记录", path.name)
+        return []
+    return [value for value in secret_store.reveal(sealed) if value]
 
 
 def remember_secrets(values: Iterable[str], path: Path = SECRETS_FILE) -> None:
@@ -42,11 +57,12 @@ def remember_secrets(values: Iterable[str], path: Path = SECRETS_FILE) -> None:
     new = set(values)
     if not new:
         return
-    known = set(remembered_secrets(path))
-    if new <= known:
-        return
-    secrets = [secret_store.seal_value(value) for value in sorted(known | new)]
-    atomic_write_json(path, {"secrets": secrets})
+    with _SECRETS_LOCK:
+        known = set(remembered_secrets(path))
+        if new <= known:
+            return
+        secrets = [secret_store.seal_value(value) for value in sorted(known | new)]
+        atomic_write_json(path, {"secrets": secrets})
 
 
 def _secret_patterns(values: Iterable[str]) -> list[bytes]:

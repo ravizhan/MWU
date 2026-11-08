@@ -14,11 +14,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from wakepy import ActivationResult, keep
+from wakepy import ActivationResult
 
 from backend.core import secret_store
 from backend.core.state import ActiveRun, AppState
 from backend.maa_worker.event_service import load_settings
+from backend.maa_worker.keep_awake import keep_running
 from backend.maa_worker.pretask_service import PretaskError, PretaskStopped
 from backend.models.scheduler import (
     ExecutionOrigin,
@@ -478,7 +479,7 @@ async def _run_keep_awake(
             f"{result.get_failure_text(style='inline')}"
         )
 
-    with keep.running(on_fail=_on_fail):
+    with keep_running(on_fail=_on_fail):
         await _complete_run(state, run_id, payload, task_list=task_list)
 
 
