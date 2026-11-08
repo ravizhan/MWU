@@ -1,12 +1,13 @@
 """日志打包：MaaFramework 日志、MWU 运行日志、updater 日志与 debug 图片写入 zip。
 
 文本日志按尾部截断并抹掉 password 选项的明文（pipeline override 会把它写进 maafw.log）。
-明文由调用方提供：当前保存的配置加上本进程内运行实际用过的值。
+/明文由调用方提供：当前保存的配置加上本进程内运行实际用过的值。
 截断点对齐到下一行开头：password 输入是单行值，整行起截就不会留下跨截断点的明文残片。
 图片按修改时间从新到旧收录，放不进剩余总量的跳过，继续尝试更旧的小图。
 """
 
 import os
+import stat
 import tempfile
 import zipfile
 from collections.abc import Iterable
@@ -51,15 +52,23 @@ def _read_tail(path: Path) -> bytes:
     return data[data.find(b"\n") + 1 :] if b"\n" in data else b""
 
 
-def _newest_images(debug_dir: Path) -> list[Path]:
-    images = [
-        path
-        for name in _IMAGE_DIRS
-        if (debug_dir / name).is_dir()
-        for path in (debug_dir / name).rglob("*")
-        if path.suffix.lower() in _IMAGE_SUFFIXES and path.is_file()
-    ]
-    return sorted(images, key=lambda path: path.stat().st_mtime, reverse=True)
+def _newest_images(debug_dir: Path) -> list[tuple[Path, int]]:
+    """(路径, 大小)，按修改时间从新到旧；扫描后被 MaaFramework 轮换删除的图片直接跳过。"""
+    images: list[tuple[Path, os.stat_result]] = []
+    for name in _IMAGE_DIRS:
+        if not (debug_dir / name).is_dir():
+            continue
+        for path in (debug_dir / name).rglob("*"):
+            if path.suffix.lower() not in _IMAGE_SUFFIXES:
+                continue
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                images.append((path, info))
+    images.sort(key=lambda item: item[1].st_mtime, reverse=True)
+    return [(path, info.st_size) for path, info in images]
 
 
 def snapshot_text_logs(
@@ -108,13 +117,18 @@ def _write_bundle(
             bundle.writestr(arcname, _redact(data, patterns))
 
         remaining = IMAGE_BUDGET_BYTES
-        for path in _newest_images(app_root / "debug"):
-            size = path.stat().st_size
+        for path, size in _newest_images(app_root / "debug"):
             if size > remaining:
                 continue
-            remaining -= size
-            bundle.write(
-                path,
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
+                continue
+            if len(data) > remaining:
+                continue
+            bundle.writestr(
                 path.relative_to(app_root).as_posix(),
+                data,
                 compress_type=zipfile.ZIP_STORED,
             )
+            remaining -= len(data)

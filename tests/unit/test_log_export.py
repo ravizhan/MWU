@@ -63,3 +63,28 @@ def test_tail_cut_never_starts_inside_a_line(
     # 截断点落在 hunter2 中间：不能留下 "er2" 这类无法匹配完整密码的残片
     log.write_bytes(b"pw hunter2\nkept\n")
     assert log_export._read_tail(log) == b"kept\n"
+
+
+def test_bundle_skips_images_deleted_after_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    on_error = tmp_path / "debug" / "on_error"
+    on_error.mkdir(parents=True)
+    kept = on_error / "kept.png"
+    kept.write_bytes(b"png")
+    gone = on_error / "gone.png"
+    gone.write_bytes(b"png")
+    scan = log_export._newest_images
+
+    def scan_then_rotate(debug_dir: Path) -> list[tuple[Path, int]]:
+        images = scan(debug_dir)
+        gone.unlink()  # MaaFramework 在扫描后轮换删除图片
+        return images
+
+    monkeypatch.setattr(log_export, "_newest_images", scan_then_rotate)
+    bundle = log_export.build_bundle(tmp_path, [], [])
+    try:
+        with zipfile.ZipFile(bundle) as archive:
+            assert archive.namelist() == ["debug/on_error/kept.png"]
+    finally:
+        bundle.unlink()
