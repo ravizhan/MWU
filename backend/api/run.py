@@ -4,7 +4,7 @@ import asyncio
 import time
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from backend.core import json_utils as json
@@ -100,17 +100,14 @@ def _saved_task_config() -> TaskConfigModel:
 
 @router.get("/api/logs/export")
 async def export_logs():
-    """打包日志为 zip 下载；当前保存的与运行用过的 password 明文在打包时抹掉。
+    """打包日志为 zip 下载；当前保存的与本进程运行用过的 password 明文在打包时抹掉。
 
     先快照文本日志再收集密码：之后启动的运行写入的新密码不会出现在快照里。
     """
     text_logs = await asyncio.to_thread(
         log_export.snapshot_text_logs, APP_ROOT_DIR, list(app_state.history_message)
     )
-    try:
-        secrets = await asyncio.to_thread(log_export.remembered_secrets)
-    except log_export.SecretRecordIncomplete as exc:
-        return JSONResponse({"status": "failed", "message": str(exc)}, status_code=409)
+    secrets = list(app_state.run_secrets)
     option_maps = [app_state.settings.globalOptionValues]
     task_config = await asyncio.to_thread(_saved_task_config)
     for preset in task_config.presets.values():

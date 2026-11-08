@@ -35,7 +35,7 @@ from backend.models.task_config import (
     normalize_global_option_values,
     normalize_task_execution_payload,
 )
-from backend.services import log_export, telemetry
+from backend.services import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -554,12 +554,11 @@ async def _complete_run(
 
         # 前置任务与 pipeline override 都可能把密码写进日志；先记下本次用到的明文，
         # 导出日志时即使配置已改或未保存也能抹掉。
-        # 记录失败不阻断运行：remember_secrets 会把记录标为不完整，导出随之拒绝。
-        run_secrets = secret_store.password_values(
-            [normalized_global_options, *normalized_task_options.values()]
+        state.run_secrets.update(
+            secret_store.password_values(
+                [normalized_global_options, *normalized_task_options.values()]
+            )
         )
-        if not await asyncio.to_thread(log_export.remember_secrets, run_secrets):
-            worker.events.send_log("记录本次运行的密码失败，在清理日志前将无法导出日志")
 
         # 3. PI pretask + 用户命令统一在 Controller 创建/连接前执行。
         # 已锁定且可复用的 Controller 无法重新满足“创建前”，此处仍保证在任务启动前执行。
