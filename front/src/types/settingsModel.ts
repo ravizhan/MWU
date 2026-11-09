@@ -29,14 +29,24 @@ export interface NotificationChannel {
   params: Record<string, string>
 }
 
+// 通知触发时机开关，与后端 NotificationTrigger 一致
+export type NotificationTrigger =
+  | "notifyOnStart"
+  | "notifyOnComplete"
+  | "notifyOnError"
+  | "notifyOnTaskSuccess"
+  | "notifyOnTaskFailure"
+  | "notifyOnPretaskFailed"
+  | "notifyOnConnectFailed"
+  | "notifyOnScheduledSkip"
+
 // 通知设置
-export interface NotificationSettings {
+export interface NotificationSettings extends Record<NotificationTrigger, boolean> {
   systemNotification: boolean
   browserNotification: boolean
   externalNotification: boolean
   channels: NotificationChannel[]
-  notifyOnComplete: boolean
-  notifyOnError: boolean
+  attachScreenshot: boolean
 }
 
 // 界面设置

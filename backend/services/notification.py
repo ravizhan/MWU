@@ -3,6 +3,9 @@
 apprise 按 URL schema 加载插件时会扫描插件目录，Nuitka standalone 产物里没有这些
 源文件，所以这里直接实例化插件类，不走 URL。钉钉/飞书/企业微信群机器人出错时 HTTP
 仍返回 200，apprise 自带插件只看状态码（飞书还不支持签名），因此由 _RobotWebhook 实现。
+
+截图附件：邮件、Telegram、OneBot 由 apprise 插件原生发送；企业微信在文本后追加一条
+图片消息；自定义 Webhook 通过 {{screenshot}} 占位符取 Base64；其余渠道只发文本。
 """
 
 import base64
@@ -15,7 +18,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import requests
-from apprise import Apprise, AppriseAsset, NotifyFormat, NotifyType
+from apprise import Apprise, AppriseAsset, AppriseAttachment, NotifyFormat, NotifyType
+from apprise.attachment.memory import AttachMemory
 from apprise.exception import AppriseException
 from apprise.plugins.bark import NotifyBark
 from apprise.plugins.base import NotifyBase
@@ -54,6 +58,13 @@ _APP_ID = "MWU"
 type _RobotRequest = tuple[str, dict[str, str], dict[str, Any]]
 
 
+def _attachment_bytes(attach: AppriseAttachment | None) -> bytes | None:
+    if not attach:
+        return None
+    with attach[0].open() as stream:
+        return stream.read()
+
+
 def _request_error(exc: requests.RequestException) -> str:
     """requests 的异常文本包含完整 URL（钉钉/企业微信的 token 在其中），只报状态码或异常类型。"""
     if exc.response is not None:
@@ -62,7 +73,10 @@ def _request_error(exc: requests.RequestException) -> str:
 
 
 class _RobotWebhook(NotifyBase):
-    """国内群机器人：POST JSON，并按响应体里的业务错误码判定成败。"""
+    """国内群机器人：POST JSON，并按响应体里的业务错误码判定成败。
+
+    提供 build_image 的机器人在文本消息之后再发一条截图消息。
+    """
 
     protocol = "mwu-robot"
     notify_format = NotifyFormat.TEXT
@@ -74,12 +88,14 @@ class _RobotWebhook(NotifyBase):
         service_name: str,
         build: Callable[[str], _RobotRequest],
         error_of: Callable[[dict[str, Any]], str | None],
+        build_image: Callable[[bytes], _RobotRequest] | None = None,
         **kwargs: Any,
     ):
         super().__init__(**kwargs)
         self.service_name = service_name
         self._build = build
         self._error_of = error_of
+        self._build_image = build_image
 
     def url(self, privacy: bool = False, *args: Any, **kwargs: Any) -> str:
         return f"{self.protocol}://{self.service_name}"
@@ -91,7 +107,15 @@ class _RobotWebhook(NotifyBase):
         notify_type: NotifyType = NotifyType.INFO,
         **kwargs: Any,
     ) -> bool:
-        url, params, payload = self._build(body)
+        if not self._post(self._build(body)):
+            return False
+        image = _attachment_bytes(kwargs.get("attach"))
+        if image is None or self._build_image is None:
+            return True
+        return self._post(self._build_image(image))
+
+    def _post(self, request: _RobotRequest) -> bool:
+        url, params, payload = request
         self.throttle()
         try:
             response = requests.post(
@@ -188,11 +212,22 @@ def _wecom(channel: WeComChannel, **kwargs: Any) -> NotifyBase:
     def build(body: str) -> _RobotRequest:
         return url, {}, {"msgtype": "text", "text": {"content": body}}
 
-    return _RobotWebhook("企业微信", build, _errcode_error, **kwargs)
+    def build_image(image: bytes) -> _RobotRequest:
+        payload = {
+            "msgtype": "image",
+            "image": {
+                "base64": base64.b64encode(image).decode(),
+                "md5": hashlib.md5(image).hexdigest(),
+            },
+        }
+        return url, {}, payload
+
+    return _RobotWebhook("企业微信", build, _errcode_error, build_image, **kwargs)
 
 
 class _Webhook(NotifyBase):
-    """自定义 Webhook：JSON 模板支持 {{title}} / {{message}}，可选 GET、表单与 Basic 认证。"""
+    """自定义 Webhook：JSON 模板支持 {{title}} / {{message}} / {{screenshot}}（Base64 JPEG，
+    无截图时为空串），可选 GET、表单与 Basic 认证。"""
 
     service_name = "Webhook"
     protocol = "mwu-webhook"
@@ -222,6 +257,8 @@ class _Webhook(NotifyBase):
     ) -> bool:
         p = self._params
         template = p.body.strip()
+        image = _attachment_bytes(kwargs.get("attach"))
+        screenshot = base64.b64encode(image).decode() if image else ""
 
         def escape(value: str) -> str:
             # 编码成 JSON 字符串字面量再去掉两侧引号，占位符在字符串内时结果仍是合法 JSON
@@ -230,12 +267,12 @@ class _Webhook(NotifyBase):
         try:
             payload = (
                 json.loads(
-                    template.replace("{{title}}", escape(title)).replace(
-                        "{{message}}", escape(body)
-                    )
+                    template.replace("{{title}}", escape(title))
+                    .replace("{{message}}", escape(body))
+                    .replace("{{screenshot}}", screenshot)
                 )
                 if template
-                else {"title": title, "message": body}
+                else {"title": title, "message": body, "screenshot": screenshot}
             )
         except ValueError as exc:
             self.logger.warning("Body 模板不是合法 JSON: %s", exc)
@@ -349,8 +386,12 @@ def send_external(
     title: str,
     message: str,
     level: RealtimeEventLevel,
+    screenshot: bytes | None = None,
 ) -> list[str]:
-    """向所有启用的渠道发送通知，返回每个失败渠道的错误描述（全部成功时为空）。"""
+    """向所有启用的渠道发送通知，返回每个失败渠道的错误描述（全部成功时为空）。
+
+    screenshot 为 JPEG 字节，支持附件的渠道随通知一起发送。
+    """
     asset = AppriseAsset(app_id=_APP_ID, storage_mode="memory")
     apprise = Apprise(asset=asset)
     errors: list[str] = []
@@ -365,11 +406,22 @@ def send_external(
     if not len(apprise):
         return errors
 
+    attach = (
+        AppriseAttachment(
+            AttachMemory(
+                content=screenshot, name="screenshot.jpg", mimetype="image/jpeg"
+            ),
+            asset=asset,
+        )
+        if screenshot
+        else None
+    )
     result = apprise.notify(
         body=message,
         title=title,
         notify_type=_NOTIFY_TYPES[level],
         body_format=NotifyFormat.TEXT,
+        attach=attach,
     )
     for service in result:
         if service:

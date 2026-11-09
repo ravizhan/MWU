@@ -163,9 +163,7 @@ class PretaskService:
     ) -> None:
         state = self.worker.task_state
         if state.stop_flag:
-            error = PretaskError(f"前置任务已停止: {display_name}")
-            self._notify_failure(display_name, error)
-            raise error
+            raise PretaskError(f"前置任务已停止: {display_name}")
 
         self.worker.events.send_log(f"执行前置程序: {display_name}")
         creationflags = 0
@@ -245,9 +243,7 @@ class PretaskService:
                 self.worker.events.send_log(line)
 
         if stopped:
-            error = PretaskError(f"前置任务已停止: {display_name}")
-            self._notify_failure(display_name, error)
-            raise error
+            raise PretaskError(f"前置任务已停止: {display_name}")
         if timed_out:
             error = PretaskError(f"前置任务执行超时（{timeout}s）: {display_name}")
             self._notify_failure(display_name, error)
@@ -273,10 +269,8 @@ class PretaskService:
 
     def _notify_failure(self, display_name: str, error: PretaskError) -> None:
         self.worker.events.send_log(f"前置程序执行失败: {display_name}")
-        self.worker.events.send_notification(
-            "前置程序执行失败",
-            str(error),
-            notify=["notification"],
+        self.worker.events.notify(
+            "notifyOnPretaskFailed", "前置程序执行失败", str(error), level="error"
         )
 
     def stop_current(self) -> None:

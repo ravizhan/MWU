@@ -97,9 +97,13 @@ class _FakeEvents:
     def __init__(self):
         self.terminal_events: list[tuple[list[str], str | None, bool]] = []
         self.logs: list[str] = []
+        self.triggers: list[str] = []
 
     def send_log(self, msg: str):
         self.logs.append(msg)
+
+    def notify(self, trigger: str, *_args, **_kwargs):
+        self.triggers.append(trigger)
 
     def publish_task_terminal(self, task_list, run_label, succeeded, settings):
         self.terminal_events.append((list(task_list), run_label, succeeded))
@@ -570,6 +574,7 @@ class TestSubmitScheduled:
         assert skip.task_id == task.id
         assert skip.origin == "in_app"
         assert skip.blocker_task_name == blocker_name
+        assert worker.events.triggers == ["notifyOnScheduledSkip"]
         # 必须等任务真正启动后再结束：前置任务在线程池中执行，过早置 running=False
         # 会被随后的 start() 覆盖，运行协程将永远轮询下去
         for _ in range(500):
@@ -1040,3 +1045,5 @@ async def test_connect_attempts_follow_auto_retry_setting(
 
     assert worker.device.connect_calls == expected_connect_calls
     assert list_executions(state.scheduler_db_path)[0].status == "failed"
+    # 重试全部用完后只通知一次
+    assert worker.events.triggers == ["notifyOnConnectFailed"]

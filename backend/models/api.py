@@ -15,6 +15,7 @@ RealtimeEventName = Literal[
     "task.started",
     "task.completed",
     "task.failed",
+    "notification",
     "notification.test",
 ]
 RealtimeEventLevel = Literal["info", "success", "error"]

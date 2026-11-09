@@ -101,6 +101,27 @@
         @update="updateChannel"
         @delete="removeChannel(channel.id)"
       />
+
+      <div class="grid grid-cols-1 items-center gap-2 py-3 md:grid-cols-[1fr_auto] md:gap-4">
+        <div class="space-y-1">
+          <label class="text-sm" for="notify-attach-screenshot">
+            {{ t("settings.notification.attachScreenshot") }}
+          </label>
+          <p class="text-xs opacity-60">
+            {{
+              t("settings.notification.attachScreenshotHint", {
+                placeholder: SCREENSHOT_PLACEHOLDER,
+              })
+            }}
+          </p>
+        </div>
+        <NSwitch
+          id="notify-attach-screenshot"
+          :value="settings.notification.attachScreenshot"
+          :aria-label="t('settings.notification.attachScreenshot')"
+          @update:value="handleSettingChange('notification', 'attachScreenshot', $event)"
+        />
+      </div>
     </section>
 
     <!-- Trigger timing -->
@@ -114,27 +135,17 @@
         <h3 class="text-sm font-semibold">{{ t("settings.notification.sections.triggers") }}</h3>
       </div>
 
-      <div class="grid grid-cols-1 items-center gap-2 py-3 md:grid-cols-[1fr_auto] md:gap-4">
-        <label class="text-sm" for="notify-on-complete">
-          {{ t("settings.notification.onComplete") }}
-        </label>
+      <div
+        v-for="trigger in triggers"
+        :key="trigger.key"
+        class="grid grid-cols-1 items-center gap-2 py-3 md:grid-cols-[1fr_auto] md:gap-4"
+      >
+        <label class="text-sm" :for="trigger.key">{{ trigger.label }}</label>
         <NSwitch
-          id="notify-on-complete"
-          :value="settings.notification.notifyOnComplete"
-          :aria-label="t('settings.notification.onComplete')"
-          @update:value="handleSettingChange('notification', 'notifyOnComplete', $event)"
-        />
-      </div>
-
-      <div class="grid grid-cols-1 items-center gap-2 py-3 md:grid-cols-[1fr_auto] md:gap-4">
-        <label class="text-sm" for="notify-on-error">
-          {{ t("settings.notification.onError") }}
-        </label>
-        <NSwitch
-          id="notify-on-error"
-          :value="settings.notification.notifyOnError"
-          :aria-label="t('settings.notification.onError')"
-          @update:value="handleSettingChange('notification', 'notifyOnError', $event)"
+          :id="trigger.key"
+          :value="settings.notification[trigger.key]"
+          :aria-label="trigger.label"
+          @update:value="handleSettingChange('notification', trigger.key, $event)"
         />
       </div>
     </section>
@@ -162,11 +173,26 @@ import { showGlobalMessage } from "@/services/feedback/message"
 import { useSettingsStore } from "@/stores"
 import { createId } from "@/utils/id"
 import { tryCatch } from "@/utils/tryCatch"
-import type { NotificationChannel, SettingsModel } from "@/types/settingsModel"
+import type { NotificationChannel, NotificationTrigger, SettingsModel } from "@/types/settingsModel"
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const settings = computed(() => settingsStore.settings)
+
+// 自定义 Webhook Body 模板的截图占位符，与后端 _Webhook 一致
+const SCREENSHOT_PLACEHOLDER = "{{screenshot}}"
+
+// 按一次运行的先后顺序排列
+const triggers = computed<{ key: NotificationTrigger; label: string }[]>(() => [
+  { key: "notifyOnScheduledSkip", label: t("settings.notification.triggers.scheduledSkip") },
+  { key: "notifyOnPretaskFailed", label: t("settings.notification.triggers.pretaskFailed") },
+  { key: "notifyOnConnectFailed", label: t("settings.notification.triggers.connectFailed") },
+  { key: "notifyOnStart", label: t("settings.notification.triggers.start") },
+  { key: "notifyOnTaskSuccess", label: t("settings.notification.triggers.taskSuccess") },
+  { key: "notifyOnTaskFailure", label: t("settings.notification.triggers.taskFailure") },
+  { key: "notifyOnComplete", label: t("settings.notification.triggers.complete") },
+  { key: "notifyOnError", label: t("settings.notification.triggers.error") },
+])
 
 const definitions = computed(() => channelDefinitions(t))
 

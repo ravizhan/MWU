@@ -244,6 +244,13 @@ async def _record_skip(
         await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
     except Exception:
         logger.exception("写入跳过记录失败")
+    if state.worker is not None:
+        await asyncio.to_thread(
+            state.worker.events.notify,
+            "notifyOnScheduledSkip",
+            "定时任务已跳过",
+            f"{task_name}: {error}",
+        )
     return Admission(accepted=False, run_id=run_id, skip_status=status)
 
 
@@ -630,6 +637,13 @@ async def _complete_run(
             if not connected:
                 await asyncio.to_thread(worker.device.reset_connection_state)
                 failure_stage = "device"
+                await asyncio.to_thread(
+                    worker.events.notify,
+                    "notifyOnConnectFailed",
+                    "设备连接失败",
+                    f"{payload.device.controller_name}: {last_err}",
+                    level="error",
+                )
                 raise RuntimeError(f"设备连接失败: {last_err}")
 
         # 6. 启动任务线程

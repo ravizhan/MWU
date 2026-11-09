@@ -15,13 +15,13 @@ from backend.models.scheduler import PreTaskCommand
 class _FakeEvents:
     def __init__(self):
         self.logs: list[str] = []
-        self.notifications: list[tuple[str, str, dict]] = []
+        self.notifications: list[tuple[str, str, str]] = []
 
     def send_log(self, message: str) -> None:
         self.logs.append(message)
 
-    def send_notification(self, title: str, content: str, **kwargs) -> None:
-        self.notifications.append((title, content, kwargs))
+    def notify(self, trigger: str, title: str, content: str, **_kwargs) -> None:
+        self.notifications.append((trigger, title, content))
 
 
 class _FakeStdout:
@@ -276,7 +276,7 @@ def test_nonzero_exit_raises_pretask_error_with_output(monkeypatch):
     message = str(exc_info.value)
     assert "退出码 7" in message
     assert "failure output" in message
-    assert worker.events.notifications[-1][0] == "前置程序执行失败"
+    assert worker.events.notifications[-1][0] == "notifyOnPretaskFailed"
 
 
 def test_missing_pi_program_raises_pretask_error(monkeypatch):
@@ -288,7 +288,7 @@ def test_missing_pi_program_raises_pretask_error(monkeypatch):
         PretaskService(worker).run_all("adb", "main", [], {}, {})
 
     assert len(recorder.calls) == 1
-    assert worker.events.notifications[-1][0] == "前置程序执行失败"
+    assert worker.events.notifications[-1][0] == "notifyOnPretaskFailed"
 
 
 def test_running_user_pre_task_times_out_and_is_terminated(monkeypatch):
@@ -331,6 +331,8 @@ def test_stop_flag_during_pretask_terminates_process_and_raises(monkeypatch):
 
     assert process.terminate_calls == 1
     assert worker.task_state.current_pre_task_process is None
+    # 用户主动停止不是失败，不推送通知
+    assert worker.events.notifications == []
 
 
 def test_stop_flag_before_start_raises_without_spawning_process(monkeypatch):

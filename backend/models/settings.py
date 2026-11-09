@@ -19,8 +19,29 @@ class Notification(BaseModel):
     browserNotification: bool = False
     externalNotification: bool = False
     channels: list[NotificationChannel] = Field(default_factory=list)
+    # 外部渠道附带发送时刻的设备截图（设备未连接时不附带）
+    attachScreenshot: bool = False
+    # 触发时机开关，字段名即 NotificationTrigger
+    notifyOnStart: bool = True
     notifyOnComplete: bool = True
     notifyOnError: bool = True
+    notifyOnTaskSuccess: bool = False
+    notifyOnTaskFailure: bool = False
+    notifyOnPretaskFailed: bool = True
+    notifyOnConnectFailed: bool = True
+    notifyOnScheduledSkip: bool = False
+
+
+type NotificationTrigger = Literal[
+    "notifyOnStart",
+    "notifyOnComplete",
+    "notifyOnError",
+    "notifyOnTaskSuccess",
+    "notifyOnTaskFailure",
+    "notifyOnPretaskFailed",
+    "notifyOnConnectFailed",
+    "notifyOnScheduledSkip",
+]
 
 
 class UI(BaseModel):

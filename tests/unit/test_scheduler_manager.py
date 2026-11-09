@@ -37,7 +37,7 @@ class _StubEvents:
     def send_log(self, *_args, **_kwargs):
         pass
 
-    def send_notification(self, *_args, **_kwargs):
+    def notify(self, *_args, **_kwargs):
         pass
 
 
