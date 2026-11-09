@@ -40,6 +40,7 @@ const eventNames: RealtimeEventName[] = [
   "task.started",
   "task.completed",
   "task.failed",
+  "notification",
   "notification.test",
 ]
 eventNames.forEach((eventName) => {

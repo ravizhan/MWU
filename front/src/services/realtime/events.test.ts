@@ -21,8 +21,15 @@ function makeNotificationSettings(
     browserNotification: false,
     externalNotification: false,
     channels: [],
+    attachScreenshot: false,
+    notifyOnStart: false,
     notifyOnComplete: false,
     notifyOnError: false,
+    notifyOnTaskSuccess: false,
+    notifyOnTaskFailure: false,
+    notifyOnPretaskFailed: false,
+    notifyOnConnectFailed: false,
+    notifyOnScheduledSkip: false,
     ...overrides,
   }
 }

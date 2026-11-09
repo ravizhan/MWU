@@ -20,7 +20,6 @@ from tzlocal import get_localzone
 
 from backend.core import secret_store
 from backend.core.state import AppState
-from backend.maa_worker.event_service import load_settings
 from backend.models.scheduler import (
     CronTriggerConfig,
     DateTriggerConfig,
@@ -391,13 +390,7 @@ class SchedulerManager:
             return None
 
     def _send_error_notification(self, title: str, message: str) -> None:
-        settings = load_settings()
-        self._state.worker.events.send_notification(
-            title,
-            message,
-            level="error",
-            notify=["notification"] if settings.notification.notifyOnError else [],
-        )
+        self._state.worker.events.notify("notifyOnError", title, message, level="error")
 
     async def get_task(self, task_id: str) -> ScheduledTask | None:
         """获取定时任务"""

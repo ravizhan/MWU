@@ -6,8 +6,7 @@ import plyer
 
 from backend.core.settings_io import default_settings_path, load_settings_model
 from backend.models.api import RealtimeEvent, RealtimeEventLevel, RealtimeEventName
-from backend.models.notification import NotificationChannel
-from backend.models.settings import SettingsModel
+from backend.models.settings import Notification, NotificationTrigger, SettingsModel
 from backend.services.notification import send_external
 
 if TYPE_CHECKING:
@@ -30,7 +29,7 @@ class EventService:
         self.worker.message_conn.put(event)
         time.sleep(0.05)
 
-    def show_system_notification(self, title: str, message: str):
+    def _show_system_notification(self, title: str, message: str):
         notifier = plyer.notification
         if notifier is None:
             raise RuntimeError("当前平台不支持系统通知")
@@ -81,25 +80,33 @@ class EventService:
 
         if settings.notification.systemNotification:
             try:
-                self.show_system_notification(title, message)
+                self._show_system_notification(title, message)
             except Exception as exc:
                 self.send_log(f"系统通知发送失败: {exc}")
 
         if settings.notification.externalNotification:
             threading.Thread(
                 target=self._send_external,
-                args=(settings.notification.channels, title, message, event.level),
+                args=(settings.notification, title, message, event.level),
                 daemon=True,
             ).start()
 
     def _send_external(
         self,
-        channels: list[NotificationChannel],
+        notification: Notification,
         title: str,
         message: str,
         level: RealtimeEventLevel,
     ) -> None:
-        for error in send_external(channels, title, message, level):
+        # 截图在发送线程里取，调用方（sink 回调、收尾）不等设备
+        screenshot = (
+            self.worker.capture_notification_jpeg()
+            if notification.attachScreenshot
+            else None
+        )
+        for error in send_external(
+            notification.channels, title, message, level, screenshot
+        ):
             self.send_log(f"外部通知发送失败: {error}")
 
     def send_log(self, msg: str):
@@ -118,6 +125,25 @@ class EventService:
             event, message, level=level, notify=notify or ["notification"], title=title
         )
 
+    def notify(
+        self,
+        trigger: NotificationTrigger,
+        title: str,
+        message: str,
+        *,
+        event: RealtimeEventName = "notification",
+        level: RealtimeEventLevel = "info",
+    ):
+        """按触发时机开关决定是否推送通知；关闭时事件仍照常进入日志。"""
+        enabled = getattr(load_settings().notification, trigger)
+        self.emit(
+            event,
+            message,
+            level=level,
+            notify=["notification"] if enabled else [],
+            title=title,
+        )
+
     def _build_task_subject(self, task_list: list[str]) -> str:
         if self.worker.task_state.current_task_name:
             return self.worker.task_state.current_task_name
@@ -126,11 +152,11 @@ class EventService:
         return f"{len(task_list)} 个任务"
 
     def emit_task_started(self, task_list: list[str]):
-        self.send_notification(
+        self.notify(
+            "notifyOnStart",
             "任务开始",
             f"开始执行: {self._build_task_subject(task_list)}",
             event="task.started",
-            level="info",
         )
 
     def publish_task_terminal(

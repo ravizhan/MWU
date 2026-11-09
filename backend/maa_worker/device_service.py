@@ -685,10 +685,6 @@ class DeviceService:
 
         conn_fail_msg = "设备连接失败，请检查终端日志"
         if not status:
-            self.worker.events.show_system_notification(
-                self.worker.text.app_name(),
-                conn_fail_msg,
-            )
             state.last_device_error = conn_fail_msg
             self.worker.events.send_log(state.last_device_error)
             return False
@@ -707,10 +703,6 @@ class DeviceService:
             self.worker.events.send_log("设备连接成功")
             return True
 
-        self.worker.events.show_system_notification(
-            self.worker.text.app_name(),
-            conn_fail_msg,
-        )
         state.last_device_error = conn_fail_msg
         self.worker.events.send_log(state.last_device_error)
         return False
@@ -744,16 +736,12 @@ class DeviceService:
     ) -> LinuxController | None:
         """根据控制器 linux 配置与设备地址构造 LinuxController。
 
-        失败时写入 last_device_error、记录日志并发送系统通知，返回 None。
+        失败时写入 last_device_error 并记录日志，返回 None。
         """
 
         def fail(reason: str) -> None:
             self.worker.device_state.last_device_error = reason
             self.worker.events.send_log(reason)
-            self.worker.events.show_system_notification(
-                self.worker.text.app_name(),
-                reason,
-            )
 
         linux_config = selected_controller.linux
         screencap = (

@@ -293,7 +293,6 @@ class TestLinuxSupport:
         )
         worker.events = SimpleNamespace(
             send_log=lambda _message: None,
-            show_system_notification=lambda _title, _message: None,
         )
         worker.sinks = SimpleNamespace(
             register_controller_sink=lambda _controller: None,

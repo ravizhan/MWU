@@ -5,6 +5,7 @@ export type RealtimeEventName =
   | "task.started"
   | "task.completed"
   | "task.failed"
+  | "notification"
   | "notification.test"
 
 export type RealtimeEventLevel = "info" | "success" | "error"

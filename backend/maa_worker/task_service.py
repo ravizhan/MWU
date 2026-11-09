@@ -196,6 +196,11 @@ class TaskService:
                         return
                 if trace is not None:
                     trace.task_finished(queued_task_name, bool(task_result.succeeded))
+                # 停止打断的任务不算单项成败
+                if not state.stop_flag:
+                    self._notify_task_result(
+                        task_definition, bool(task_result.succeeded)
+                    )
             if state.stop_flag:
                 self._finish_stopped()
                 return
@@ -217,3 +222,17 @@ class TaskService:
             state.current_task_name = None
             state.current_pre_task_process = None
             time.sleep(0.5)
+
+    def _notify_task_result(self, task_definition, succeeded: bool) -> None:
+        label = self.worker.text.resolve(task_definition.label) or task_definition.name
+        if succeeded:
+            self.worker.events.notify(
+                "notifyOnTaskSuccess",
+                "单项任务完成",
+                f"{label} 执行完成",
+                level="success",
+            )
+            return
+        self.worker.events.notify(
+            "notifyOnTaskFailure", "单项任务失败", f"{label} 执行失败", level="error"
+        )

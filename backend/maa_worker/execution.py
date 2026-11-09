@@ -359,15 +359,25 @@ async def submit_scheduled(
             if state.active_run.origin == "manual"
             else "skipped_busy_scheduled"
         )
-        return await _record_skip(
+        error = f"与运行中的任务冲突: {state.active_run.task_name}"
+        admission = await _record_skip(
             state,
             task.id,
             task.name,
             origin,
             skip_status,
             occurrence_id=occurrence_id,
-            error=f"与运行中的任务冲突: {state.active_run.task_name}",
+            error=error,
         )
+        # 只有任务冲突才算「定时任务因冲突被跳过」；更新期间的跳过不推送
+        if state.worker is not None:
+            await asyncio.to_thread(
+                state.worker.events.notify,
+                "notifyOnScheduledSkip",
+                "定时任务已跳过",
+                f"{task.name}: {error}",
+            )
+        return admission
 
     run_id = str(uuid.uuid4())
     _claim_slot(
@@ -630,6 +640,13 @@ async def _complete_run(
             if not connected:
                 await asyncio.to_thread(worker.device.reset_connection_state)
                 failure_stage = "device"
+                await asyncio.to_thread(
+                    worker.events.notify,
+                    "notifyOnConnectFailed",
+                    "设备连接失败",
+                    f"{payload.device.controller_name}: {last_err}",
+                    level="error",
+                )
                 raise RuntimeError(f"设备连接失败: {last_err}")
 
         # 6. 启动任务线程
