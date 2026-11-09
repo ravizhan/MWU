@@ -1,6 +1,8 @@
 import io
+import time
 from typing import TYPE_CHECKING
 
+import numpy
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
@@ -24,6 +26,15 @@ if TYPE_CHECKING:
 
 resource = Resource()
 resource.set_cpu()
+
+# 通知附图等待截图的上限；控制器卡住时通知照常只发文字
+NOTIFICATION_SCREENCAP_TIMEOUT = 10.0
+
+
+def _encode_image(image: numpy.ndarray, image_format: str) -> bytes:
+    buffer = io.BytesIO()
+    Image.fromarray(image[:, :, ::-1]).save(buffer, format=image_format)
+    return buffer.getvalue()
 
 
 class MaaWorker:
@@ -72,16 +83,35 @@ class MaaWorker:
         try:
             image = controller.post_screencap().wait().get()
             if image is not None:
-                image_pil = Image.fromarray(image[:, :, ::-1])
-                img_byte_arr = io.BytesIO()
-                image_pil.save(img_byte_arr, format=image_format)
-                return img_byte_arr.getvalue()
+                return _encode_image(image, image_format)
         except Exception as e:
             self.events.send_log(f"截图失败，已解除设备锁定: {e}")
             self.device.reset_connection_state(
                 "检测到设备连接已断开，已解除设备与资源锁定"
             )
         return None
+
+    def capture_notification_jpeg(self) -> bytes | None:
+        """通知附图：限时等待截图；失败只记日志、不动连接状态（任务可能正在使用设备）。"""
+        controller = self.device_state.controller
+        if not self.device_state.connected or controller is None:
+            return None
+        job = controller.post_screencap()
+        deadline = time.monotonic() + NOTIFICATION_SCREENCAP_TIMEOUT
+        while not job.done:
+            if time.monotonic() > deadline:
+                self.events.send_log("通知截图超时，本次只发送文字")
+                return None
+            time.sleep(0.1)
+        if not job.succeeded:
+            self.events.send_log("通知截图失败，本次只发送文字")
+            return None
+        try:
+            image = job.get()
+        except RuntimeError as exc:
+            self.events.send_log(f"通知截图失败，本次只发送文字: {exc}")
+            return None
+        return _encode_image(image, "JPEG")
 
     def click(self, x: int, y: int) -> bool:
         """按截图坐标系点击设备；未连接或点击失败返回 False，连接已断开时解除锁定。"""

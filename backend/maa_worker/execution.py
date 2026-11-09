@@ -244,13 +244,6 @@ async def _record_skip(
         await asyncio.to_thread(add_execution, state.scheduler_db_path, execution)
     except Exception:
         logger.exception("写入跳过记录失败")
-    if state.worker is not None:
-        await asyncio.to_thread(
-            state.worker.events.notify,
-            "notifyOnScheduledSkip",
-            "定时任务已跳过",
-            f"{task_name}: {error}",
-        )
     return Admission(accepted=False, run_id=run_id, skip_status=status)
 
 
@@ -366,15 +359,25 @@ async def submit_scheduled(
             if state.active_run.origin == "manual"
             else "skipped_busy_scheduled"
         )
-        return await _record_skip(
+        error = f"与运行中的任务冲突: {state.active_run.task_name}"
+        admission = await _record_skip(
             state,
             task.id,
             task.name,
             origin,
             skip_status,
             occurrence_id=occurrence_id,
-            error=f"与运行中的任务冲突: {state.active_run.task_name}",
+            error=error,
         )
+        # 只有任务冲突才算「定时任务因冲突被跳过」；更新期间的跳过不推送
+        if state.worker is not None:
+            await asyncio.to_thread(
+                state.worker.events.notify,
+                "notifyOnScheduledSkip",
+                "定时任务已跳过",
+                f"{task.name}: {error}",
+            )
+        return admission
 
     run_id = str(uuid.uuid4())
     _claim_slot(

@@ -100,7 +100,9 @@ class EventService:
     ) -> None:
         # 截图在发送线程里取，调用方（sink 回调、收尾）不等设备
         screenshot = (
-            self.worker.get_screencap_bytes() if notification.attachScreenshot else None
+            self.worker.capture_notification_jpeg()
+            if notification.attachScreenshot
+            else None
         )
         for error in send_external(
             notification.channels, title, message, level, screenshot

@@ -335,6 +335,26 @@ def test_stop_flag_during_pretask_terminates_process_and_raises(monkeypatch):
     assert worker.events.notifications == []
 
 
+def test_stop_current_between_polls_is_not_reported_as_failure(monkeypatch):
+    worker = _make_worker(pretasks=[Pretask(exec="interruptible")])
+    process = _FakeProcess(running=True, returncode=1)
+    _patch_popen(monkeypatch, _PopenRecorder([process]))
+    monkeypatch.setattr(pretask_module.time, "monotonic", lambda: 0.0)
+    service = PretaskService(worker)
+
+    def stop_from_api(_):
+        # TaskService.stop()：先置 stop_flag，再由 stop_current() 结束子进程
+        worker.task_state.stop_flag = True
+        service.stop_current()
+
+    monkeypatch.setattr(pretask_module.time, "sleep", stop_from_api)
+
+    with pytest.raises(PretaskError, match="前置任务已停止: interruptible"):
+        service.run_all("adb", "main", [], {}, {})
+
+    assert worker.events.notifications == []
+
+
 def test_stop_flag_before_start_raises_without_spawning_process(monkeypatch):
     worker = _make_worker(pretasks=[Pretask(exec="not-started")], stop_flag=True)
     recorder = _PopenRecorder()

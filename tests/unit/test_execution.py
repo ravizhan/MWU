@@ -94,16 +94,21 @@ async def _await_active_task(state: AppState) -> None:
 
 
 class _FakeEvents:
-    def __init__(self):
+    def __init__(self, device: "_FakeDevice | None" = None):
         self.terminal_events: list[tuple[list[str], str | None, bool]] = []
         self.logs: list[str] = []
         self.triggers: list[str] = []
+        # 每次推送时设备已尝试连接的次数，用来确认连接失败只在重试用尽后通知
+        self.connect_calls_at_notify: list[int] = []
+        self._device = device
 
     def send_log(self, msg: str):
         self.logs.append(msg)
 
     def notify(self, trigger: str, *_args, **_kwargs):
         self.triggers.append(trigger)
+        if self._device is not None:
+            self.connect_calls_at_notify.append(self._device.connect_calls)
 
     def publish_task_terminal(self, task_list, run_label, succeeded, settings):
         self.terminal_events.append((list(task_list), run_label, succeeded))
@@ -282,7 +287,6 @@ class _FakeWorker:
         block_connect: bool = False,
         ordering: list[str] | None = None,
     ):
-        self.events = _FakeEvents()
         self.interface = _FakeInterface(["Startup"])
         self.task_state = _FakeTaskState()
         self.pretasks = _FakePretaskService(self.task_state, ordering)
@@ -293,6 +297,7 @@ class _FakeWorker:
             if block_connect or ordering is not None
             else None
         )
+        self.events = _FakeEvents(self.device)
         if ready:
             self.device_state.connected = True
             self.device_state.configuration_locked = True
@@ -589,6 +594,8 @@ class TestSubmitScheduled:
 
     async def test_skipped_update_in_progress(self, state: AppState):
         state.update_in_progress = True
+        worker = _FakeWorker(start_result=True)
+        state.worker = worker
         task = make_task()
 
         admission = await submit_scheduled(state, task, origin="in_app")
@@ -597,6 +604,8 @@ class TestSubmitScheduled:
         assert admission.skip_status == "skipped_update_in_progress"
         row = list_executions(state.scheduler_db_path)[0]
         assert row.status == "skipped_update_in_progress"
+        # 更新期间的跳过不是任务冲突，不按「定时任务因冲突被跳过」推送
+        assert worker.events.triggers == []
 
 
 # ---------------------------------------------------------------------------
@@ -1047,3 +1056,4 @@ async def test_connect_attempts_follow_auto_retry_setting(
     assert list_executions(state.scheduler_db_path)[0].status == "failed"
     # 重试全部用完后只通知一次
     assert worker.events.triggers == ["notifyOnConnectFailed"]
+    assert worker.events.connect_calls_at_notify == [expected_connect_calls]

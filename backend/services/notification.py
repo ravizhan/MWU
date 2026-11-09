@@ -11,6 +11,7 @@ apprise 按 URL schema 加载插件时会扫描插件目录，Nuitka standalone 
 import base64
 import hashlib
 import hmac
+import io
 import json
 import time
 from collections.abc import Callable
@@ -29,6 +30,7 @@ from apprise.plugins.pushplus import NotifyPushplus
 from apprise.plugins.serverchan import NotifyServerChan
 from apprise.plugins.telegram import NotifyTelegram
 from apprise.plugins.wxpusher import NotifyWxPusher
+from PIL import Image
 
 from backend.models.api import RealtimeEventLevel
 from backend.models.notification import (
@@ -55,6 +57,9 @@ _NOTIFY_TYPES: dict[RealtimeEventLevel, NotifyType] = {
 # 插件会把 app_id 写进 User-Agent 等 HTTP/邮件头，只能用 ASCII；显示名走通知标题
 _APP_ID = "MWU"
 
+# 企业微信图片消息要求原图（编码前）不超过 2 MB
+_WECOM_IMAGE_LIMIT = 2 * 1024 * 1024
+
 type _RobotRequest = tuple[str, dict[str, str], dict[str, Any]]
 
 
@@ -63,6 +68,21 @@ def _attachment_bytes(attach: AppriseAttachment | None) -> bytes | None:
         return None
     with attach[0].open() as stream:
         return stream.read()
+
+
+def _shrink_jpeg(image: bytes, limit: int) -> bytes:
+    """超过 limit 的 JPEG 逐次把边长缩到 3/4 重新编码，直到不超过 limit。"""
+    if len(image) <= limit:
+        return image
+    picture = Image.open(io.BytesIO(image))
+    while len(image) > limit:
+        picture = picture.resize(
+            (max(1, picture.width * 3 // 4), max(1, picture.height * 3 // 4))
+        )
+        buffer = io.BytesIO()
+        picture.save(buffer, format="JPEG", quality=85)
+        image = buffer.getvalue()
+    return image
 
 
 def _request_error(exc: requests.RequestException) -> str:
@@ -112,7 +132,10 @@ class _RobotWebhook(NotifyBase):
         image = _attachment_bytes(kwargs.get("attach"))
         if image is None or self._build_image is None:
             return True
-        return self._post(self._build_image(image))
+        if self._post(self._build_image(image)):
+            return True
+        self.logger.warning("文本已发送，截图消息发送失败")
+        return False
 
     def _post(self, request: _RobotRequest) -> bool:
         url, params, payload = request
@@ -213,11 +236,12 @@ def _wecom(channel: WeComChannel, **kwargs: Any) -> NotifyBase:
         return url, {}, {"msgtype": "text", "text": {"content": body}}
 
     def build_image(image: bytes) -> _RobotRequest:
+        image = _shrink_jpeg(image, _WECOM_IMAGE_LIMIT)
         payload = {
             "msgtype": "image",
             "image": {
                 "base64": base64.b64encode(image).decode(),
-                "md5": hashlib.md5(image).hexdigest(),
+                "md5": hashlib.md5(image, usedforsecurity=False).hexdigest(),
             },
         }
         return url, {}, payload
@@ -265,15 +289,17 @@ class _Webhook(NotifyBase):
             return json.dumps(value, ensure_ascii=False)[1:-1]
 
         try:
-            payload = (
-                json.loads(
+            if template:
+                payload = json.loads(
                     template.replace("{{title}}", escape(title))
                     .replace("{{message}}", escape(body))
                     .replace("{{screenshot}}", screenshot)
                 )
-                if template
-                else {"title": title, "message": body, "screenshot": screenshot}
-            )
+            else:
+                # 没有截图时保持原有的 {title, message} 结构
+                payload = {"title": title, "message": body}
+                if screenshot:
+                    payload["screenshot"] = screenshot
         except ValueError as exc:
             self.logger.warning("Body 模板不是合法 JSON: %s", exc)
             return False

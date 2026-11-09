@@ -75,6 +75,14 @@ async def connect_device(device: DeviceModel):
     if await asyncio.to_thread(app_state.worker.device.connect, device):
         return {"status": "success"}
     msg = app_state.worker.device_state.last_device_error or "设备连接失败"
+    # 运行前的自动连接在重试用尽后另行通知；这里只覆盖用户手动连接
+    await asyncio.to_thread(
+        app_state.worker.events.notify,
+        "notifyOnConnectFailed",
+        "设备连接失败",
+        f"{device.controller_name}: {msg}",
+        level="error",
+    )
     return {"status": "failed", "message": msg}
 
 

@@ -242,7 +242,8 @@ class PretaskService:
             for line in output.splitlines():
                 self.worker.events.send_log(line)
 
-        if stopped:
+        # stop_current() 可能在两次轮询之间结束子进程，此时循环看到的是非零退出码
+        if stopped or state.stop_flag:
             raise PretaskError(f"前置任务已停止: {display_name}")
         if timed_out:
             error = PretaskError(f"前置任务执行超时（{timeout}s）: {display_name}")
