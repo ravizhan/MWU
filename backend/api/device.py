@@ -1,6 +1,7 @@
 """设备连接、资源选择、实时画面、截图与点击。"""
 
 import asyncio
+import logging
 import time
 from typing import Annotated
 
@@ -12,6 +13,8 @@ from backend.runtime import (
     app_state,
     interface,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -75,14 +78,18 @@ async def connect_device(device: DeviceModel):
     if await asyncio.to_thread(app_state.worker.device.connect, device):
         return {"status": "success"}
     msg = app_state.worker.device_state.last_device_error or "设备连接失败"
-    # 运行前的自动连接在重试用尽后另行通知；这里只覆盖用户手动连接
-    await asyncio.to_thread(
-        app_state.worker.events.notify,
-        "notifyOnConnectFailed",
-        "设备连接失败",
-        f"{device.controller_name}: {msg}",
-        level="error",
-    )
+    # 运行前的自动连接在重试用尽后另行通知；这里只覆盖用户手动连接。
+    # 通知是附带效果，读取设置等失败不能把连接失败的响应变成 500
+    try:
+        await asyncio.to_thread(
+            app_state.worker.events.notify,
+            "notifyOnConnectFailed",
+            "设备连接失败",
+            f"{device.controller_name}: {msg}",
+            level="error",
+        )
+    except Exception:
+        logger.exception("发送设备连接失败通知失败")
     return {"status": "failed", "message": msg}
 
 

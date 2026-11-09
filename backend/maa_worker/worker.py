@@ -92,26 +92,30 @@ class MaaWorker:
         return None
 
     def capture_notification_jpeg(self) -> bytes | None:
-        """通知附图：限时等待截图；失败只记日志、不动连接状态（任务可能正在使用设备）。"""
+        """通知附图：限时等待截图；失败只记日志、不动连接状态（任务可能正在使用设备）。
+
+        截图只是附件：控制器被并发重置、缓冲区为空、编码失败都退回只发文字，
+        不能让异常结束发送线程。
+        """
         controller = self.device_state.controller
         if not self.device_state.connected or controller is None:
             return None
-        job = controller.post_screencap()
-        deadline = time.monotonic() + NOTIFICATION_SCREENCAP_TIMEOUT
-        while not job.done:
-            if time.monotonic() > deadline:
-                self.events.send_log("通知截图超时，本次只发送文字")
-                return None
-            time.sleep(0.1)
-        if not job.succeeded:
-            self.events.send_log("通知截图失败，本次只发送文字")
-            return None
         try:
-            image = job.get()
-        except RuntimeError as exc:
+            job = controller.post_screencap()
+            deadline = time.monotonic() + NOTIFICATION_SCREENCAP_TIMEOUT
+            while not job.done:
+                if time.monotonic() > deadline:
+                    self.events.send_log("通知截图超时，本次只发送文字")
+                    return None
+                time.sleep(0.1)
+            image = job.get() if job.succeeded else None
+            if image is None or image.size == 0:
+                self.events.send_log("通知截图失败，本次只发送文字")
+                return None
+            return _encode_image(image, "JPEG")
+        except Exception as exc:
             self.events.send_log(f"通知截图失败，本次只发送文字: {exc}")
             return None
-        return _encode_image(image, "JPEG")
 
     def click(self, x: int, y: int) -> bool:
         """按截图坐标系点击设备；未连接或点击失败返回 False，连接已断开时解除锁定。"""

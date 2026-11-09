@@ -7,6 +7,7 @@ from queue import SimpleQueue
 from types import SimpleNamespace
 from typing import Any, cast
 
+import numpy
 import pytest
 from PIL import Image
 
@@ -91,9 +92,20 @@ def test_trigger_switch_gates_push_but_keeps_log(monkeypatch, enabled):
     assert sent == (expected if enabled else [])
 
 
-def test_failed_notification_capture_keeps_device_connection(monkeypatch):
+@pytest.mark.parametrize(
+    "job",
+    [
+        SimpleNamespace(done=True, succeeded=False),
+        # 截图作业成功但缓冲区为空时 MaaFramework 返回 0x0 图像
+        SimpleNamespace(
+            done=True,
+            succeeded=True,
+            get=lambda: numpy.zeros((0, 0, 3), dtype=numpy.uint8),
+        ),
+    ],
+)
+def test_failed_notification_capture_keeps_device_connection(monkeypatch, job):
     monkeypatch.setattr("backend.maa_worker.worker.time.sleep", lambda _: None)
-    job = SimpleNamespace(done=True, succeeded=False)
     controller = SimpleNamespace(post_screencap=lambda: job)
     logs: list[str] = []
     worker = SimpleNamespace(
