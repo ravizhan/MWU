@@ -1,6 +1,9 @@
 # MWU 部署工作流：用本文件替换 MaaPracticeBoilerplate 模板中的 .github/workflows/install.yml，
 # 即可把通用 UI 切换为 MWU。项目结构沿用模板（assets/interface.json、assets/resource、agent/），
-# 发布包命名为 <仓库名>-<平台>-<架构>-<版本>.7z
+# 每个平台发布两个包：完整包 <仓库名>-<平台>-<架构>-<版本>.7z（MWU 本体 + 资源），
+# 资源包 <仓库名>-resource-<平台>.<架构>-<版本>.7z（只含资源），另附 mwu-release.json 记录所用 MWU 版本。
+# 客户端在 MWU 版本未变时只下载资源包，升级了 MWU_VERSION 后自动改下完整包。
+# Mirror酱只需上传完整包（文件名匹配 <仓库名>-<平台>-<架构>-*），增量包由 Mirror酱 生成。
 name: install
 
 env:
@@ -73,11 +76,22 @@ jobs:
           echo is_release=$is_release | tee -a $GITHUB_OUTPUT
           echo is_prerelease=$is_prerelease | tee -a $GITHUB_OUTPUT
           echo repo_name=${GITHUB_REPOSITORY#*/} | tee -a $GITHUB_OUTPUT
+      # 所有平台使用同一个 MWU 版本，并写入 mwu-release.json
+      - id: set_mwu
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mwu_version="${MWU_VERSION}"
+          if [[ -z $mwu_version ]]; then
+            mwu_version=$(gh release view --repo ravizhan/MWU --json tagName -q .tagName)
+          fi
+          echo mwu_version=$mwu_version | tee -a $GITHUB_OUTPUT
     outputs:
       tag: ${{ steps.set_tag.outputs.tag }}
       is_release: ${{ steps.set_tag.outputs.is_release }}
       is_prerelease: ${{ steps.set_tag.outputs.is_prerelease }}
       repo_name: ${{ steps.set_tag.outputs.repo_name }}
+      mwu_version: ${{ steps.set_mwu.outputs.mwu_version }}
 
   install:
     needs: meta
@@ -107,6 +121,7 @@ jobs:
     env:
       tag: ${{ needs.meta.outputs.tag }}
       package_name: ${{ needs.meta.outputs.repo_name }}-${{ matrix.os }}-${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
+      resource_package_name: ${{ needs.meta.outputs.repo_name }}-resource-${{ matrix.os }}.${{ matrix.arch }}-${{ needs.meta.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v7
@@ -129,13 +144,15 @@ jobs:
         with:
           repository: ravizhan/MWU
           fileName: "MWU-${{ matrix.os }}-${{ matrix.arch }}-*.7z"
-          latest: ${{ env.MWU_VERSION == '' }}
-          tag: ${{ env.MWU_VERSION }}
+          tag: ${{ needs.meta.outputs.mwu_version }}
           out-file-path: "mwu"
 
+      # client/ 保留原样的 MWU 本体，用于区分安装目录中哪些文件属于本体、哪些属于资源
       - name: Extract MWU
         shell: bash
-        run: 7z x "${{ fromJson(steps.download_mwu.outputs.downloaded_files)[0] }}" -obuild -y
+        run: |
+          7z x "${{ fromJson(steps.download_mwu.outputs.downloaded_files)[0] }}" -obuild -y
+          7z x "${{ fromJson(steps.download_mwu.outputs.downloaded_files)[0] }}" -oclient -y
 
       - name: Install
         shell: bash
@@ -144,15 +161,21 @@ jobs:
           uv run --no-project ./copy_resources.py
           curl -fsSL https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/download_deps.py -o ./download_deps.py
           uv run --no-project ./download_deps.py
+          curl -fsSL https://github.com/ravizhan/MWU/raw/refs/heads/main/deploy/package.py -o ./package.py
+          uv run --no-project ./package.py
 
       - name: Compress
         shell: bash
-        run: 7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -mf=BCJ2 -r "${package_name}.7z" "./build/*"
+        run: |
+          7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -mf=BCJ2 -r "${package_name}.7z" "./build/*"
+          7z a -t7z -mx=9 -myx=9 -mmt -ms=e -mqs=on -r "${resource_package_name}.7z" "./resource/*"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.package_name }}
-          path: ${{ env.package_name }}.7z
+          path: |
+            ${{ env.package_name }}.7z
+            ${{ env.resource_package_name }}.7z
 
   changelog:
     name: Generate changelog
@@ -190,9 +213,15 @@ jobs:
           path: release
           merge-multiple: true
 
+      - name: Write release info
+        run: |
+          echo '{"version": "${{ needs.meta.outputs.tag }}", "mwu_version": "${{ needs.meta.outputs.mwu_version }}"}' > release/mwu-release.json
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: release/*.7z
+          files: |
+            release/*.7z
+            release/mwu-release.json
           tag_name: ${{ needs.meta.outputs.tag }}
           body: ${{ needs.changelog.outputs.release_body }}
           draft: false

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from backend.models.api import FocusModal, RealtimeEvent, RealtimeEventLevel
 from backend.models.settings import SettingsModel
+from backend.models.update import UpdatePlan
 
 if TYPE_CHECKING:
     from maa.agent_client import AgentClient
@@ -135,7 +136,7 @@ class AppState:
         self.scheduler_manager = None
         self.settings = None
         self.update_status: dict | None = None
-        self.update_info: dict | None = None
+        self.update_info: UpdatePlan | None = None
         # 运行时状态（合并自 maa_worker/runtime.py）
         self.device = DeviceRuntimeState()
         self.task = TaskRuntimeState()

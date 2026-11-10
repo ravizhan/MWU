@@ -46,6 +46,10 @@
       "updateFailed": "更新失败",
       "currentVersion": "当前版本",
       "latestVersion": "最新版本",
+      "packageResource": "本次只更新资源",
+      "packageIncremental": "本次为增量更新",
+      "packageFull": "本次为完整更新",
+      "packageFullWithClient": "本次为完整更新，同时升级 MWU 至 {version}",
       "waitingRestart": "等待后端重启...",
       "restarting": "后端正在重启，页面即将刷新...",
       "channelOptions": {

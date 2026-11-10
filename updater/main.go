@@ -11,24 +11,24 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mholt/archives"
-	"github.com/zeebo/xxh3"
 )
 
 const (
 	exitCodeSelfUpdate = 10
 	exitCodeError      = 1
-	defaultChangesFile = "changes.json"
+	extractDirName     = "update_temp"
 )
 
 type Config struct {
 	Archive    string
+	Kind       string
 	WebhookURL string
 	RestartCmd string
 }
@@ -62,8 +62,15 @@ func main() {
 	if err != nil {
 		fail("Failed to get working directory: %v", err)
 	}
+	exePath, err := os.Executable()
+	if err != nil {
+		fail("Failed to locate updater: %v", err)
+	}
 
-	extractDir := filepath.Join(installDir, "update_temp")
+	// 上次更新中途崩溃留下的备份先放回去，保证从完整的旧安装开始
+	restoreBackup(installDir)
+
+	extractDir := filepath.Join(installDir, extractDirName)
 	_ = os.RemoveAll(extractDir)
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
 		fail("Failed to create temp dir: %v", err)
@@ -75,13 +82,24 @@ func main() {
 	}
 
 	log.Println("检查自更新...")
-	if performedSelfUpdate, err := handleSelfUpdate(installDir, extractDir); err != nil {
+	if performedSelfUpdate, err := handleSelfUpdate(exePath, extractDir); err != nil {
 		fail("Self update failed: %v", err)
 	} else if performedSelfUpdate {
 		log.Println("已执行自更新。以代码 10 退出。")
 		os.RemoveAll(extractDir)
 		os.Exit(exitCodeSelfUpdate)
 	}
+
+	skip := map[string]bool{
+		filepath.Base(exePath): true,
+		"updater.log":          true,
+	}
+	plan, err := buildPlan(cfg.Kind, installDir, extractDir, skip)
+	if err != nil {
+		fail("Failed to plan update: %v", err)
+	}
+	log.Printf("更新计划（%s）：替换 %d 个文件，删除 %d 个文件、%d 个目录",
+		cfg.Kind, len(plan.Copy), len(plan.Delete), len(plan.DeleteDirs))
 
 	log.Println("通知主程序退出...")
 	if err := notifyShutdown(cfg.WebhookURL); err != nil {
@@ -95,19 +113,18 @@ func main() {
 		fail("Could not acquire file locks: %v", err)
 	}
 
-	log.Println("计算更改...")
-	changes, err := getChanges(installDir, extractDir)
-	if err != nil {
-		fail("Failed to get changes: %v", err)
-	}
-
 	log.Println("应用更新...")
-	if err := applyChanges(installDir, extractDir, changes); err != nil {
-		fail("Failed to apply changes: %v", err)
+	tx := newTransaction(installDir)
+	if err := tx.apply(plan, extractDir); err != nil {
+		log.Printf("应用失败，回滚：%v", err)
+		tx.rollback()
+		os.RemoveAll(extractDir)
+		restartAfterFailure(cfg.RestartCmd)
+		fail("Failed to apply update: %v", err)
 	}
-
-	changesPath := filepath.Join(installDir, defaultChangesFile)
-	writeChanges(changesPath, changes)
+	if err := tx.commit(); err != nil {
+		log.Printf("警告：清理备份失败：%v", err)
+	}
 
 	os.RemoveAll(extractDir)
 	os.Remove(cfg.Archive)
@@ -128,6 +145,7 @@ func main() {
 func parseFlags() Config {
 	cfg := Config{}
 	flag.StringVar(&cfg.Archive, "archive", "", "更新包路径（zip/7z）")
+	flag.StringVar(&cfg.Kind, "type", "full", "更新包类型：full / resource / incremental")
 	flag.StringVar(&cfg.WebhookURL, "webhook", "", "用于请求主程序关闭的URL")
 	flag.StringVar(&cfg.RestartCmd, "restart-cmd", "", "重启主程序的命令")
 	flag.Parse()
@@ -151,17 +169,14 @@ func extractArchive(ctx context.Context, archivePath, destDir string) error {
 	}
 
 	return extractor.Extract(ctx, reader, func(ctx context.Context, f archives.FileInfo) error {
-		if f.NameInArchive == "" {
+		pathInArchive := strings.ReplaceAll(f.NameInArchive, "\\", "/")
+		if path.Clean(pathInArchive) == "." {
 			return nil
-		}
-		pathInArchive := f.NameInArchive
-		if runtime.GOOS == "windows" {
-			pathInArchive = strings.ReplaceAll(pathInArchive, "\\", "/")
 		}
 
 		outPath, err := safeJoin(destDir, pathInArchive)
 		if err != nil {
-			return err
+			return fmt.Errorf("%s：%w", pathInArchive, err)
 		}
 		if f.IsDir() {
 			return os.MkdirAll(outPath, 0o755)
@@ -171,7 +186,7 @@ func extractArchive(ctx context.Context, archivePath, destDir string) error {
 			return err
 		}
 
-		outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+		outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode().Perm()|0o200)
 		if err != nil {
 			return err
 		}
@@ -188,30 +203,17 @@ func extractArchive(ctx context.Context, archivePath, destDir string) error {
 	})
 }
 
-func handleSelfUpdate(installDir, extractDir string) (bool, error) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return false, err
-	}
-
-	relPath, err := filepath.Rel(installDir, exePath)
-	if err != nil {
-		return false, nil
-	}
-
-	candidate := filepath.Join(extractDir, relPath)
-	if _, err := os.Stat(candidate); os.IsNotExist(err) {
-		candidate = filepath.Join(extractDir, filepath.Base(exePath))
-	}
-
+// handleSelfUpdate 在包内带有不同的更新器时替换自身。新更新器会被后端以退出码 10 为信号重新拉起。
+func handleSelfUpdate(exePath, extractDir string) (bool, error) {
+	candidate := filepath.Join(extractDir, filepath.Base(exePath))
 	if _, err := os.Stat(candidate); err != nil {
 		return false, nil
 	}
-
-	currentHash, _ := hashFile(exePath)
-	candidateHash, _ := hashFile(candidate)
-
-	if currentHash == candidateHash {
+	same, err := sameContent(exePath, candidate)
+	if err != nil {
+		return false, err
+	}
+	if same {
 		return false, nil
 	}
 
@@ -274,175 +276,11 @@ func waitForLocks(installDir, restartCmd string) error {
 	return errors.New("等待文件锁超时")
 }
 
-type ChangeLog struct {
-	Added    []string `json:"added"`
-	Deleted  []string `json:"deleted"`
-	Modified []string `json:"modified"`
-}
-
-func getChanges(installDir, extractDir string) (ChangeLog, error) {
-	changesPath := filepath.Join(extractDir, defaultChangesFile)
-	changes := ChangeLog{
-		Added:    []string{},
-		Deleted:  []string{},
-		Modified: []string{},
+// restartAfterFailure 在回滚后拉起旧版主程序，主程序此时已被通知退出。
+func restartAfterFailure(cmdStr string) {
+	if err := restartMain(cmdStr); err != nil {
+		log.Printf("回滚后重启主程序失败：%v", err)
 	}
-
-	if _, err := os.Stat(changesPath); err == nil {
-		data, err := os.ReadFile(changesPath)
-		if err != nil {
-			return changes, err
-		}
-		if err := json.Unmarshal(data, &changes); err != nil {
-			return changes, err
-		}
-		if changes.Added == nil {
-			changes.Added = []string{}
-		}
-		if changes.Deleted == nil {
-			changes.Deleted = []string{}
-		}
-		if changes.Modified == nil {
-			changes.Modified = []string{}
-		}
-		return changes, nil
-	}
-
-	type fileInfo struct {
-		path string
-		rel  string
-	}
-
-	type localChanges struct {
-		added    []string
-		modified []string
-	}
-
-	pkgFiles := make(chan fileInfo, 100)
-	pkgFileMap := make(map[string]bool)
-	var mapMu sync.Mutex
-
-	numWorkers := runtime.NumCPU()
-	var wg sync.WaitGroup
-
-	// 使用通道收集每个 worker 的结果
-	results := make(chan localChanges, numWorkers)
-
-	go func() {
-		filepath.WalkDir(extractDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			rel, _ := filepath.Rel(extractDir, path)
-			rel = filepath.ToSlash(rel)
-			if rel == defaultChangesFile || rel == filepath.Base(os.Args[0]) {
-				return nil
-			}
-
-			mapMu.Lock()
-			pkgFileMap[rel] = true
-			mapMu.Unlock()
-
-			pkgFiles <- fileInfo{path, rel}
-			return nil
-		})
-		close(pkgFiles)
-	}()
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			local := localChanges{
-				added:    make([]string, 0),
-				modified: make([]string, 0),
-			}
-
-			for f := range pkgFiles {
-				targetPath := filepath.Join(installDir, f.rel)
-				if _, err := os.Stat(targetPath); err != nil {
-					local.added = append(local.added, f.rel)
-					continue
-				}
-
-				h1, _ := hashFile(f.path)
-				h2, _ := hashFile(targetPath)
-				if h1 != h2 {
-					local.modified = append(local.modified, f.rel)
-				}
-			}
-
-			results <- local
-		}()
-	}
-
-	// 等待所有 worker 完成并关闭结果通道
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// 合并所有结果
-	for local := range results {
-		changes.Added = append(changes.Added, local.added...)
-		changes.Modified = append(changes.Modified, local.modified...)
-	}
-
-	filepath.WalkDir(installDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(installDir, path)
-		rel = filepath.ToSlash(rel)
-
-		if strings.HasPrefix(rel, "config/") ||
-			rel == "update_temp" ||
-			strings.HasPrefix(rel, "update_temp/") ||
-			strings.HasPrefix(rel, "debug/") ||
-			rel == filepath.Base(os.Args[0]) ||
-			rel == "updater.log" ||
-			strings.HasSuffix(rel, ".old") ||
-			rel == defaultChangesFile {
-			return nil
-		}
-
-		mapMu.Lock()
-		exists := pkgFileMap[rel]
-		mapMu.Unlock()
-
-		if !exists {
-			changes.Deleted = append(changes.Deleted, rel)
-		}
-		return nil
-	})
-
-	return changes, nil
-}
-
-func applyChanges(installDir, extractDir string, changes ChangeLog) error {
-	for _, rel := range append(changes.Added, changes.Modified...) {
-		src := filepath.Join(extractDir, rel)
-		dst := filepath.Join(installDir, rel)
-
-		if rel == filepath.Base(os.Args[0]) || rel == defaultChangesFile {
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-			return err
-		}
-
-		if err := copyFile(src, dst, 0755); err != nil {
-			return err
-		}
-	}
-
-	for _, rel := range changes.Deleted {
-		dst := filepath.Join(installDir, rel)
-		_ = os.Remove(dst)
-	}
-
-	return nil
 }
 
 func restartMain(cmdStr string) error {
@@ -453,26 +291,6 @@ func restartMain(cmdStr string) error {
 		cmd = exec.Command("sh", "-c", cmdStr+" &")
 	}
 	return cmd.Start()
-}
-
-func writeChanges(path string, changes ChangeLog) {
-	data, _ := json.MarshalIndent(changes, "", "  ")
-	_ = os.WriteFile(path, data, 0644)
-}
-
-func safeJoin(baseDir, name string) (string, error) {
-	joined := filepath.Join(baseDir, name)
-
-	// 相对路径以 ".." 开头（含单独的 ".."）即说明越出了 baseDir
-	rel, err := filepath.Rel(baseDir, joined)
-	if err != nil {
-		return "", fmt.Errorf("路径解析失败: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("非法路径：路径超出目标目录")
-	}
-
-	return joined, nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -493,20 +311,6 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return out.Chmod(mode)
-}
-
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := xxh3.New128()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	sum := h.Sum128()
-	return fmt.Sprintf("%016x%016x", sum.Hi, sum.Lo), nil
 }
 
 func outputJSON(v any) {

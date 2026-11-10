@@ -46,6 +46,10 @@
       "updateFailed": "Update failed",
       "currentVersion": "Current Version",
       "latestVersion": "Latest Version",
+      "packageResource": "Only resources will be updated",
+      "packageIncremental": "Incremental update",
+      "packageFull": "Full update",
+      "packageFullWithClient": "Full update, MWU will be upgraded to {version}",
       "waitingRestart": "Waiting for backend to restart...",
       "restarting": "Backend is restarting, page will refresh soon...",
       "channelOptions": {

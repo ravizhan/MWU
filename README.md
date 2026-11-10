@@ -30,7 +30,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 - 🔌 **魔改 Agent 实现** - 通过动态解析导入，无需额外 Python 环境
 - 🔧 **高度可定制** - Python 代码简洁易修改，轻松实现各种定制需求
 - 🔔 **系统通知** - 依托 Plyer 和浏览器API实现跨平台双渠道系统通知
-- 🔄 **自动更新** - 支持 GitHub 自动下载更新
+- 🔄 **自动更新** - 支持 GitHub 与 Mirror酱，资源与 MWU 本体可分开更新
 - 📱 **跨平台兼容** - Windows / Linux / macOS 全平台支持，基于浏览器提供统一的用户体验
 - ⚡ **开箱即用** - 强兼官方模板，极致简单的步骤，快速接入
 - 🎯 **弃繁从简** - 抛弃一切不必要的组件，提供尽可能小巧的体积
@@ -62,6 +62,12 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 | 压缩包名     | 仓库名-平台-架构-版本号 | `deploy/install.yml` 中 `install` 任务的 `package_name`                                                                                                    |
 | 可执行文件名 | MWU                     | 暂不可修改                                                                                                                                                 |
 | LOGO         |                         | 暂不可修改                                                                                                                                                 |
+
+### 🔄 更新
+
+`deploy/install.yml` 为每个平台发布完整包 `仓库名-平台-架构-版本号.7z`（MWU 本体 + 资源）和资源包 `仓库名-resource-平台.架构-版本号.7z`，并附带记录所用 MWU 版本的 `mwu-release.json`；包内的 `mwu-install.json` 记录哪些文件属于本体、哪些属于资源。客户端检查到新版本时，若发布所用的 MWU 版本与本地一致就只下载资源包，否则（升级了 `MWU_VERSION`）下载完整包。更新时只替换和删除清单内的文件，`config/`、`debug/` 等用户数据不受影响；应用失败会回滚到旧版本。
+
+配置 `interface.mirrorchyan_rid` 后优先使用 Mirror酱：填写 CDK 时直接从 Mirror酱 下载（可能是增量包），未填写时按 Mirror酱 返回的版本号从 GitHub 下载同一版本。Mirror酱 只需上传完整包。
 
 ### 📁 路径规范
 
@@ -324,7 +330,8 @@ MWU/
 │       ├── interface_loader.py  # interface 加载逻辑
 │       ├── scheduler.py         # 定时任务相关模型
 │       ├── settings.py          # 设置数据模型
-│       └── task_config.py       # 任务配置模型
+│       ├── task_config.py       # 任务配置模型
+│       └── update.py            # 更新计划模型
 │
 ├── agent/                       # Agent 动态扩展目录
 │   ├── main.py                  # Agent 主程序
@@ -338,14 +345,17 @@ MWU/
 │   └── maa_option.json          # MAA 选项配置
 │
 ├── updater/                     # Go 更新器目录
-│   ├── main.go                  # 更新器主程序
+│   ├── main.go                  # 更新器主流程
+│   ├── apply.go                 # 更新计划与事务式应用（备份/回滚）
+│   ├── manifest.go              # 安装清单与 changes.json
 │   ├── go.mod                   # Go 模块定义
 │   └── go.sum                   # Go 依赖校验
 │
 ├── deploy/                      # 部署与 CI 相关脚本
 │   ├── install.yml              # GitHub Actions 部署配置
 │   ├── download_deps.py         # 依赖下载脚本
-│   └── copy_resources.py        # 资源复制脚本
+│   ├── copy_resources.py        # 资源复制脚本
+│   └── package.py               # 生成安装清单与资源包
 │
 └── front/                       # 前端项目目录
     └── src/                     # 源代码目录
