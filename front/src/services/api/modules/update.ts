@@ -6,11 +6,16 @@ export interface UpdateInfo {
   current_version: string
   is_update_available: boolean
   release_notes: string
+  download_source: "mirrorchyan" | "github"
+  /** full: MWU + resources; resource: resources only; incremental: MirrorChyan diff package */
+  package_type: "full" | "resource" | "incremental"
+  /** MWU version used by the target release, null when unknown */
+  client_version: string | null
+  /** MWU version recorded by the local install manifest, null when unknown */
+  current_client_version: string | null
   download_url: string
   file_hash: string
   file_name: string
-  download_source?: "mirrorchyan" | "github"
-  update_type?: "full" | "incremental"
 }
 
 export interface UpdateCheckResponse {

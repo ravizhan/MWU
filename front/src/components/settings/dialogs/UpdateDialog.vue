@@ -13,6 +13,7 @@
           <NIcon size="24"><ArrowUpCircleOutline /></NIcon>
         </template>
         {{ version_info }}
+        <div class="mt-1 text-xs">{{ packageInfo }}</div>
       </NAlert>
       <NCard size="small" :bordered="false" content-style="padding: 12px">
         <template #header>
@@ -113,6 +114,19 @@ const version_info = computed(() => {
 const showDialog = computed({
   get: () => show,
   set: (value) => emit("update:show", value),
+})
+
+const packageInfo = computed(() => {
+  if (!updateInfo) return ""
+  if (updateInfo.package_type === "resource") return t("settings.update.packageResource")
+  if (updateInfo.package_type === "incremental") return t("settings.update.packageIncremental")
+  if (
+    updateInfo.client_version &&
+    updateInfo.client_version !== updateInfo.current_client_version
+  ) {
+    return t("settings.update.packageFullWithClient", { version: updateInfo.client_version })
+  }
+  return t("settings.update.packageFull")
 })
 
 const updateState = ref<"available" | "downloading" | "updating" | "success" | "failed">(
