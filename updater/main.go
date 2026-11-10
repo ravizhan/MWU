@@ -51,6 +51,9 @@ func main() {
 	if cfg.Archive == "" {
 		fail("Missing -archive argument")
 	}
+	if cfg.Kind == "" {
+		fail("Missing -type argument")
+	}
 	if cfg.WebhookURL == "" {
 		fail("Missing -webhook argument")
 	}
@@ -66,9 +69,6 @@ func main() {
 	if err != nil {
 		fail("Failed to locate updater: %v", err)
 	}
-
-	// 上次更新中途崩溃留下的备份先放回去，保证从完整的旧安装开始
-	restoreBackup(installDir)
 
 	extractDir := filepath.Join(installDir, extractDirName)
 	_ = os.RemoveAll(extractDir)
@@ -90,17 +90,6 @@ func main() {
 		os.Exit(exitCodeSelfUpdate)
 	}
 
-	skip := map[string]bool{
-		filepath.Base(exePath): true,
-		"updater.log":          true,
-	}
-	plan, err := buildPlan(cfg.Kind, installDir, extractDir, skip)
-	if err != nil {
-		fail("Failed to plan update: %v", err)
-	}
-	log.Printf("更新计划（%s）：替换 %d 个文件，删除 %d 个文件、%d 个目录",
-		cfg.Kind, len(plan.Copy), len(plan.Delete), len(plan.DeleteDirs))
-
 	log.Println("通知主程序退出...")
 	if err := notifyShutdown(cfg.WebhookURL); err != nil {
 		log.Printf("警告：通知关闭失败：%v。", err)
@@ -113,17 +102,43 @@ func main() {
 		fail("Could not acquire file locks: %v", err)
 	}
 
-	log.Println("应用更新...")
-	tx := newTransaction(installDir)
-	if err := tx.apply(plan, extractDir); err != nil {
-		log.Printf("应用失败，回滚：%v", err)
-		tx.rollback()
+	// 上次更新中途崩溃留下的备份先放回去，保证从完整的旧安装开始；主程序退出后文件才不被占用
+	if err := recoverBackup(installDir); err != nil {
+		restartAfterFailure(cfg.RestartCmd)
+		fail("Failed to recover previous update: %v", err)
+	}
+
+	skip := map[string]bool{
+		filepath.Base(exePath): true,
+		"updater.log":          true,
+	}
+	plan, err := buildPlan(cfg.Kind, installDir, extractDir, skip)
+	if err != nil {
 		os.RemoveAll(extractDir)
 		restartAfterFailure(cfg.RestartCmd)
+		fail("Failed to plan update: %v", err)
+	}
+	log.Printf("更新计划（%s）：替换 %d 个文件，删除 %d 个文件，清理 %d 个目录",
+		cfg.Kind, len(plan.Copy), len(plan.Delete), len(plan.PruneDirs))
+
+	log.Println("应用更新...")
+	tx := newTransaction(installDir)
+	err = tx.apply(plan, extractDir)
+	if err == nil {
+		err = tx.commit()
+	}
+	if err != nil {
+		log.Printf("应用失败，回滚：%v", err)
+		rbErr := tx.rollback()
+		os.RemoveAll(extractDir)
+		restartAfterFailure(cfg.RestartCmd)
+		if rbErr != nil {
+			fail("Failed to apply update: %v; rollback failed, it will be retried on the next update: %v", err, rbErr)
+		}
 		fail("Failed to apply update: %v", err)
 	}
-	if err := tx.commit(); err != nil {
-		log.Printf("警告：清理备份失败：%v", err)
+	if err := discardBackup(tx.backupDir); err != nil {
+		log.Printf("警告：清理备份失败，下次更新时会继续清理：%v", err)
 	}
 
 	os.RemoveAll(extractDir)
@@ -145,7 +160,7 @@ func main() {
 func parseFlags() Config {
 	cfg := Config{}
 	flag.StringVar(&cfg.Archive, "archive", "", "更新包路径（zip/7z）")
-	flag.StringVar(&cfg.Kind, "type", "full", "更新包类型：full / resource / incremental")
+	flag.StringVar(&cfg.Kind, "type", "", "更新包类型：full / resource / incremental")
 	flag.StringVar(&cfg.WebhookURL, "webhook", "", "用于请求主程序关闭的URL")
 	flag.StringVar(&cfg.RestartCmd, "restart-cmd", "", "重启主程序的命令")
 	flag.Parse()

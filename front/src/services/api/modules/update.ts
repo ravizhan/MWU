@@ -15,7 +15,6 @@ export interface UpdateInfo {
   current_client_version: string | null
   download_url: string
   file_hash: string
-  file_name: string
 }
 
 export interface UpdateCheckResponse {

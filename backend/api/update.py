@@ -20,9 +20,20 @@ from backend.services.update_service import check_update, download_file
 
 router = APIRouter()
 
+# 下载目标固定，不使用远端给出的文件名；无扩展名，更新器按文件头识别格式
+UPDATE_PACKAGE_PATH = APP_ROOT_DIR / "update_package"
+
+# 检查可能并发（启动自动检查与手动检查），只保留最后发起的那次结果
+_check_lock = threading.Lock()
+_check_generation = 0
+
 
 @router.get("/api/update/check")
 def check_update_route():
+    global _check_generation
+    with _check_lock:
+        _check_generation += 1
+        generation = _check_generation
     try:
         plan = check_update(
             current_version=interface.version or "",
@@ -36,28 +47,29 @@ def check_update_route():
         msg = str(e)
         app_state.send_log(f"检查更新失败: {msg}")
         return {"status": "failed", "message": msg}
-    app_state.update_info = plan
+    with _check_lock:
+        if generation == _check_generation:
+            app_state.update_info = plan
     return {"status": "success", "update_info": plan.model_dump()}
 
 
 @router.get("/api/update")
 async def perform_update():
+    # 在第一个 await 之前完成判断与置位，重叠请求不会同时进入下载
+    if app_state.update_in_progress:
+        return {"status": "failed", "message": "更新已在进行中"}
+    plan = app_state.update_info
+    if plan is None or not plan.download_url:
+        msg = "暂无可用更新信息"
+        app_state.send_log(msg)
+        return {"status": "failed", "message": msg}
+    # 置位准入标志：阻塞重复更新、/api/start 与调度准入
+    app_state.update_in_progress = True
     try:
-        plan = app_state.update_info
-        if plan is None or not plan.download_url:
-            msg = "暂无可用更新信息"
-            app_state.send_log(msg)
-            return {"status": "failed", "message": msg}
-
-        update_package_path = APP_ROOT_DIR / plan.file_name
-        await asyncio.to_thread(update_package_path.unlink, missing_ok=True)
         app_state.update_status = {
             "status": "downloading",
             "message": "正在下载更新包...",
         }
-        # 更新真正开始：置位准入标志，阻塞 /api/start 与调度准入，防止更新期间启动任务
-        app_state.update_in_progress = True
-
         try:
             proxy = (
                 None
@@ -65,9 +77,9 @@ async def perform_update():
                 else (app_state.settings or SettingsModel()).update.proxy.strip()
                 or None
             )
-            await download_file(plan.download_url, update_package_path, proxy)
+            await download_file(plan.download_url, UPDATE_PACKAGE_PATH, proxy)
             if plan.file_hash:
-                file_bytes = await asyncio.to_thread(update_package_path.read_bytes)
+                file_bytes = await asyncio.to_thread(UPDATE_PACKAGE_PATH.read_bytes)
                 if hashlib.sha256(file_bytes).hexdigest() != plan.file_hash:
                     raise ValueError("文件哈希校验失败，下载的文件可能已损坏。")
         except Exception as e:
@@ -79,7 +91,7 @@ async def perform_update():
 
         threading.Thread(
             target=_run_updater_loop,
-            args=(update_package_path, plan.package_type),
+            args=(UPDATE_PACKAGE_PATH, plan.package_type),
             daemon=True,
         ).start()
         return {"status": "success", "message": "正在后台更新程序..."}

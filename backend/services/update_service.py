@@ -6,7 +6,8 @@ GitHub 发布约定（deploy/install.yml 生成）：
 - 资源包 ``<名称>-resource-<os>.<arch>-<tag>.7z``：只含资源文件与安装清单。平台段用 ``.``
   连接，是为了不被按 ``<os>-<arch>`` 子串选包的旧版客户端误当作完整包；
 - ``mwu-release.json``：``{"version", "mwu_version"}``，本次发布所用的 MWU 版本。
-发布所用 MWU 版本与本地安装清单一致时只下资源包，否则（含无清单的源码运行或旧安装）下完整包。
+发布所用 MWU 版本与本地安装清单一致、且本地没有覆盖本体文件的资源时只下资源包，
+否则（含无清单的源码运行或旧安装）下完整包。
 """
 
 import platform
@@ -89,7 +90,6 @@ def check_update(
                     current_client_version=manifest.mwu_version if manifest else None,
                     download_url=data.get("url", ""),
                     file_hash=data.get("sha256", ""),
-                    file_name=f"update-{latest_version}.7z",
                 )
             if repo is None:
                 raise RuntimeError(
@@ -159,7 +159,7 @@ def _github_release(
         url = f"{api}?per_page=1"
     else:
         url = f"{api}/latest"
-    resp = httpx.get(url, proxy=proxy, timeout=15)
+    resp = httpx.get(url, proxy=proxy, timeout=15, follow_redirects=True)
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
@@ -203,7 +203,9 @@ def _plan_from_github(
     resource_only = (
         resource is not None
         and client_version is not None
-        and client_version == current_client_version
+        and manifest is not None
+        and client_version == manifest.mwu_version
+        and not manifest.overrides_client()
     )
     asset = resource if resource_only and resource else full
     return UpdatePlan(
@@ -217,7 +219,6 @@ def _plan_from_github(
         current_client_version=current_client_version,
         download_url=asset["browser_download_url"],
         file_hash=asset.get("digest", "").removeprefix("sha256:").strip(),
-        file_name=asset["name"],
     )
 
 
