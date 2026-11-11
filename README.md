@@ -65,7 +65,7 @@ _✨ 基于 **[Vue](https://github.com/vuejs/vue)** 和 **[FastAPI](https://gith
 
 ### 🔄 更新
 
-`deploy/install.yml` 为每个平台发布完整包 `仓库名-平台-架构-版本号.7z`（MWU 本体 + 资源）和资源包 `仓库名-resource-平台.架构-版本号.7z`，并附带记录所用 MWU 版本的 `mwu-release.json`；包内的 `mwu-install.json` 记录哪些文件属于本体、哪些属于资源。客户端检查到新版本时，若发布所用的 MWU 版本与本地一致就只下载资源包，否则（升级了 `MWU_VERSION`）下载完整包。更新时只替换和删除清单内的文件，`config/`、`debug/` 等用户数据不受影响；应用失败会回滚到旧版本。
+`deploy/install.yml` 为每个平台发布完整包 `仓库名-平台-架构-版本号.7z`（MWU 本体 + 资源）和资源包 `仓库名-resource-平台.架构-版本号.7z`，并附带记录所用 MWU 版本的 `mwu-release.json`；包内的 `mwu-install.json` 记录哪些文件属于本体、哪些属于资源。客户端检查到新版本时，若发布所用的 MWU 版本与本地一致就只下载资源包，否则（升级了 `MWU_VERSION`）下载完整包；资源覆盖了 MWU 本体的同名文件时也总是下载完整包，以便撤销覆盖时能还原原文件。更新时只替换和删除清单内的文件，`config/`、`debug/` 等用户数据不受影响；增量包删除目录时，目录中不属于发布的文件会保留。应用失败会回滚到旧版本，更新中途崩溃则在下次更新时先还原。
 
 配置 `interface.mirrorchyan_rid` 后优先使用 Mirror酱：填写 CDK 时直接从 Mirror酱 下载（可能是增量包），未填写时按 Mirror酱 返回的版本号从 GitHub 下载同一版本。Mirror酱 只需上传完整包。
 
