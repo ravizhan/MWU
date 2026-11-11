@@ -236,18 +236,39 @@ func (t *Transaction) apply(plan Plan, extractDir string) error {
 	return nil
 }
 
-// begin 在改动任何文件前持久化将被新建的路径：原本不存在的目录与文件，以及将被同名文件取代的目录。
+// begin 在改动任何文件前持久化将被新建的路径：原本不存在的目录与文件，将被同名文件取代的目录，
+// 以及 MkdirAll 会隐式创建的缺失上级目录（父在前、子在后，逆序还原时先删子路径再清理空的上级目录）。
+// 已存在的上级文件不记录：它若被换成目录，会先移入备份，还原时其下的新路径已清空，os.Remove 可移除空目录后放回旧文件。
 func (t *Transaction) begin(plan Plan) error {
 	targets := slices.Concat(plan.MakeDirs, plan.Copy)
 	if plan.Manifest != nil {
 		targets = append(targets, manifestFile)
 	}
 	created := []string{}
+	seen := map[string]bool{}
+	record := func(rel string) {
+		if !seen[rel] {
+			seen[rel] = true
+			created = append(created, rel)
+		}
+	}
 	for i, rel := range targets {
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		for j := 1; j < len(parts); j++ {
+			parent := strings.Join(parts[:j], "/")
+			_, err := os.Lstat(filepath.Join(t.installDir, parent))
+			if err == nil {
+				continue
+			}
+			if !isMissing(err) {
+				return err
+			}
+			record(parent)
+		}
 		info, err := os.Lstat(filepath.Join(t.installDir, rel))
 		// 已存在的目录：MakeDirs 中的保持原样；Copy 中的会被同名文件取代，需要记录
 		if isMissing(err) || err == nil && info.IsDir() && i >= len(plan.MakeDirs) {
-			created = append(created, rel)
+			record(rel)
 			continue
 		}
 		if err != nil {
