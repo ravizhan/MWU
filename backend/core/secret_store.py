@@ -1,9 +1,10 @@
-"""密码字段的本地加解密（Fernet）：明文只存在于内存与 API 响应中。
+"""密码字段的本地加解密（AES-128-GCM）：明文只存在于内存与 API 响应中。
 
 密钥存放在每个用户的数据目录（Windows LOCALAPPDATA / macOS Application Support /
 XDG 配置目录），只拷贝 config/ 不会带走秘密；换机器或换系统用户后需要重新填写密码。
 """
 
+import base64
 import functools
 import logging
 import os
@@ -12,7 +13,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
 
 from backend.models.interface import InterfaceModel
 from backend.models.scheduler import TaskOptionsByTask, TaskOptionValue
@@ -20,6 +22,9 @@ from backend.models.scheduler import TaskOptionsByTask, TaskOptionValue
 logger = logging.getLogger(__name__)
 
 _PREFIX = "mwu-secret:v1:"
+_KEY_SIZE = 16
+_NONCE_SIZE = 12
+_TAG_SIZE = 16
 
 _password_fields: dict[str, set[str]] = {}
 
@@ -37,17 +42,37 @@ def _key_path() -> Path:
 
 
 @functools.cache
-def _fernet() -> Fernet:
+def _key() -> bytes:
     """读取密钥文件；不存在时生成并原子落盘（仅当前用户可读）。"""
     path = _key_path()
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        tmp_path.write_bytes(Fernet.generate_key())
+        tmp_path.write_bytes(get_random_bytes(_KEY_SIZE))
         tmp_path.replace(path)
         if sys.platform != "win32":
             path.chmod(0o600)
-    return Fernet(path.read_bytes())
+    return path.read_bytes()
+
+
+def _encrypt(plaintext: bytes) -> str:
+    """返回 base64(nonce ‖ 密文 ‖ tag)。"""
+    nonce = get_random_bytes(_NONCE_SIZE)
+    cipher = AES.new(_key(), AES.MODE_GCM, nonce=nonce, mac_len=_TAG_SIZE)
+    ciphertext, tag = cipher.encrypt_and_digest(plaintext)
+    return base64.b64encode(nonce + ciphertext + tag).decode("ascii")
+
+
+def _decrypt(token: str) -> bytes:
+    """解密 `_encrypt` 的输出；密钥不符、数据损坏或被篡改时抛出 ValueError。"""
+    data = base64.b64decode(token, validate=True)
+    nonce, ciphertext, tag = (
+        data[:_NONCE_SIZE],
+        data[_NONCE_SIZE:-_TAG_SIZE],
+        data[-_TAG_SIZE:],
+    )
+    cipher = AES.new(_key(), AES.MODE_GCM, nonce=nonce, mac_len=_TAG_SIZE)
+    return cipher.decrypt_and_verify(ciphertext, tag)
 
 
 def configure(interface: InterfaceModel) -> None:
@@ -63,7 +88,7 @@ def configure(interface: InterfaceModel) -> None:
 def seal_value(value: str) -> str:
     if not value or value.startswith(_PREFIX):
         return value
-    return _PREFIX + _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+    return _PREFIX + _encrypt(value.encode("utf-8"))
 
 
 def seal_option_map(options: dict[str, TaskOptionValue]) -> dict[str, TaskOptionValue]:
@@ -108,8 +133,8 @@ def reveal(value: Any) -> Any:
         if not value.startswith(_PREFIX):
             return value
         try:
-            return _fernet().decrypt(value[len(_PREFIX) :]).decode("utf-8")
-        except InvalidToken:
+            return _decrypt(value[len(_PREFIX) :]).decode("utf-8")
+        except ValueError:
             logger.warning("无法解密已保存的密码字段，已清空；请重新填写")
             return ""
     if isinstance(value, dict):

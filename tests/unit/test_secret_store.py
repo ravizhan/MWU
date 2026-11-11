@@ -43,10 +43,10 @@ def _interface(with_password_option: bool) -> InterfaceModel:
 def key_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     path = tmp_path / "secret.key"
     monkeypatch.setattr(secret_store, "_key_path", lambda: path)
-    secret_store._fernet.cache_clear()
+    secret_store._key.cache_clear()
     secret_store.configure(_interface(with_password_option=True))
     yield path
-    secret_store._fernet.cache_clear()
+    secret_store._key.cache_clear()
     secret_store.configure(_interface(with_password_option=False))
 
 
@@ -73,7 +73,7 @@ def test_missing_key_yields_empty_password(tmp_path: Path, key_path: Path) -> No
     _write_password_settings(path)
 
     key_path.unlink()
-    secret_store._fernet.cache_clear()
+    secret_store._key.cache_clear()
 
     settings = load_settings_model(path)
     assert settings.globalOptionValues["login"] == {"password": ""}

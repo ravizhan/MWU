@@ -11,7 +11,7 @@
 # nuitka-project: --noinclude-custom-mode=charset_normalizer:bytecode
 # nuitka-project: --noinclude-custom-mode=click:bytecode
 # nuitka-project: --noinclude-custom-mode=cron_converter:bytecode
-# nuitka-project: --noinclude-custom-mode=cryptography:bytecode
+# nuitka-project: --noinclude-custom-mode=Crypto:bytecode
 # nuitka-project: --noinclude-custom-mode=dateutil:bytecode
 # nuitka-project: --noinclude-custom-mode=fastapi:bytecode
 # nuitka-project: --noinclude-custom-mode=h11:bytecode

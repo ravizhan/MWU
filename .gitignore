@@ -332,5 +332,5 @@ options
 .sisyphus
 deps
 .explyt
-# 本地测试数据，按 MaaPracticeBoilerplate 源码结构放置（assets/interface.json 等）
+android.md
 /assets

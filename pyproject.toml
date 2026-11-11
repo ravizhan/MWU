@@ -18,9 +18,9 @@ dependencies = [
     "uvicorn>=0.54.0",
     "json5>=0.17.3",
     "sentry-sdk>=2.73.0",
-    "cryptography>=50.0.2",
     "apprise>=2.1.0",
     "wakepy>=1.0.0",
+    "pycryptodome>=3.23.0",
 ]
 
 [dependency-groups]
