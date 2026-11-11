@@ -24,4 +24,3 @@ class UpdatePlan(BaseModel):
     current_client_version: str | None = None
     download_url: str = ""
     file_hash: str = ""
-    file_name: str = ""

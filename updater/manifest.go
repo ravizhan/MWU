@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 )
 
 const (
@@ -31,6 +32,17 @@ func (m *Manifest) files() map[string]bool {
 		files[rel] = true
 	}
 	return files
+}
+
+// overridesClient 报告是否有资源文件覆盖了同名的 MWU 本体文件。资源包不含本体文件，
+// 覆盖一旦撤销就无法用资源包还原，所以此时只能用完整包更新。
+func (m *Manifest) overridesClient() bool {
+	for _, rel := range m.Resource {
+		if slices.Contains(m.Client, rel) {
+			return true
+		}
+	}
+	return false
 }
 
 // ChangeLog 是 MirrorChyan 增量包中的 changes.json。
