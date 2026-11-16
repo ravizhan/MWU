@@ -309,13 +309,21 @@ export const useTaskConfigStore = defineStore("taskConfig", {
       return { tasks, taskOptions: cloneTaskOptionsByTask(taskOptions), preTasks: [] }
     },
 
-    /** Interface-declared default for one preset; the custom preset (or an unknown name) starts empty. */
+    /** Interface-declared default for one preset; the custom preset queues `default_check` tasks in declaration order. */
     buildDefaultSnapshot(presetName: string): TaskPresetSnapshot {
-      const preset = useInterfaceStore().getPresetList.find((item) => item.name === presetName)
-      if (!preset) {
-        return { tasks: [], taskOptions: {}, preTasks: [] }
+      const interfaceStore = useInterfaceStore()
+      const preset = interfaceStore.getPresetList.find((item) => item.name === presetName)
+      if (preset) {
+        return this.buildPresetSnapshot(preset)
       }
-      return this.buildPresetSnapshot(preset)
+      const tasks = (interfaceStore.interface?.task || [])
+        .filter((task) => task.default_check === true)
+        .map((task) => task.name)
+      const taskOptions: TaskOptionsByTask = {}
+      for (const taskId of tasks) {
+        taskOptions[taskId] = this.buildDefaultOptionsForTask(taskId)
+      }
+      return { tasks, taskOptions, preTasks: [] }
     },
 
     /** Server-normalized snapshots are trusted as-is; presets the server did not send fall back to the interface. */
