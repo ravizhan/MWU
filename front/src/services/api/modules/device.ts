@@ -6,7 +6,7 @@ export interface PostDeviceResult {
   message: string
 }
 
-export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "PlayCover" | "Linux"
+export type DeviceControllerType = "Adb" | "Win32" | "Gamepad" | "MacOS" | "PlayCover" | "Linux"
 
 export interface AdbDevice {
   type: "Adb"
@@ -36,6 +36,16 @@ export interface GamepadDevice {
   gamepad_type: number
 }
 
+/** hWnd 是 CGWindowID，class_name 是所属应用的 bundle id */
+export interface MacOSDevice {
+  type: "MacOS"
+  hWnd: number
+  class_name: string
+  window_name: string
+  screencap_methods: number
+  input_methods: number
+}
+
 export interface PlayCoverDevice {
   type: "PlayCover"
   name?: string
@@ -53,6 +63,7 @@ export type ConnectableDevice =
   | AdbDevice
   | Win32Device
   | GamepadDevice
+  | MacOSDevice
   | PlayCoverDevice
   | LinuxDevice
 
@@ -83,6 +94,8 @@ export interface DeviceControllerCapability {
   reason: string
   search_mode: "select" | "input"
   default_address: string
+  /** Linux UInput 输入需要用户填写屏幕宽高 */
+  needs_screen_size: boolean
 }
 
 export interface DeviceSearchData {

@@ -66,6 +66,7 @@ const adbCapability: DeviceControllerCapability = {
   reason: "",
   search_mode: "select",
   default_address: "",
+  needs_screen_size: false,
 }
 
 const playCoverCapability: DeviceControllerCapability = {
@@ -77,6 +78,7 @@ const playCoverCapability: DeviceControllerCapability = {
   reason: "",
   search_mode: "input",
   default_address: "127.0.0.1:1717",
+  needs_screen_size: false,
 }
 
 const adbDevice: ConnectableDevice = {

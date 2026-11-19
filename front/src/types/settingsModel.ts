@@ -70,7 +70,7 @@ export interface TelemetrySettings {
 
 // 面板持久化设备信息
 export interface PanelLastConnectedDevice {
-  type: "Adb" | "Win32" | "Gamepad" | "PlayCover" | "Linux"
+  type: "Adb" | "Win32" | "Gamepad" | "MacOS" | "PlayCover" | "Linux"
   controller_name: string
   fingerprint: string
   adb_path: string
@@ -95,6 +95,9 @@ export interface PanelSettings {
   lastConnectedDevice: PanelLastConnectedDevice | null
   recentDevices: PanelLastConnectedDevice[] | null
   customDevices?: CustomDevice[]
+  /** Linux UInput 输入的屏幕分辨率，0 表示未填写 */
+  uinputScreenWidth: number
+  uinputScreenHeight: number
 }
 
 // 完整设置模型

@@ -1,12 +1,14 @@
 """Tests for custom device persistence and scan+custom merge in DeviceService."""
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from maa.define import MaaMacOSPermissionEnum
 from maa.toolkit import Toolkit
 from pydantic import ValidationError
 
@@ -34,6 +36,7 @@ def _controller(name: str, type_: str) -> SimpleNamespace:
         win32=None,
         gamepad=None,
         linux=None,
+        macos=None,
     )
 
 
@@ -97,6 +100,7 @@ class TestCustomDeviceCreateModel:
         ("Linux", " /run/user/1000/wayland-1 ", "/run/user/1000/wayland-1"),
         ("Win32", "00123", "123"),
         ("Win32", " 42 ", "42"),
+        ("MacOS", " 0077 ", "77"),
         ("Gamepad", "0042|01", "42|1"),
         ("Gamepad", " 7 | 0 ", "7|0"),
     ],
@@ -116,6 +120,8 @@ def test_canonicalize_custom_address_accepts(device_type: str, raw: str, expecte
         ("Win32", "12.3"),
         ("Win32", "1e2"),
         ("Win32", ""),
+        ("MacOS", "0"),
+        ("MacOS", "abc"),
         ("Gamepad", "0|0"),
         ("Gamepad", "-1|0"),
         ("Gamepad", "42|2"),
@@ -482,6 +488,161 @@ class TestLinuxSupport:
 
         assert connected is False
         assert "管理员权限" in worker.device_state.last_device_error
+
+    def test_connect_uinput_uses_saved_screen_size(self, app_root: Path):
+        captured: dict[str, Any] = {}
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap="PipeWire",
+            input="UInput",
+            pipewire_source="Gamescope",
+            use_win32_vk_code=False,
+        )
+        worker = self._linux_worker(app_root, controller)
+        instances = [
+            SimpleNamespace(display_no=0, pipewire_node_id=70, eis_socket_path="")
+        ]
+        model = DeviceService.build_device_model_from_config(
+            "LinuxController", "Linux", "gamescope-0"
+        )
+        patches = (
+            patch(
+                "backend.maa_worker.device_service.LinuxController",
+                _fake_linux_controller(captured),
+            ),
+            patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
+            patch("backend.maa_worker.device_service.time.sleep"),
+        )
+
+        with patches[0], patches[1], patches[2]:
+            assert DeviceService(worker).connect(model) is False  # type: ignore[arg-type]
+        assert "屏幕宽高" in worker.device_state.last_device_error
+
+        settings_path = app_root / "config" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(
+            json.dumps(
+                {"panel": {"uinputScreenWidth": 1920, "uinputScreenHeight": 1080}}
+            ),
+            encoding="utf-8",
+        )
+        with patches[0], patches[1], patches[2]:
+            assert DeviceService(worker).connect(model) is True  # type: ignore[arg-type]
+        assert captured["input_method"] == 2
+        assert captured["uinput_screen_width"] == 1920
+        assert captured["uinput_screen_height"] == 1080
+
+    def test_scans_portal_device_for_non_wlr_input(self, app_root: Path):
+        controller = _controller("LinuxController", "Linux")
+        controller.linux = SimpleNamespace(
+            screencap="PipeWire", input="UInput", pipewire_source="Portal"
+        )
+        service = DeviceService(_FakeWorker(app_root, [controller]))  # type: ignore[arg-type]
+
+        with patch("backend.maa_worker.device_service.sys.platform", "linux"):
+            devices = service._find_devices_for_controller(controller)
+
+        assert devices == [
+            {"type": "Linux", "name": "xdg-desktop-portal", "address": "portal"}
+        ]
+
+
+class TestMacOSSupport:
+    def test_platform_capability(self):
+        controller = _controller("MacController", "MacOS")
+        with patch("backend.maa_worker.device_service.sys.platform", "darwin"):
+            assert is_controller_supported(controller) == (True, "")
+        with patch("backend.maa_worker.device_service.sys.platform", "win32"):
+            assert is_controller_supported(controller) == (
+                False,
+                "platform_not_supported",
+            )
+
+    def test_scans_windows_filtered_by_title_regex(self, app_root: Path):
+        controller = _controller("MacController", "MacOS")
+        controller.macos = SimpleNamespace(title_regex=re.compile("^Game"))
+        service = DeviceService(_FakeWorker(app_root, [controller]))  # type: ignore[arg-type]
+        windows = [
+            SimpleNamespace(hwnd=12, class_name="com.example.game", window_name="Game"),
+            SimpleNamespace(hwnd=12, class_name="com.example.game", window_name="Game"),
+            SimpleNamespace(hwnd=13, class_name="com.apple.finder", window_name="Docs"),
+            SimpleNamespace(
+                hwnd=None, class_name="com.example.game", window_name="Game"
+            ),
+        ]
+
+        with (
+            patch("backend.maa_worker.device_service.sys.platform", "darwin"),
+            patch.object(Toolkit, "find_desktop_windows", return_value=windows),
+        ):
+            devices = service._find_devices_for_controller(controller)
+
+        assert devices == [
+            {
+                "type": "MacOS",
+                "hWnd": 12,
+                "class_name": "com.example.game",
+                "window_name": "Game",
+                "screencap_methods": 0,
+                "input_methods": 0,
+            }
+        ]
+
+    def test_connect_maps_methods(self, app_root: Path):
+        captured: dict[str, Any] = {}
+
+        class _FakeMacOSController(_fake_linux_controller({})):
+            def __init__(self, window_id, screencap_method, input_method):
+                captured.update(
+                    window_id=window_id,
+                    screencap_method=screencap_method,
+                    input_method=input_method,
+                )
+
+        controller = _controller("MacController", "MacOS")
+        controller.macos = SimpleNamespace(screencap=None, input="PostToPid")
+        worker = TestLinuxSupport._linux_worker(app_root, controller)
+        model = DeviceService.build_device_model_from_config(
+            "MacController", "MacOS", "42"
+        )
+
+        with (
+            patch(
+                "backend.maa_worker.device_service.MacOSController",
+                _FakeMacOSController,
+            ),
+            patch.object(Toolkit, "macos_check_permission", return_value=True),
+            patch("backend.maa_worker.device_service.time.sleep"),
+        ):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is True
+        assert captured == {"window_id": 42, "screencap_method": 1, "input_method": 2}
+
+    def test_connect_requests_missing_permissions(self, app_root: Path):
+        controller = _controller("MacController", "MacOS")
+        worker = TestLinuxSupport._linux_worker(app_root, controller)
+        model = DeviceService.build_device_model_from_config(
+            "MacController", "MacOS", "42"
+        )
+        requested: list[Any] = []
+
+        with (
+            patch.object(
+                Toolkit,
+                "macos_check_permission",
+                side_effect=lambda perm: perm == MaaMacOSPermissionEnum.ScreenCapture,
+            ),
+            patch.object(
+                Toolkit, "macos_request_permission", side_effect=requested.append
+            ),
+        ):
+            connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
+
+        assert connected is False
+        assert requested == [MaaMacOSPermissionEnum.Accessibility]
+        assert "辅助功能" in worker.device_state.last_device_error
+        assert "屏幕录制" not in worker.device_state.last_device_error
 
 
 class TestCustomDevicePersistence:

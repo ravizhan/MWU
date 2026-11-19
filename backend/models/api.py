@@ -38,9 +38,9 @@ class DeviceModel(BaseModel):
     def _validate_device_fields(self) -> "DeviceModel":
         if self.type in ("Adb", "PlayCover", "Linux"):
             self.address = canonicalize_runtime_device_address(self.type, self.address)
-        elif self.type == "Win32":
+        elif self.type in ("Win32", "MacOS"):
             self.hWnd = int(
-                canonicalize_runtime_device_address("Win32", str(self.hWnd))
+                canonicalize_runtime_device_address(self.type, str(self.hWnd))
             )
         elif self.type == "Gamepad":
             hwnd, gamepad_type = canonicalize_runtime_device_address(

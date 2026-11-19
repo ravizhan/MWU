@@ -36,6 +36,7 @@ import {
   getStoredDeviceIdentity,
   isAdbDevice,
   isGamepadDevice,
+  isMacOSDevice,
   isWin32Device,
   storedDeviceMatchesController,
 } from "@/utils/panel/device"
@@ -126,6 +127,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
 
     selectedControllerDisabled(): boolean {
       return this.selectedControllerCapability ? !this.selectedControllerCapability.enabled : false
+    },
+
+    needsScreenSize(): boolean {
+      return this.selectedControllerCapability?.needs_screen_size ?? false
     },
 
     selectedControllerName(): string | null {
@@ -511,6 +516,23 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return { device: { type: "PlayCover", address: parseResult.data } }
     },
 
+    /** 后端连接时从 settings.json 读取 UInput 屏幕宽高，所以连接前必须已填写并落盘 */
+    async ensureScreenSizeSaved(): Promise<string | null> {
+      if (!this.needsScreenSize) {
+        return null
+      }
+      const t = i18n.global.t
+      const settingsStore = useSettingsStore()
+      const { uinputScreenWidth, uinputScreenHeight } = settingsStore.settings.panel
+      if (uinputScreenWidth <= 0 || uinputScreenHeight <= 0) {
+        return t("panel.screenSizeRequired")
+      }
+      if (!(await settingsStore.flushSaves())) {
+        return t("panel.settingsNotSaved")
+      }
+      return null
+    },
+
     // --- Connection ---
     async connectDevices(): Promise<PostDeviceResult> {
       const t = i18n.global.t
@@ -539,6 +561,11 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
 
       if (!currentDevice) {
         return { success: false, message: t("panel.selectDevice") }
+      }
+
+      const screenSizeError = await this.ensureScreenSizeSaved()
+      if (screenSizeError) {
+        return { success: false, message: screenSizeError }
       }
 
       const indexStore = useIndexStore()
@@ -981,7 +1008,7 @@ function buildDeviceAddress(device: ConnectableDevice | null): string {
   if (!device) {
     return ""
   }
-  if (isWin32Device(device)) {
+  if (isWin32Device(device) || isMacOSDevice(device)) {
     return String(device.hWnd)
   }
   if (isGamepadDevice(device)) {
@@ -1008,9 +1035,9 @@ function buildStoredLastConnectedDevice(
       uuid: "",
     }
   }
-  if (isWin32Device(deviceInfo)) {
+  if (isWin32Device(deviceInfo) || isMacOSDevice(deviceInfo)) {
     return {
-      type: "Win32",
+      type: deviceInfo.type,
       controller_name: controllerName,
       fingerprint: buildDeviceFingerprint(deviceInfo),
       adb_path: "",
