@@ -652,6 +652,33 @@ class TestNormalizeTaskConfig:
         assert "QuickRun" in result.presets
         assert result.presets["QuickRun"].tasks == ["A"]
 
+    @pytest.mark.parametrize(
+        ("presets", "expected"),
+        [
+            pytest.param({}, ["A", "C"], id="missing-seeds-default-check"),
+            pytest.param(
+                {CUSTOM_PRESET_NAME: {"tasks": []}}, [], id="cleared-queue-stays-empty"
+            ),
+        ],
+    )
+    def test_custom_preset_seeds_default_check_only_when_absent(
+        self, presets, expected
+    ):
+        iface = _make_interface(
+            tasks=[
+                Task(name="A", entry="EntryA", default_check=True),
+                Task(name="B", entry="EntryB"),
+                Task(name="C", entry="EntryC", default_check=True),
+            ],
+            presets=[Preset(name="QuickRun", task=[PresetTask(name="B")])],
+        )
+        result = normalize_task_config(
+            TaskConfigModel.model_validate({"presets": presets}), iface
+        )
+        assert result.selectedPreset == "QuickRun"
+        assert result.presets[CUSTOM_PRESET_NAME].tasks == expected
+        assert result.presets["QuickRun"].tasks == ["B"]
+
 
 # ---------------------------------------------------------------------------
 # TaskConfigModel model validation

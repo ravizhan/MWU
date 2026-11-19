@@ -458,17 +458,26 @@ describe("useTaskConfigStore", () => {
       expect(persisted.presets[CUSTOM_PRESET_NAME].tasks).toEqual(["Task C"])
     })
 
-    it("empties the custom preset without touching interface presets", async () => {
+    it("restores the custom preset to default_check tasks without touching interface presets", async () => {
+      const tasks = useInterfaceStore().interface.task ?? []
+      for (const task of tasks) {
+        task.default_check = task.name !== "Task B"
+      }
       const store = initTaskConfigStore()
       switchPreset("preset2")
       store.taskList = store.buildQueueFromIds(["Task C"])
       switchPreset(CUSTOM_PRESET_NAME)
       store.taskList = store.buildQueueFromIds(["Task A"])
+      store.options["Task A"] = { ...store.options["Task A"], difficulty: "hard" }
       vi.mocked(api.saveTaskConfig).mockResolvedValue(true)
 
       await expect(store.resetCurrentPreset()).resolves.toBe(true)
 
-      expect(store.taskList).toEqual([])
+      expect(store.taskList.map((task) => task.id)).toEqual(["Task A", "Task C"])
+      expect(store.options["Task A"]).toEqual({
+        difficulty: "normal",
+        params: { host: "localhost", port: "" },
+      })
       expect(store.presetSnapshots.preset2.tasks).toEqual(["Task C"])
       expect(api.updateSettings).not.toHaveBeenCalled()
     })

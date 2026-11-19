@@ -61,9 +61,11 @@ def normalize_task_config(
 ) -> TaskConfigModel:
     preset_snapshots: dict[str, TaskPresetSnapshotModel] = {}
 
+    # 缺少快照键才视为首次创建；已存在的空队列是用户清空的结果，不再播种
     custom_snapshot = config.presets.get(CUSTOM_PRESET_NAME)
     preset_snapshots[CUSTOM_PRESET_NAME] = normalize_snapshot(
-        custom_snapshot, interface_model
+        custom_snapshot or build_default_check_snapshot(interface_model),
+        interface_model,
     )
 
     for preset in interface_model.preset or []:
@@ -269,6 +271,15 @@ def find_unmet_checkbox_minimums(
     visit(global_names, global_options, set())
 
     return list(unmet)
+
+
+def build_default_check_snapshot(
+    interface_model: InterfaceModel,
+) -> TaskPresetSnapshotModel:
+    """自定义预设的初始队列：default_check 为真的任务按声明顺序各入队一次。"""
+    return TaskPresetSnapshotModel(
+        tasks=[task.name for task in interface_model.task or [] if task.default_check]
+    )
 
 
 def build_interface_preset_snapshot(
