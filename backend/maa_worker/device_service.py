@@ -2,6 +2,7 @@ import ctypes
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,8 +39,13 @@ _MACOS_PERMISSIONS = (
     (MaaMacOSPermissionEnum.ScreenCapture, "屏幕录制"),
     (MaaMacOSPermissionEnum.Accessibility, "辅助功能"),
 )
-# Portal 截图不需要选择具体目标，Wlr 以外的输入也不需要 socket，用占位地址表示这一设备
+# Portal 截图不需要选择具体目标，UInput 输入也不需要 socket，用占位地址表示这一设备
 _LINUX_PORTAL_ADDRESS = "portal"
+_UNSUPPORTED_REASON_TEXT = {
+    "platform_not_supported": "当前操作系统不支持该控制器",
+    "controller_config_missing": "控制器缺少必要的配置",
+    "controller_not_supported": "不支持该控制器类型",
+}
 
 
 def _is_elevated() -> bool:
@@ -140,6 +146,8 @@ def custom_record_to_device(record: dict[str, Any]) -> dict[str, Any]:
 class DeviceService:
     def __init__(self, worker: "MaaWorker"):
         self.worker = worker
+        # 手动连接与运行前连接可能并发，串行化状态检查、连接与状态写入
+        self._connect_lock = threading.Lock()
 
     def _settings_path(self) -> Path:
         return self.worker.context.app_root / "config" / "settings.json"
@@ -413,6 +421,8 @@ class DeviceService:
             case "PlayCover":
                 return devices
             case "MacOS":
+                if not self._ensure_macos_permissions():
+                    return devices
                 title_regex = controller.macos.title_regex if controller.macos else None
                 macos_seen: set[int] = set()
                 for device in Toolkit.find_desktop_windows():
@@ -472,7 +482,7 @@ class DeviceService:
                 if (
                     screencap == "PipeWire"
                     and pipewire_source == "Portal"
-                    and input_method != "Wlr"
+                    and input_method == "UInput"
                 ):
                     devices.append(
                         {
@@ -666,6 +676,10 @@ class DeviceService:
             )
 
     def connect(self, device_config: DeviceModel) -> bool:
+        with self._connect_lock:
+            return self._connect(device_config)
+
+    def _connect(self, device_config: DeviceModel) -> bool:
         state = self.worker.device_state
         if state.configuration_locked:
             if not self.is_connection_alive():
@@ -686,6 +700,12 @@ class DeviceService:
         )
         if selected_controller is None or selected_controller.type != device_type:
             state.last_device_error = "未找到匹配的控制器配置"
+            self.worker.events.send_log(state.last_device_error)
+            return False
+
+        supported, reason = is_controller_supported(selected_controller)
+        if not supported:
+            state.last_device_error = _UNSUPPORTED_REASON_TEXT[reason]
             self.worker.events.send_log(state.last_device_error)
             return False
 
@@ -732,11 +752,11 @@ class DeviceService:
                     uuid=device_config.uuid,
                 )
             case "MacOS":
+                if not self._ensure_macos_permissions():
+                    return False
                 controller = self._create_macos_controller(
                     selected_controller, device_config
                 )
-                if controller is None:
-                    return False
             case "Linux":
                 controller = self._create_linux_controller(
                     selected_controller, device_config
@@ -795,27 +815,30 @@ class DeviceService:
                 return instance
         return None
 
-    def _create_macos_controller(
-        self, selected_controller, device_config: DeviceModel
-    ) -> MacOSController | None:
-        """检查 macOS 权限后构造 MacOSController；缺权限时请求授权并返回 None。"""
+    def _ensure_macos_permissions(self) -> bool:
+        """检查屏幕录制与辅助功能权限；缺失时请求授权、写入 last_device_error 并返回 False。"""
         missing = [
             name
             for permission, name in _MACOS_PERMISSIONS
             if not Toolkit.macos_check_permission(permission)
         ]
-        if missing:
-            for permission, name in _MACOS_PERMISSIONS:
-                if name in missing:
-                    Toolkit.macos_request_permission(permission)
-            reason = (
-                f"MacOS 控制器缺少{'、'.join(missing)}权限，"
-                "请在“系统设置 → 隐私与安全性”中授权运行 MWU 的程序后重启 MWU"
-            )
-            self.worker.device_state.last_device_error = reason
-            self.worker.events.send_log(reason)
-            return None
+        if not missing:
+            return True
+        for permission, name in _MACOS_PERMISSIONS:
+            if name in missing:
+                Toolkit.macos_request_permission(permission)
+        reason = (
+            f"MacOS 控制器缺少{'、'.join(missing)}权限，"
+            "请在“系统设置 → 隐私与安全性”中授权运行 MWU 的程序后重启 MWU"
+        )
+        self.worker.device_state.last_device_error = reason
+        self.worker.events.send_log(reason)
+        return False
 
+    @staticmethod
+    def _create_macos_controller(
+        selected_controller, device_config: DeviceModel
+    ) -> MacOSController:
         macos_config = selected_controller.macos
         screencap = (macos_config.screencap if macos_config else None) or (
             "ScreenCaptureKit"

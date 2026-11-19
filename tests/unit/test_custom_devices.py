@@ -216,6 +216,11 @@ def _fake_linux_controller(
 
 
 class TestLinuxSupport:
+    @pytest.fixture(autouse=True)
+    def _linux_platform(self):
+        with patch("backend.maa_worker.device_service.sys.platform", "linux"):
+            yield
+
     def test_platform_capability(self):
         controller = _controller("LinuxController", "Linux")
         with patch("backend.maa_worker.device_service.sys.platform", "linux"):
@@ -490,7 +495,6 @@ class TestLinuxSupport:
         assert "管理员权限" in worker.device_state.last_device_error
 
     def test_connect_uinput_uses_saved_screen_size(self, app_root: Path):
-        captured: dict[str, Any] = {}
         controller = _controller("LinuxController", "Linux")
         controller.linux = SimpleNamespace(
             screencap="PipeWire",
@@ -508,7 +512,7 @@ class TestLinuxSupport:
         patches = (
             patch(
                 "backend.maa_worker.device_service.LinuxController",
-                _fake_linux_controller(captured),
+                _fake_linux_controller({}),
             ),
             patch.object(Toolkit, "find_gamescope_instances", return_value=instances),
             patch("backend.maa_worker.device_service.time.sleep"),
@@ -528,23 +532,31 @@ class TestLinuxSupport:
         )
         with patches[0], patches[1], patches[2]:
             assert DeviceService(worker).connect(model) is True  # type: ignore[arg-type]
-        assert captured["input_method"] == 2
-        assert captured["uinput_screen_width"] == 1920
-        assert captured["uinput_screen_height"] == 1080
+        assert worker.device_state.connected is True
 
-    def test_scans_portal_device_for_non_wlr_input(self, app_root: Path):
+    @pytest.mark.parametrize(
+        ("input_method", "expected"),
+        [
+            (
+                "UInput",
+                [{"type": "Linux", "name": "xdg-desktop-portal", "address": "portal"}],
+            ),
+            # Libei 需要 gamescope EIS socket，Portal 设备无法连接，不应出现在列表中
+            ("Libei", []),
+        ],
+    )
+    def test_scans_portal_device_only_for_uinput(
+        self, app_root: Path, input_method: str, expected: list[dict[str, str]]
+    ):
         controller = _controller("LinuxController", "Linux")
         controller.linux = SimpleNamespace(
-            screencap="PipeWire", input="UInput", pipewire_source="Portal"
+            screencap="PipeWire", input=input_method, pipewire_source="Portal"
         )
         service = DeviceService(_FakeWorker(app_root, [controller]))  # type: ignore[arg-type]
 
-        with patch("backend.maa_worker.device_service.sys.platform", "linux"):
-            devices = service._find_devices_for_controller(controller)
+        devices = service._find_devices_for_controller(controller)
 
-        assert devices == [
-            {"type": "Linux", "name": "xdg-desktop-portal", "address": "portal"}
-        ]
+        assert devices == expected
 
 
 class TestMacOSSupport:
@@ -573,6 +585,7 @@ class TestMacOSSupport:
 
         with (
             patch("backend.maa_worker.device_service.sys.platform", "darwin"),
+            patch.object(Toolkit, "macos_check_permission", return_value=True),
             patch.object(Toolkit, "find_desktop_windows", return_value=windows),
         ):
             devices = service._find_devices_for_controller(controller)
@@ -588,36 +601,42 @@ class TestMacOSSupport:
             }
         ]
 
-    def test_connect_maps_methods(self, app_root: Path):
-        captured: dict[str, Any] = {}
-
-        class _FakeMacOSController(_fake_linux_controller({})):
-            def __init__(self, window_id, screencap_method, input_method):
-                captured.update(
-                    window_id=window_id,
-                    screencap_method=screencap_method,
-                    input_method=input_method,
-                )
-
+    def test_scan_requests_missing_permissions(self, app_root: Path):
         controller = _controller("MacController", "MacOS")
-        controller.macos = SimpleNamespace(screencap=None, input="PostToPid")
+        worker = TestLinuxSupport._linux_worker(app_root, controller)
+        requested: list[Any] = []
+
+        with (
+            patch("backend.maa_worker.device_service.sys.platform", "darwin"),
+            patch.object(Toolkit, "macos_check_permission", return_value=False),
+            patch.object(
+                Toolkit, "macos_request_permission", side_effect=requested.append
+            ),
+        ):
+            devices = DeviceService(worker)._find_devices_for_controller(controller)  # type: ignore[arg-type]
+
+        assert devices == []
+        assert requested == [
+            MaaMacOSPermissionEnum.ScreenCapture,
+            MaaMacOSPermissionEnum.Accessibility,
+        ]
+        assert "屏幕录制" in worker.device_state.last_device_error
+
+    def test_connect_rejects_unsupported_platform(self, app_root: Path):
+        controller = _controller("MacController", "MacOS")
         worker = TestLinuxSupport._linux_worker(app_root, controller)
         model = DeviceService.build_device_model_from_config(
             "MacController", "MacOS", "42"
         )
 
         with (
-            patch(
-                "backend.maa_worker.device_service.MacOSController",
-                _FakeMacOSController,
-            ),
-            patch.object(Toolkit, "macos_check_permission", return_value=True),
-            patch("backend.maa_worker.device_service.time.sleep"),
+            patch("backend.maa_worker.device_service.sys.platform", "win32"),
+            patch.object(Toolkit, "macos_check_permission") as check_permission,
         ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
-        assert connected is True
-        assert captured == {"window_id": 42, "screencap_method": 1, "input_method": 2}
+        assert connected is False
+        check_permission.assert_not_called()
 
     def test_connect_requests_missing_permissions(self, app_root: Path):
         controller = _controller("MacController", "MacOS")
@@ -628,6 +647,7 @@ class TestMacOSSupport:
         requested: list[Any] = []
 
         with (
+            patch("backend.maa_worker.device_service.sys.platform", "darwin"),
             patch.object(
                 Toolkit,
                 "macos_check_permission",

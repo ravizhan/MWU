@@ -533,6 +533,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return null
     },
 
+    isSelectionUnchanged(controllerName: string, device: ConnectableDevice): boolean {
+      return (
+        this.selectedControllerCapability?.name === controllerName &&
+        this.currentSelectionFingerprint === buildDeviceFingerprint(device)
+      )
+    },
+
     // --- Connection ---
     async connectDevices(): Promise<PostDeviceResult> {
       const t = i18n.global.t
@@ -566,6 +573,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       const screenSizeError = await this.ensureScreenSizeSaved()
       if (screenSizeError) {
         return { success: false, message: screenSizeError }
+      }
+      // 等待保存期间用户可能已切换控制器或设备，此时放弃这次连接
+      if (!this.isSelectionUnchanged(selectedCapability.name, currentDevice)) {
+        return { success: false, message: t("panel.selectionChanged") }
       }
 
       const indexStore = useIndexStore()
