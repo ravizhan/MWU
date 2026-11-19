@@ -533,10 +533,10 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
       return null
     },
 
-    isSelectionUnchanged(controllerName: string, device: ConnectableDevice): boolean {
+    isSelectionUnchanged(controllerName: string, fingerprint: string): boolean {
       return (
         this.selectedControllerCapability?.name === controllerName &&
-        this.currentSelectionFingerprint === buildDeviceFingerprint(device)
+        this.currentSelectionFingerprint === fingerprint
       )
     },
 
@@ -570,12 +570,13 @@ export const useDeviceConnectionStore = defineStore("deviceConnection", {
         return { success: false, message: t("panel.selectDevice") }
       }
 
+      const selectionFingerprint = this.currentSelectionFingerprint
       const screenSizeError = await this.ensureScreenSizeSaved()
       if (screenSizeError) {
         return { success: false, message: screenSizeError }
       }
       // 等待保存期间用户可能已切换控制器或设备，此时放弃这次连接
-      if (!this.isSelectionUnchanged(selectedCapability.name, currentDevice)) {
+      if (!this.isSelectionUnchanged(selectedCapability.name, selectionFingerprint)) {
         return { success: false, message: t("panel.selectionChanged") }
       }
 

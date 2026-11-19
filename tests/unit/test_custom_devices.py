@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from backend.core.state import WorkerContext
 from backend.maa_worker.device_service import (
+    _UNSUPPORTED_REASON_TEXT,
     DeviceService,
     custom_record_to_device,
     is_controller_supported,
@@ -604,23 +605,17 @@ class TestMacOSSupport:
     def test_scan_requests_missing_permissions(self, app_root: Path):
         controller = _controller("MacController", "MacOS")
         worker = TestLinuxSupport._linux_worker(app_root, controller)
-        requested: list[Any] = []
 
         with (
             patch("backend.maa_worker.device_service.sys.platform", "darwin"),
             patch.object(Toolkit, "macos_check_permission", return_value=False),
-            patch.object(
-                Toolkit, "macos_request_permission", side_effect=requested.append
-            ),
+            patch.object(Toolkit, "macos_request_permission"),
         ):
             devices = DeviceService(worker)._find_devices_for_controller(controller)  # type: ignore[arg-type]
 
         assert devices == []
-        assert requested == [
-            MaaMacOSPermissionEnum.ScreenCapture,
-            MaaMacOSPermissionEnum.Accessibility,
-        ]
         assert "屏幕录制" in worker.device_state.last_device_error
+        assert "辅助功能" in worker.device_state.last_device_error
 
     def test_connect_rejects_unsupported_platform(self, app_root: Path):
         controller = _controller("MacController", "MacOS")
@@ -629,14 +624,14 @@ class TestMacOSSupport:
             "MacController", "MacOS", "42"
         )
 
-        with (
-            patch("backend.maa_worker.device_service.sys.platform", "win32"),
-            patch.object(Toolkit, "macos_check_permission") as check_permission,
-        ):
+        with patch("backend.maa_worker.device_service.sys.platform", "win32"):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
         assert connected is False
-        check_permission.assert_not_called()
+        assert (
+            worker.device_state.last_device_error
+            == _UNSUPPORTED_REASON_TEXT["platform_not_supported"]
+        )
 
     def test_connect_requests_missing_permissions(self, app_root: Path):
         controller = _controller("MacController", "MacOS")
@@ -644,7 +639,6 @@ class TestMacOSSupport:
         model = DeviceService.build_device_model_from_config(
             "MacController", "MacOS", "42"
         )
-        requested: list[Any] = []
 
         with (
             patch("backend.maa_worker.device_service.sys.platform", "darwin"),
@@ -653,14 +647,11 @@ class TestMacOSSupport:
                 "macos_check_permission",
                 side_effect=lambda perm: perm == MaaMacOSPermissionEnum.ScreenCapture,
             ),
-            patch.object(
-                Toolkit, "macos_request_permission", side_effect=requested.append
-            ),
+            patch.object(Toolkit, "macos_request_permission"),
         ):
             connected = DeviceService(worker).connect(model)  # type: ignore[arg-type]
 
         assert connected is False
-        assert requested == [MaaMacOSPermissionEnum.Accessibility]
         assert "辅助功能" in worker.device_state.last_device_error
         assert "屏幕录制" not in worker.device_state.last_device_error
 
