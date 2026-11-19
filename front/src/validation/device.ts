@@ -74,6 +74,10 @@ export const customDeviceAddressSchema = z.discriminatedUnion("type", [
     address: win32AddressSchema,
   }),
   z.object({
+    type: z.literal("MacOS"),
+    address: positiveIntegerSchema,
+  }),
+  z.object({
     type: z.literal("Gamepad"),
     address: gamepadAddressSchema,
   }),

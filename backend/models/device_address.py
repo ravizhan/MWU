@@ -2,14 +2,14 @@
 
 Single source of truth for device address validation and normalization.
 Custom (user-entered) addresses are strict; runtime (scanned) addresses
-are lenient for Adb (USB serials) but strict for PlayCover/Win32/Gamepad/Linux.
+are lenient for Adb (USB serials) but strict for the other types.
 """
 
 import re
 from ipaddress import IPv4Address
 from typing import Literal
 
-DeviceType = Literal["Adb", "Win32", "Gamepad", "PlayCover", "Linux"]
+DeviceType = Literal["Adb", "Win32", "Gamepad", "MacOS", "PlayCover", "Linux"]
 
 _IPV4_PORT_PATTERN = re.compile(r"^([^:]+):(\d+)$")
 
@@ -65,9 +65,9 @@ def _canonicalize_strict_type(device_type: str, text: str) -> str:
         if not text:
             raise ValueError("Linux device address must not be empty")
         return text
-    if device_type == "Win32":
+    if device_type in ("Win32", "MacOS"):
         if not text.isdigit() or int(text) <= 0:
-            raise ValueError("Win32 address must be a positive integer hWnd")
+            raise ValueError(f"{device_type} address must be a positive window id")
         return str(int(text))
     if device_type == "Gamepad":
         return _canonicalize_gamepad(text)
@@ -79,7 +79,7 @@ def canonicalize_custom_device_address(device_type: str, address: str) -> str:
 
     Adb/PlayCover: must be IPv4:port.
     Linux: non-empty Wayland socket path or gamescope identifier.
-    Win32: positive integer hWnd.
+    Win32/MacOS: positive integer window id (hWnd / CGWindowID).
     Gamepad: hWnd|type where type is 0 or 1.
     """
     text = str(address).strip()
@@ -93,7 +93,7 @@ def canonicalize_runtime_device_address(device_type: str, address: str) -> str:
 
     Adb: any non-empty string (USB serial allowed).
     PlayCover: must be IPv4:port.
-    Win32: positive integer hWnd.
+    Win32/MacOS: positive integer window id (hWnd / CGWindowID).
     Gamepad: hWnd|type where type is 0 or 1.
     Linux: non-empty Wayland socket path or gamescope identifier.
     """

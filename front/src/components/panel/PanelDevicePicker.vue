@@ -30,6 +30,28 @@
       @update:value="handleDeviceSelect"
       @update:show="(show: boolean) => show && emit('open-devices')"
     />
+    <div v-if="needsScreenSize" class="flex basis-full gap-2">
+      <NInputNumber
+        :value="screenWidth || null"
+        :min="1"
+        :precision="0"
+        :show-button="false"
+        :placeholder="t('panel.screenWidth')"
+        :disabled="disabled"
+        class="flex-1"
+        @update:value="emit('update:screen-width', $event ?? 0)"
+      />
+      <NInputNumber
+        :value="screenHeight || null"
+        :min="1"
+        :precision="0"
+        :show-button="false"
+        :placeholder="t('panel.screenHeight')"
+        :disabled="disabled"
+        class="flex-1"
+        @update:value="emit('update:screen-height', $event ?? 0)"
+      />
+    </div>
   </div>
 </template>
 
@@ -46,6 +68,9 @@ const {
   disabled,
   selectedControllerDisabled,
   isPlayCover,
+  needsScreenSize,
+  screenWidth,
+  screenHeight,
 } = defineProps<{
   selectedController: string | null
   selectedDeviceKey: string | null
@@ -60,12 +85,17 @@ const {
   disabled: boolean
   selectedControllerDisabled: boolean
   isPlayCover: boolean
+  needsScreenSize: boolean
+  screenWidth: number
+  screenHeight: number
 }>()
 
 const emit = defineEmits<{
   (e: "update:selected-controller", value: string | null): void
   (e: "update:selected-device-key", value: string | null): void
   (e: "update:play-cover-address", value: string): void
+  (e: "update:screen-width", value: number): void
+  (e: "update:screen-height", value: number): void
   (e: "controller-change"): void
   (e: "open-devices"): void
   (e: "create-device", value: string): void

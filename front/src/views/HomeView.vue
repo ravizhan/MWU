@@ -59,9 +59,16 @@
             :disabled="deviceStore.isDeviceResourceLocked"
             :selected-controller-disabled="deviceStore.selectedControllerDisabled"
             :is-play-cover="deviceStore.selectedControllerCapability?.type === 'PlayCover'"
+            :needs-screen-size="deviceStore.needsScreenSize"
+            :screen-width="settingsStore.settings.panel.uinputScreenWidth"
+            :screen-height="settingsStore.settings.panel.uinputScreenHeight"
             @update:selected-controller="deviceStore.selectedController = $event"
             @update:selected-device-key="deviceStore.selectedDeviceKey = $event"
             @update:play-cover-address="deviceStore.playCoverAddress = $event"
+            @update:screen-width="settingsStore.updateSetting('panel', 'uinputScreenWidth', $event)"
+            @update:screen-height="
+              settingsStore.updateSetting('panel', 'uinputScreenHeight', $event)
+            "
             @controller-change="deviceStore.handleControllerChange()"
             @open-devices="deviceStore.openDevices()"
             @create-device="deviceStore.createCustomDevice($event)"
@@ -139,6 +146,7 @@ import {
   useTaskConfigStore,
   useSchedulerStore,
   useDeviceConnectionStore,
+  useSettingsStore,
 } from "@/stores"
 import { resolveInterfaceText } from "@/utils/interface/content"
 
@@ -149,6 +157,7 @@ const interfaceStore = useInterfaceStore()
 const configStore = useTaskConfigStore()
 const schedulerStore = useSchedulerStore()
 const deviceStore = useDeviceConnectionStore()
+const settingsStore = useSettingsStore()
 
 const selectedTaskCount = computed(() => configStore.taskList.length)
 

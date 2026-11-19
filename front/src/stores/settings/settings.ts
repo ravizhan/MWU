@@ -42,6 +42,8 @@ const defaultSettings: SettingsModel = {
     lastConnectedDevice: null,
     recentDevices: [],
     customDevices: [],
+    uinputScreenWidth: 0,
+    uinputScreenHeight: 0,
   },
   telemetry: {
     helpImproveSoftware: true,

@@ -2,6 +2,7 @@ import ctypes
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,12 +11,19 @@ from maa.controller import (
     AdbController,
     GamepadController,
     LinuxController,
+    MacOSController,
     PlayCoverController,
     Win32Controller,
 )
+from maa.define import MaaMacOSPermissionEnum
 from maa.toolkit import Toolkit
 
-from backend.core.settings_io import SETTINGS_LOCK, atomic_write_json, read_settings_raw
+from backend.core.settings_io import (
+    SETTINGS_LOCK,
+    atomic_write_json,
+    load_settings_model,
+    read_settings_raw,
+)
 from backend.models.api import CustomDeviceCreate, DeviceModel
 from backend.models.device_address import try_canonicalize_runtime_device_address
 from backend.models.interface import INPUT_METHOD_INTS, controller_method_ints
@@ -25,6 +33,19 @@ if TYPE_CHECKING:
 
 _LINUX_SCREENCAP_METHODS = {"Wlr": 1, "PipeWire": 4}
 _LINUX_INPUT_METHODS = {"Wlr": 1, "UInput": 2, "Libei": 4}
+_MACOS_SCREENCAP_METHODS = {"ScreenCaptureKit": 1}
+_MACOS_INPUT_METHODS = {"GlobalEvent": 1, "PostToPid": 2}
+_MACOS_PERMISSIONS = (
+    (MaaMacOSPermissionEnum.ScreenCapture, "屏幕录制"),
+    (MaaMacOSPermissionEnum.Accessibility, "辅助功能"),
+)
+# Portal 截图不需要选择具体目标，UInput 输入也不需要 socket，用占位地址表示这一设备
+_LINUX_PORTAL_ADDRESS = "portal"
+_UNSUPPORTED_REASON_TEXT = {
+    "platform_not_supported": "当前操作系统不支持该控制器",
+    "controller_config_missing": "控制器缺少必要的配置",
+    "controller_not_supported": "不支持该控制器类型",
+}
 
 
 def _is_elevated() -> bool:
@@ -44,6 +65,10 @@ def is_controller_supported(controller) -> tuple[bool, str]:
                 return False, "controller_config_missing"
             return True, ""
         case "PlayCover":
+            if sys.platform != "darwin":
+                return False, "platform_not_supported"
+            return True, ""
+        case "MacOS":
             if sys.platform != "darwin":
                 return False, "platform_not_supported"
             return True, ""
@@ -67,7 +92,7 @@ def _scan_device_address(device: dict[str, Any]) -> str | None:
         return try_canonicalize_runtime_device_address(
             device_type, str(device.get("address", ""))
         )
-    if device_type == "Win32":
+    if device_type in ("Win32", "MacOS"):
         return try_canonicalize_runtime_device_address(
             device_type, str(device.get("hWnd", ""))
         )
@@ -94,9 +119,9 @@ def custom_record_to_device(record: dict[str, Any]) -> dict[str, Any]:
             "input_methods": 0,
             "config": {},
         }
-    if device_type == "Win32":
+    if device_type in ("Win32", "MacOS"):
         return {
-            "type": "Win32",
+            "type": device_type,
             "hWnd": int(address),
             "class_name": "",
             "window_name": "",
@@ -121,6 +146,8 @@ def custom_record_to_device(record: dict[str, Any]) -> dict[str, Any]:
 class DeviceService:
     def __init__(self, worker: "MaaWorker"):
         self.worker = worker
+        # 手动连接与运行前连接可能并发，串行化状态检查、连接与状态写入
+        self._connect_lock = threading.Lock()
 
     def _settings_path(self) -> Path:
         return self.worker.context.app_root / "config" / "settings.json"
@@ -148,6 +175,7 @@ class DeviceService:
                 "Adb",
                 "Win32",
                 "Gamepad",
+                "MacOS",
                 "PlayCover",
                 "Linux",
             ):
@@ -317,10 +345,13 @@ class DeviceService:
                     "default_address": "127.0.0.1:1717"
                     if controller.type == "PlayCover"
                     else "",
+                    "needs_screen_size": controller.type == "Linux"
+                    and controller.linux is not None
+                    and controller.linux.input == "UInput",
                 }
             )
 
-        controller_order = ["Adb", "Win32", "Gamepad", "PlayCover", "Linux"]
+        controller_order = ["Adb", "Win32", "Gamepad", "MacOS", "PlayCover", "Linux"]
         return sorted(
             capabilities,
             key=lambda item: (
@@ -389,6 +420,30 @@ class DeviceService:
                     )
             case "PlayCover":
                 return devices
+            case "MacOS":
+                if not self._ensure_macos_permissions():
+                    return devices
+                title_regex = controller.macos.title_regex if controller.macos else None
+                macos_seen: set[int] = set()
+                for device in Toolkit.find_desktop_windows():
+                    window_name = device.window_name
+                    if title_regex and not re.search(title_regex, window_name):
+                        continue
+                    window_id = int(device.hwnd or 0)
+                    if window_id <= 0 or window_id in macos_seen:
+                        continue
+                    macos_seen.add(window_id)
+                    devices.append(
+                        {
+                            "type": "MacOS",
+                            "hWnd": window_id,
+                            # macOS 下 class_name 是所属应用的 bundle id
+                            "class_name": device.class_name,
+                            "window_name": window_name,
+                            "screencap_methods": 0,
+                            "input_methods": 0,
+                        }
+                    )
             case "Linux":
                 linux_config = controller.linux
                 screencap = (linux_config.screencap if linux_config else None) or "Wlr"
@@ -424,6 +479,18 @@ class DeviceService:
                                 "address": address,
                             }
                         )
+                if (
+                    screencap == "PipeWire"
+                    and pipewire_source == "Portal"
+                    and input_method == "UInput"
+                ):
+                    devices.append(
+                        {
+                            "type": "Linux",
+                            "name": "xdg-desktop-portal",
+                            "address": _LINUX_PORTAL_ADDRESS,
+                        }
+                    )
             case "Gamepad":
                 assert controller.gamepad is not None
                 methods = controller_method_ints(controller)
@@ -534,13 +601,14 @@ class DeviceService:
 
         Args:
             controller_name: 控制器名称（来自 interface.json 的 controller name）
-            device_type: 设备类型 ("Adb", "Win32", "Gamepad", "PlayCover", "Linux")
+            device_type: 设备类型 ("Adb", "Win32", "Gamepad", "MacOS", "PlayCover", "Linux")
             device_address: 设备地址（格式因类型而异）
                 - Adb: IP:PORT 地址，如 "127.0.0.1:5555"
                 - Win32: hWnd 的字符串形式，如 "123456"
                 - Gamepad: "hWnd|gamepad_type" 格式，如 "123456|1"
+                - MacOS: CGWindowID 的字符串形式，如 "1234"
                 - PlayCover: IP:PORT 地址，如 "127.0.0.1:1717"
-                - Linux: Wayland socket 路径或 gamescope 标识
+                - Linux: Wayland socket 路径、gamescope 标识或 "portal"
 
         Returns:
             构造好的 DeviceModel 实例
@@ -559,9 +627,9 @@ class DeviceService:
                 input_methods=0,
                 config={},
             )
-        if device_type == "Win32":
+        if device_type in ("Win32", "MacOS"):
             return DeviceModel(
-                type="Win32",
+                type=device_type,
                 controller_name=controller_name,
                 name=device_address,
                 hWnd=int(device_address),
@@ -608,6 +676,10 @@ class DeviceService:
             )
 
     def connect(self, device_config: DeviceModel) -> bool:
+        with self._connect_lock:
+            return self._connect(device_config)
+
+    def _connect(self, device_config: DeviceModel) -> bool:
         state = self.worker.device_state
         if state.configuration_locked:
             if not self.is_connection_alive():
@@ -628,6 +700,12 @@ class DeviceService:
         )
         if selected_controller is None or selected_controller.type != device_type:
             state.last_device_error = "未找到匹配的控制器配置"
+            self.worker.events.send_log(state.last_device_error)
+            return False
+
+        supported, reason = is_controller_supported(selected_controller)
+        if not supported:
+            state.last_device_error = _UNSUPPORTED_REASON_TEXT[reason]
             self.worker.events.send_log(state.last_device_error)
             return False
 
@@ -672,6 +750,12 @@ class DeviceService:
                 controller = PlayCoverController(
                     address=device_config.address or "127.0.0.1:1717",
                     uuid=device_config.uuid,
+                )
+            case "MacOS":
+                if not self._ensure_macos_permissions():
+                    return False
+                controller = self._create_macos_controller(
+                    selected_controller, device_config
                 )
             case "Linux":
                 controller = self._create_linux_controller(
@@ -730,6 +814,41 @@ class DeviceService:
             if instance.pipewire_node_id != 0:
                 return instance
         return None
+
+    def _ensure_macos_permissions(self) -> bool:
+        """检查屏幕录制与辅助功能权限；缺失时请求授权、写入 last_device_error 并返回 False。"""
+        missing = [
+            name
+            for permission, name in _MACOS_PERMISSIONS
+            if not Toolkit.macos_check_permission(permission)
+        ]
+        if not missing:
+            return True
+        for permission, name in _MACOS_PERMISSIONS:
+            if name in missing:
+                Toolkit.macos_request_permission(permission)
+        reason = (
+            f"MacOS 控制器缺少{'、'.join(missing)}权限，"
+            "请在“系统设置 → 隐私与安全性”中授权运行 MWU 的程序后重启 MWU"
+        )
+        self.worker.device_state.last_device_error = reason
+        self.worker.events.send_log(reason)
+        return False
+
+    @staticmethod
+    def _create_macos_controller(
+        selected_controller, device_config: DeviceModel
+    ) -> MacOSController:
+        macos_config = selected_controller.macos
+        screencap = (macos_config.screencap if macos_config else None) or (
+            "ScreenCaptureKit"
+        )
+        input_method = (macos_config.input if macos_config else None) or "GlobalEvent"
+        return MacOSController(
+            window_id=device_config.hWnd,
+            screencap_method=_MACOS_SCREENCAP_METHODS[screencap],
+            input_method=_MACOS_INPUT_METHODS[input_method],
+        )
 
     def _create_linux_controller(
         self, selected_controller, device_config: DeviceModel
@@ -794,11 +913,12 @@ class DeviceService:
             config["wlr_socket_path"] = socket_path
         # 3) 输入方式附加参数
         if input_method == "UInput":
-            fail(
-                "Linux 控制器 input=UInput 需要屏幕宽高（uinput_screen_width/height），"
-                "MWU 暂不支持该输入方式"
-            )
-            return None
+            panel = load_settings_model(self._settings_path()).panel
+            if panel.uinputScreenWidth <= 0 or panel.uinputScreenHeight <= 0:
+                fail("Linux 控制器 input=UInput 需要屏幕宽高，请在设备选择处填写后重试")
+                return None
+            config["uinput_screen_width"] = panel.uinputScreenWidth
+            config["uinput_screen_height"] = panel.uinputScreenHeight
         if input_method == "Libei":
             if gamescope_instance is not None and gamescope_instance.eis_socket_path:
                 config["eis_socket_path"] = gamescope_instance.eis_socket_path
