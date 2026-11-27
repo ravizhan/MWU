@@ -196,6 +196,7 @@ describe("getPlayCoverDefaultAddress", () => {
       reason: "",
       search_mode: "select",
       default_address: defaultAddress,
+      needs_screen_size: false,
     }
     return capability
   }

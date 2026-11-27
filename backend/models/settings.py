@@ -86,6 +86,9 @@ class Panel(BaseModel):
     lastConnectedDevice: PanelLastConnectedDevice | None = None
     recentDevices: list[PanelLastConnectedDevice] | None = None
     customDevices: list[CustomDevice] = []
+    # Linux 控制器 input=UInput 时虚拟指针绝对坐标轴对应的屏幕分辨率；0 表示未填写
+    uinputScreenWidth: int = Field(default=0, ge=0)
+    uinputScreenHeight: int = Field(default=0, ge=0)
 
     @field_validator("recentDevices")
     @classmethod

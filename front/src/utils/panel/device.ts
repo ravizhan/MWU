@@ -3,6 +3,7 @@ import type {
   ConnectableDevice,
   DeviceControllerCapability,
   GamepadDevice,
+  MacOSDevice,
   Win32Device,
 } from "@/services/api"
 import type { PanelLastConnectedDevice } from "@/types/settingsModel"
@@ -19,12 +20,16 @@ export function isGamepadDevice(value: unknown): value is GamepadDevice {
   return !!value && typeof value === "object" && "type" in value && value.type === "Gamepad"
 }
 
+export function isMacOSDevice(value: unknown): value is MacOSDevice {
+  return !!value && typeof value === "object" && "type" in value && value.type === "MacOS"
+}
+
 /** Stable identity used for merge/dedup matching (address or window handle). */
 export function getDeviceIdentity(deviceInfo: ConnectableDevice): string {
   if (isAdbDevice(deviceInfo)) {
     return deviceInfo.address
   }
-  if (isWin32Device(deviceInfo)) {
+  if (isWin32Device(deviceInfo) || isMacOSDevice(deviceInfo)) {
     return String(deviceInfo.hWnd)
   }
   if (isGamepadDevice(deviceInfo)) {
@@ -38,7 +43,7 @@ export function getStoredDeviceIdentity(stored: PanelLastConnectedDevice): strin
   if (stored.type === "Adb" || stored.type === "PlayCover" || stored.type === "Linux") {
     return stored.address
   }
-  if (stored.type === "Win32") {
+  if (stored.type === "Win32" || stored.type === "MacOS") {
     return String(stored.hWnd)
   }
   return `${stored.hWnd}|${stored.gamepad_type}`
@@ -74,7 +79,7 @@ export function buildDeviceLabel(deviceInfo: ConnectableDevice): string {
   if (isAdbDevice(deviceInfo)) {
     return formatNamedLabel(deviceInfo.name, deviceInfo.address)
   }
-  if (isWin32Device(deviceInfo) || isGamepadDevice(deviceInfo)) {
+  if (isWin32Device(deviceInfo) || isGamepadDevice(deviceInfo) || isMacOSDevice(deviceInfo)) {
     const address = deviceInfo.class_name?.trim() || String(deviceInfo.hWnd)
     return formatNamedLabel(deviceInfo.window_name, address)
   }
@@ -90,6 +95,9 @@ export function buildDeviceFingerprint(deviceInfo: ConnectableDevice): string {
   }
   if (isGamepadDevice(deviceInfo)) {
     return `gamepad|${deviceInfo.hWnd}|${deviceInfo.gamepad_type}`
+  }
+  if (isMacOSDevice(deviceInfo)) {
+    return `macos|${deviceInfo.hWnd}`
   }
   if (deviceInfo.type === "Linux") {
     return `linux|${deviceInfo.address}`
@@ -115,6 +123,9 @@ export function getStoredDeviceFingerprint(stored: PanelLastConnectedDevice): st
   }
   if (normalizedType === "gamepad") {
     return `gamepad|${stored.hWnd}|${stored.gamepad_type}`
+  }
+  if (normalizedType === "macos") {
+    return `macos|${stored.hWnd}`
   }
   if (normalizedType === "linux") {
     return `linux|${stored.address}`

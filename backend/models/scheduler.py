@@ -7,7 +7,10 @@ from typing import Annotated, Any, Literal
 from pydantic import AfterValidator, BaseModel, BeforeValidator, Field, model_validator
 from pydantic_extra_types.cron import CronStr
 
-from backend.models.device_address import canonicalize_runtime_device_address
+from backend.models.device_address import (
+    DeviceType,
+    canonicalize_runtime_device_address,
+)
 
 TaskOptionValue = str | list[str] | dict[str, str]
 # key 为 interface.json 中 task.name；元素为该任务可执行选项的取值
@@ -138,9 +141,7 @@ class ScheduledTaskDeviceConfig(BaseModel):
     """定时任务设备配置"""
 
     controller_name: str = Field(..., description="控制器名称")
-    device_type: Literal["Adb", "Win32", "Gamepad", "PlayCover", "Linux"] = Field(
-        ..., description="设备类型"
-    )
+    device_type: DeviceType = Field(..., description="设备类型")
     device_address: str = Field(..., description="设备地址")
 
     @model_validator(mode="after")
